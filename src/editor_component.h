@@ -1,0 +1,124 @@
+#pragma once
+
+#include <JuceHeader.h>
+
+#include "known_plugin.h"
+#include "piano_roll.h"
+#include "realtime_engine.h"
+#include "song_project.h"
+
+#include <functional>
+#include <memory>
+
+namespace resonance
+{
+class MainEditorComponent final : public juce::Component,
+                                  private juce::Timer,
+                                  private juce::ChangeListener
+{
+public:
+    MainEditorComponent (juce::File inventoryFile,
+                         juce::File quarantineFile,
+                         juce::PropertiesFile* settings);
+    ~MainEditorComponent() override;
+
+    void paint (juce::Graphics& graphics) override;
+    void resized() override;
+    bool keyPressed (const juce::KeyPress& key) override;
+    void requestClose (std::function<void()> closeAction);
+
+private:
+    class PluginEditorWindow;
+
+    void timerCallback() override;
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void initialiseAudioAndPlugin();
+    void configureControls();
+    void openPluginEditor();
+    void updateStatus();
+    void saveSettings();
+    void drawCard (juce::Graphics&, juce::Rectangle<int>) const;
+
+    void projectChanged();
+    void refreshProjectControls();
+    void selectedNoteChanged (const juce::String& noteId);
+    void startNewProject();
+    void chooseProjectToOpen();
+    void openProjectFile (const juce::File& file);
+    void saveProject();
+    void chooseProjectSaveLocation();
+    void saveProjectToFile (juce::File file);
+    void confirmDiscardIfNeeded (std::function<void()> action);
+    void showError (const juce::String& title, const juce::String& message);
+
+    juce::File inventoryPath;
+    juce::File quarantinePath;
+    juce::PropertiesFile* settingsFile = nullptr;
+    KnownPluginRecord pluginRecord;
+    juce::String startupError;
+    juce::String deviceStartupError;
+    juce::String projectStatusMessage;
+
+    juce::LookAndFeel_V4 lookAndFeel;
+    juce::AudioDeviceManager deviceManager;
+    RealtimeEngine engine;
+    SongProject project;
+    juce::AudioPluginFormatManager pluginFormats;
+    juce::MidiKeyboardState keyboardState;
+    std::unique_ptr<juce::AudioDeviceSelectorComponent> deviceSelector;
+    std::unique_ptr<PianoRoll> pianoRoll;
+    std::unique_ptr<juce::MidiKeyboardComponent> keyboard;
+    std::unique_ptr<PluginEditorWindow> pluginEditorWindow;
+    std::unique_ptr<juce::FileChooser> activeFileChooser;
+    juce::MemoryBlock initialPluginState;
+    juce::File currentProjectFile;
+
+    juce::Label titleLabel;
+    juce::Label subtitleLabel;
+    juce::Label projectNameLabel;
+    juce::Label statusLabel;
+    juce::Label trackNameLabel;
+    juce::Label trackMetaLabel;
+    juce::Label transportPositionLabel;
+    juce::Label deviceSummaryLabel;
+    juce::Label diagnosticLabel;
+    juce::TextButton newButton { "New" };
+    juce::TextButton openButton { "Open" };
+    juce::TextButton saveButton { "Save" };
+    juce::TextButton undoButton { "Undo" };
+    juce::TextButton redoButton { "Redo" };
+    juce::TextButton playButton { "Play loop" };
+    juce::TextButton stopButton { "Stop" };
+    juce::TextButton panicButton { "Panic" };
+    juce::TextButton pluginEditorButton { "Open Surge XT" };
+    juce::Slider bpmSlider;
+    juce::Slider gainSlider;
+    juce::Slider velocitySlider;
+    juce::ComboBox snapCombo;
+    juce::ComboBox loopLengthCombo;
+    juce::Label bpmLabel;
+    juce::Label gainLabel;
+    juce::Label snapLabel;
+    juce::Label loopLengthLabel;
+    juce::Label velocityLabel;
+
+    juce::Rectangle<int> headerBounds;
+    juce::Rectangle<int> transportCardBounds;
+    juce::Rectangle<int> trackCardBounds;
+    juce::Rectangle<int> loopCardBounds;
+    juce::Rectangle<int> keyboardCardBounds;
+    juce::Rectangle<int> deviceCardBounds;
+
+    float displayedLeftPeak = 0.0f;
+    float displayedRightPeak = 0.0f;
+    juce::int64 lastClipCount = 0;
+    bool audioCallbackRegistered = false;
+    bool midiCallbackRegistered = false;
+    bool keyboardListenerRegistered = false;
+    bool refreshingProjectControls = false;
+    bool bpmGestureActive = false;
+    bool velocityGestureActive = false;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainEditorComponent)
+};
+} // namespace resonance

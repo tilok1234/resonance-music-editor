@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resonance.local/schema/song-project-test-v1.json",
+  "title": "Resonance song project test report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "testVersion",
+    "juceVersion",
+    "assertions",
+    "roundTripBytes",
+    "stateSha256",
+    "passed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "testVersion": { "type": "string", "minLength": 1 },
+    "juceVersion": { "type": "string", "minLength": 1 },
+    "assertions": { "type": "integer", "minimum": 25 },
+    "roundTripBytes": { "type": "integer", "minimum": 500 },
+    "stateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "passed": { "const": true }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resonance.local/schema/plugin-inventory-v1.json",
+  "title": "Resonance Plug-in Inventory",
+  "type": "object",
+  "required": ["schemaVersion", "updatedAt", "plugins"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name", "manufacturer", "version", "format", "identifier",
+          "fileOrIdentifier", "uniqueId", "isInstrument", "bundlePath",
+          "bundleFingerprintSha256", "bundleFileCount", "bundleBytes",
+          "acceptsMidi", "producesMidi", "hasEditor", "parameterCount",
+          "stateBytes", "stateSha256", "lastScannedAt", "scanDurationMs",
+          "scannerVersion"
+        ],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "descriptiveName": { "type": "string" },
+          "manufacturer": { "type": "string" },
+          "version": { "type": "string" },
+          "category": { "type": "string" },
+          "format": { "const": "VST3" },
+          "identifier": { "type": "string", "minLength": 1 },
+          "fileOrIdentifier": { "type": "string", "minLength": 1 },
+          "uniqueId": { "type": "integer" },
+          "isInstrument": { "type": "boolean" },
+          "inputChannels": { "type": "integer", "minimum": 0 },
+          "outputChannels": { "type": "integer", "minimum": 0 },
+          "bundlePath": { "type": "string", "minLength": 1 },
+          "bundleFingerprintSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "bundleFileCount": { "type": "integer", "minimum": 1 },
+          "bundleBytes": { "type": "integer", "minimum": 1 },
+          "acceptsMidi": { "type": "boolean" },
+          "producesMidi": { "type": "boolean" },
+          "hasEditor": { "type": "boolean" },
+          "parameterCount": { "type": "integer", "minimum": 0 },
+          "programCount": { "type": "integer", "minimum": 0 },
+          "latencySamples": { "type": "integer", "minimum": 0 },
+          "tailLengthSeconds": { "type": "number", "minimum": 0 },
+          "inputBusCount": { "type": "integer", "minimum": 0 },
+          "outputBusCount": { "type": "integer", "minimum": 0 },
+          "enabledInputChannels": { "type": "integer", "minimum": 0 },
+          "enabledOutputChannels": { "type": "integer", "minimum": 0 },
+          "supportsDoublePrecision": { "type": "boolean" },
+          "stateBytes": { "type": "integer", "minimum": 0 },
+          "stateSha256": { "type": "string", "pattern": "^$|^[0-9a-f]{64}$" },
+          "lastScannedAt": { "type": "string", "format": "date-time" },
+          "scanDurationMs": { "type": "number", "minimum": 0 },
+          "scannerVersion": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

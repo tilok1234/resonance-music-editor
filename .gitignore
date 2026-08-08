@@ -1,0 +1,24 @@
+# Machine-local dependencies and generated build output
+.local/
+bin/
+
+# Visual Studio and CMake user state
+.vs/
+out/
+CMakeUserPresets.json
+*.suo
+*.user
+*.VC.db
+
+# Transient diagnostics
+*.log
+
+# Machine-specific test output; project fixtures and visual evidence stay versioned
+artifacts/*.json
+!artifacts/*.resonance.json
+artifacts/*.wav
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resonance.local/schema/realtime-engine-test.schema.json",
+  "title": "Resonance real-time scheduler test report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "testVersion",
+    "juceVersion",
+    "assertions",
+    "loopLengthBeats",
+    "noteCount",
+    "passed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "testVersion": { "type": "string", "minLength": 1 },
+    "juceVersion": { "type": "string", "minLength": 1 },
+    "assertions": { "type": "integer", "minimum": 1 },
+    "loopLengthBeats": { "type": "number", "exclusiveMinimum": 0 },
+    "noteCount": { "type": "integer", "minimum": 1 },
+    "passed": { "type": "boolean" }
+  }
+}

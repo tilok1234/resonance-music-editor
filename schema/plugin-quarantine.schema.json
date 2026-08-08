@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resonance.local/schema/plugin-quarantine-v1.json",
+  "title": "Resonance Plug-in Quarantine",
+  "type": "object",
+  "required": ["schemaVersion", "updatedAt", "entries"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "bundlePath", "bundleFingerprintSha256", "bundleFileCount",
+          "bundleBytes", "scannerPath", "quarantinedAt", "failureKind",
+          "detail", "timeoutMs", "exitCode"
+        ],
+        "properties": {
+          "bundlePath": { "type": "string", "minLength": 1 },
+          "bundleFingerprintSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "bundleFileCount": { "type": "integer", "minimum": 1 },
+          "bundleBytes": { "type": "integer", "minimum": 1 },
+          "scannerPath": { "type": "string", "minLength": 1 },
+          "quarantinedAt": { "type": "string", "format": "date-time" },
+          "failureKind": {
+            "enum": [
+              "launch-failed", "timeout", "scanner-exit", "missing-report",
+              "invalid-report", "invalid-plugin-record"
+            ]
+          },
+          "detail": { "type": "string", "maxLength": 4000 },
+          "timeoutMs": { "type": "integer", "minimum": 50, "maximum": 120000 },
+          "exitCode": { "type": "integer" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
