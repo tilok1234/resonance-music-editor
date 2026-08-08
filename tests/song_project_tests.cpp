@@ -4,6 +4,7 @@
 #include "../src/plugin_identity.h"
 #include "../src/song_project.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <iostream>
@@ -334,6 +335,125 @@ void testEditCommandFoundation (TestContext& context,
                     "An unsupported command version must be rejected during parsing");
 }
 
+void testSeededVelocityVariation (TestContext& context,
+                                  juce::String& commandSha256,
+                                  juce::String& candidateSha256)
+{
+    resonance::SongProject project;
+    const auto beforeHash = project.getContentSha256();
+    const auto notes = project.getNotes();
+    std::vector<juce::String> reverseIds;
+    for (auto iterator = notes.rbegin(); iterator != notes.rend(); ++iterator)
+        reverseIds.push_back (iterator->id);
+
+    resonance::SeededVelocityVariation variation;
+    variation.noteIds = reverseIds;
+    variation.seed = 18421;
+    variation.maximumDelta = 8;
+
+    resonance::EditCommand first;
+    context.expect (resonance::resolveSeededVelocityVariation (project,
+                                                               variation,
+                                                               first).wasOk(),
+                    "A bounded seeded velocity variation must resolve");
+    context.expect (first.seed == variation.seed
+                        && first.changes.size() == notes.size()
+                        && first.projectContentSha256 == beforeHash,
+                    "The resolved variation must retain its seed, targets, and project precondition");
+
+    auto forwardVariation = variation;
+    std::reverse (forwardVariation.noteIds.begin(), forwardVariation.noteIds.end());
+    resonance::EditCommand reordered;
+    context.expect (resonance::resolveSeededVelocityVariation (project,
+                                                               forwardVariation,
+                                                               reordered).wasOk()
+                        && resonance::serialiseEditCommand (first)
+                               == resonance::serialiseEditCommand (reordered),
+                    "Target ordering must not change the resolved seeded command");
+
+    const auto commandJson = resonance::serialiseEditCommand (first);
+    const juce::MemoryBlock commandBytes (commandJson.toRawUTF8(),
+                                           commandJson.getNumBytesAsUTF8());
+    commandSha256 = juce::SHA256 (commandBytes).toHexString();
+
+    resonance::EditCommandPreview firstPreview;
+    resonance::EditCommandPreview repeatedPreview;
+    context.expect (resonance::createEditCommandPreview (first,
+                                                         project,
+                                                         firstPreview).wasOk(),
+                    "The resolved velocity command must create a candidate");
+    context.expect (resonance::createEditCommandPreview (reordered,
+                                                         project,
+                                                         repeatedPreview).wasOk(),
+                    "The canonically reordered command must create a candidate");
+    candidateSha256 = firstPreview.afterContentSha256;
+    context.expect (firstPreview.afterContentSha256 == repeatedPreview.afterContentSha256
+                        && project.getContentSha256() == beforeHash
+                        && ! project.isDirty(),
+                    "The same seed must create the same isolated candidate without mutating A");
+
+    auto everyChangeIsBounded = firstPreview.noteDiffs.size() == notes.size();
+    for (const auto& diff : firstPreview.noteDiffs)
+    {
+        if (! diff.before.has_value() || ! diff.after.has_value())
+        {
+            everyChangeIsBounded = false;
+            break;
+        }
+
+        const auto velocityDelta = std::abs (diff.after->velocity - diff.before->velocity);
+        everyChangeIsBounded = everyChangeIsBounded
+                               && diff.action == resonance::NoteEditAction::update
+                               && velocityDelta >= 1
+                               && velocityDelta <= variation.maximumDelta
+                               && diff.after->beat == diff.before->beat
+                               && diff.after->lengthBeats == diff.before->lengthBeats
+                               && diff.after->midiNote == diff.before->midiNote;
+    }
+    context.expect (everyChangeIsBounded,
+                    "The seeded transform must change only velocity within the declared bound");
+
+    auto differentSeed = variation;
+    differentSeed.seed = 18422;
+    resonance::EditCommand differentCommand;
+    resonance::EditCommandPreview differentPreview;
+    context.expect (resonance::resolveSeededVelocityVariation (project,
+                                                               differentSeed,
+                                                               differentCommand).wasOk()
+                        && resonance::createEditCommandPreview (differentCommand,
+                                                               project,
+                                                               differentPreview).wasOk()
+                        && differentPreview.afterContentSha256 != candidateSha256,
+                    "A different seed must resolve a different velocity candidate");
+
+    auto invalid = variation;
+    invalid.noteIds.clear();
+    context.expect (resonance::resolveSeededVelocityVariation (project, invalid, first).failed(),
+                    "A velocity transform without targets must be rejected");
+    invalid = variation;
+    invalid.seed = -1;
+    context.expect (resonance::resolveSeededVelocityVariation (project, invalid, first).failed(),
+                    "A negative velocity-transform seed must be rejected");
+    invalid = variation;
+    invalid.maximumDelta = 33;
+    context.expect (resonance::resolveSeededVelocityVariation (project, invalid, first).failed(),
+                    "An unbounded velocity delta must be rejected");
+    invalid = variation;
+    invalid.noteIds.push_back (invalid.noteIds.front());
+    context.expect (resonance::resolveSeededVelocityVariation (project, invalid, first).failed(),
+                    "Duplicate velocity-transform targets must be rejected");
+    invalid = variation;
+    invalid.noteIds.front() = "missing-note";
+    context.expect (resonance::resolveSeededVelocityVariation (project, invalid, first).failed(),
+                    "An unknown velocity-transform target must be rejected");
+
+    context.expect (firstPreview.applyTo (project).wasOk()
+                        && project.getContentSha256() == candidateSha256,
+                    "The multi-note velocity candidate must apply as its exact preview");
+    context.expect (project.undo() && project.getContentSha256() == beforeHash,
+                    "One Undo must restore every velocity changed by the transform");
+}
+
 void testRoundTrip (TestContext& context, int& savedBytes, juce::String& stateSha)
 {
     resonance::SongProject project;
@@ -416,6 +536,8 @@ int main (int argc, char* argv[])
     int savedBytes = 0;
     juce::String stateSha;
     juce::String editCommandCandidateSha;
+    juce::String seededVelocityCommandSha;
+    juce::String seededVelocityCandidateSha;
 
     auto* reportObject = new juce::DynamicObject();
     juce::var report (reportObject);
@@ -434,11 +556,18 @@ int main (int argc, char* argv[])
         testEditCommandFoundation (context,
                                    juce::File (editCommandFixturePath),
                                    editCommandCandidateSha);
+        testSeededVelocityVariation (context,
+                                     seededVelocityCommandSha,
+                                     seededVelocityCandidateSha);
         testRoundTrip (context, savedBytes, stateSha);
         reportObject->setProperty ("assertions", context.assertions);
         reportObject->setProperty ("roundTripBytes", savedBytes);
         reportObject->setProperty ("stateSha256", stateSha);
         reportObject->setProperty ("editCommandCandidateSha256", editCommandCandidateSha);
+        reportObject->setProperty ("seededVelocitySeed", 18421);
+        reportObject->setProperty ("seededVelocityMaximumDelta", 8);
+        reportObject->setProperty ("seededVelocityCommandSha256", seededVelocityCommandSha);
+        reportObject->setProperty ("seededVelocityCandidateSha256", seededVelocityCandidateSha);
         reportObject->setProperty ("passed", true);
     }
     catch (const std::exception& error)
@@ -447,6 +576,10 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("roundTripBytes", savedBytes);
         reportObject->setProperty ("stateSha256", stateSha);
         reportObject->setProperty ("editCommandCandidateSha256", editCommandCandidateSha);
+        reportObject->setProperty ("seededVelocitySeed", 18421);
+        reportObject->setProperty ("seededVelocityMaximumDelta", 8);
+        reportObject->setProperty ("seededVelocityCommandSha256", seededVelocityCommandSha);
+        reportObject->setProperty ("seededVelocityCandidateSha256", seededVelocityCandidateSha);
         reportObject->setProperty ("passed", false);
         reportObject->setProperty ("error", error.what());
     }

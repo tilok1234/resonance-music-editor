@@ -37,6 +37,13 @@ struct EditCommand
     std::vector<NoteEditChange> changes;
 };
 
+struct SeededVelocityVariation
+{
+    std::vector<juce::String> noteIds;
+    std::int64_t seed = 18421;
+    int maximumDelta = 8;
+};
+
 struct NoteEditDiff
 {
     NoteEditAction action = NoteEditAction::update;
@@ -75,6 +82,9 @@ private:
 
 juce::Result parseEditCommand (const juce::String& json, EditCommand& destination);
 juce::String serialiseEditCommand (const EditCommand& command);
+juce::Result resolveSeededVelocityVariation (const SongProject& activeProject,
+                                             const SeededVelocityVariation& variation,
+                                             EditCommand& destination);
 juce::Result createEditCommandPreview (const EditCommand& command,
                                        const SongProject& activeProject,
                                        EditCommandPreview& destination);

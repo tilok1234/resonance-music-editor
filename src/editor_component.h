@@ -54,6 +54,8 @@ private:
     void clearSoundCandidate();
     void refreshSoundControls();
     void previewSelectedNoteEdit();
+    void previewLoopVelocityVariation();
+    void installEditPreview (EditCommand command, const juce::String& readyStatus);
     void auditionEditProject();
     void auditionEditCandidate();
     void applyEditPreview();
@@ -130,7 +132,8 @@ private:
     juce::TextButton auditionCandidateButton { "Audition B" };
     juce::TextButton applySoundButton { "Apply B" };
     juce::TextButton rejectSoundButton { "Reject B" };
-    juce::TextButton previewSelectedEditButton { "Preview selected +1" };
+    juce::TextButton previewSelectedEditButton { "Selected +1" };
+    juce::TextButton previewLoopVariationButton { "Loop dynamics" };
     juce::TextButton auditionEditProjectButton { "Audition A" };
     juce::TextButton auditionEditCandidateButton { "Audition B" };
     juce::TextButton applyEditButton { "Apply" };

@@ -59,6 +59,13 @@ if (-not $projectResult.passed -or $projectResult.assertions -lt 50) {
     throw "Song project report did not pass its assertion gate"
 }
 
+if ($projectResult.seededVelocitySeed -ne 18421 -or
+    $projectResult.seededVelocityMaximumDelta -ne 8 -or
+    $projectResult.seededVelocityCommandSha256 -notmatch '^[0-9a-f]{64}$' -or
+    $projectResult.seededVelocityCandidateSha256 -notmatch '^[0-9a-f]{64}$') {
+    throw "The seeded velocity resolver did not produce its deterministic evidence"
+}
+
 $selfTest = Start-Process -FilePath $editor -ArgumentList "--self-test" -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
 
 if ($selfTest.ExitCode -ne 0) {
@@ -141,6 +148,23 @@ if (-not $m5Result.stalePreviewInvalidated -or -not $m5Result.finalRestored -or
     throw "The M5 stale-preview or lifecycle cleanup contract failed"
 }
 
+if ($m5Result.seededVelocitySeed -ne 18421 -or
+    $m5Result.seededVelocityMaximumDelta -ne 8 -or
+    $m5Result.seededVelocityDiffCount -ne 8 -or
+    -not $m5Result.seededVelocityPreviewCreated -or
+    -not $m5Result.seededVelocityBounded -or
+    -not $m5Result.seededVelocityRepeatMatched) {
+    throw "The M5 seeded loop-dynamics preview was not deterministic and bounded"
+}
+
+if (-not $m5Result.seededVelocityAuditionPreservedA -or
+    -not $m5Result.seededVelocityRejectedWithoutMutation -or
+    -not $m5Result.seededVelocityApplied -or
+    -not $m5Result.seededVelocityApplyProducedOneUndo -or
+    -not $m5Result.seededVelocityUndoRestoredA) {
+    throw "The M5 seeded loop-dynamics lifecycle failed"
+}
+
 if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     throw "The M5 workflow test left an editor process running"
 }
@@ -194,11 +218,17 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     EditCommandVersion = $projectResult.editCommandVersion
     EditCommandFixture = $projectResult.editCommandFixture
     EditCommandCandidateSha256 = $projectResult.editCommandCandidateSha256
+    SeededVelocityCommandSha256 = $projectResult.seededVelocityCommandSha256
+    SeededVelocityUnitCandidateSha256 = $projectResult.seededVelocityCandidateSha256
     M5ProposalNote = $m5Result.selectedNoteId
     M5ProposalBeforeSha256 = $m5Result.beforeContentSha256
     M5ProposalCandidateSha256 = $m5Result.candidateContentSha256
     M5ProposalDiffs = $m5Result.diffCount
     M5StalePreviewInvalidated = $m5Result.stalePreviewInvalidated
+    SeededVelocitySeed = $m5Result.seededVelocitySeed
+    SeededVelocityMaximumDelta = $m5Result.seededVelocityMaximumDelta
+    SeededVelocityCandidateSha256 = $m5Result.seededVelocityCandidateSha256
+    SeededVelocityDiffs = $m5Result.seededVelocityDiffCount
     LiveSurgeStateBytes = $result.songProject.stateBytes
     LiveSurgeStateSha256 = $result.songProject.stateSha256
     LiveSoundName = $result.songProject.soundName

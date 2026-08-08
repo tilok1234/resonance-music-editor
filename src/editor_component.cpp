@@ -16,6 +16,8 @@ const auto textMain = juce::Colour::fromRGB (235, 241, 248);
 const auto textMuted = juce::Colour::fromRGB (137, 153, 173);
 const auto warning = juce::Colour::fromRGB (247, 184, 88);
 const auto danger = juce::Colour::fromRGB (245, 103, 119);
+constexpr std::int64_t editorVelocityVariationSeed = 18421;
+constexpr int editorVelocityVariationMaximumDelta = 8;
 
 juce::Font uiFont (float height, int style = juce::Font::plain)
 {
@@ -330,7 +332,8 @@ void MainEditorComponent::configureControls()
                           &playButton, &stopButton, &panicButton, &pluginEditorButton,
                           &auditionProjectSoundButton, &captureSoundButton,
                           &auditionCandidateButton, &applySoundButton, &rejectSoundButton,
-                          &previewSelectedEditButton, &auditionEditProjectButton,
+                          &previewSelectedEditButton, &previewLoopVariationButton,
+                          &auditionEditProjectButton,
                           &auditionEditCandidateButton, &applyEditButton, &rejectEditButton })
         addAndMakeVisible (*button);
 
@@ -341,6 +344,7 @@ void MainEditorComponent::configureControls()
     applySoundButton.setColour (juce::TextButton::buttonColourId, primary.darker (0.55f));
     rejectSoundButton.setColour (juce::TextButton::buttonColourId, danger.darker (0.65f));
     previewSelectedEditButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.55f));
+    previewLoopVariationButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.45f));
     auditionEditCandidateButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.55f));
     applyEditButton.setColour (juce::TextButton::buttonColourId, primary.darker (0.55f));
     rejectEditButton.setColour (juce::TextButton::buttonColourId, danger.darker (0.65f));
@@ -364,10 +368,14 @@ void MainEditorComponent::configureControls()
     applySoundButton.onClick = [this] { applySoundCandidate(); };
     rejectSoundButton.onClick = [this] { rejectSoundCandidate(); };
     previewSelectedEditButton.onClick = [this] { previewSelectedNoteEdit(); };
+    previewLoopVariationButton.onClick = [this] { previewLoopVelocityVariation(); };
     auditionEditProjectButton.onClick = [this] { auditionEditProject(); };
     auditionEditCandidateButton.onClick = [this] { auditionEditCandidate(); };
     applyEditButton.onClick = [this] { applyEditPreview(); };
     rejectEditButton.onClick = [this] { rejectEditPreview(); };
+
+    previewSelectedEditButton.setTooltip ("Preview the selected note one semitone higher");
+    previewLoopVariationButton.setTooltip ("Preview all loop-note velocities with seed 18421 and a maximum change of 8");
 
     soundNameEditor.setTextToShowWhenEmpty ("Candidate sound name", textMuted);
     soundNameEditor.setInputRestrictions (80);
@@ -911,9 +919,6 @@ void MainEditorComponent::previewSelectedNoteEdit()
         return;
     }
 
-    if (hasPendingEditPreview())
-        clearEditPreview (true);
-
     auto after = *selected;
     ++after.midiNote;
 
@@ -922,13 +927,54 @@ void MainEditorComponent::previewSelectedNoteEdit()
     command.summary = "Transpose " + selected->id + " up one semitone";
     command.changes.push_back ({ NoteEditAction::update, selected->id, after });
 
+    installEditPreview (std::move (command),
+                        "NOTE B READY  /  AUDITION A-B BEFORE APPLY");
+}
+
+void MainEditorComponent::previewLoopVelocityVariation()
+{
+    if (soundCandidate.has_value())
+    {
+        projectStatusMessage = "APPLY OR REJECT SOUND B BEFORE PREVIEWING A NOTE EDIT";
+        updateStatus();
+        return;
+    }
+
+    SeededVelocityVariation variation;
+    variation.seed = editorVelocityVariationSeed;
+    variation.maximumDelta = editorVelocityVariationMaximumDelta;
+    const auto notes = project.getNotes();
+    variation.noteIds.reserve (notes.size());
+    for (const auto& note : notes)
+        variation.noteIds.push_back (note.id);
+
+    EditCommand command;
+    const auto result = resolveSeededVelocityVariation (project, variation, command);
+    if (result.failed())
+    {
+        projectStatusMessage = "DYNAMICS PROPOSAL ERROR  /  " + result.getErrorMessage();
+        updateStatus();
+        showError ("Could not preview loop dynamics", result.getErrorMessage());
+        return;
+    }
+
+    installEditPreview (std::move (command),
+                        "SEEDED DYNAMICS B READY  /  SEED 18421  /  AUDITION A-B");
+}
+
+void MainEditorComponent::installEditPreview (EditCommand command,
+                                              const juce::String& readyStatus)
+{
+    if (hasPendingEditPreview())
+        clearEditPreview (true);
+
     EditCommandPreview proposed;
     const auto result = createEditCommandPreview (command, project, proposed);
     if (result.failed())
     {
-        projectStatusMessage = "NOTE PROPOSAL ERROR  /  " + result.getErrorMessage();
+        projectStatusMessage = "EDIT PROPOSAL ERROR  /  " + result.getErrorMessage();
         updateStatus();
-        showError ("Could not preview note edit", result.getErrorMessage());
+        showError ("Could not preview edit", result.getErrorMessage());
         return;
     }
 
@@ -937,7 +983,7 @@ void MainEditorComponent::previewSelectedNoteEdit()
     engine.setSequence (project.createSequenceSnapshot());
     if (pianoRoll != nullptr)
         pianoRoll->setEditPreview (editPreview->noteDiffs, false);
-    projectStatusMessage = "NOTE B READY  /  AUDITION A-B BEFORE APPLY";
+    projectStatusMessage = readyStatus;
     refreshProjectControls();
 }
 
@@ -1069,17 +1115,32 @@ void MainEditorComponent::refreshEditPreviewControls()
             const auto& first = editPreview->noteDiffs.front();
             detail = first.noteId;
             if (first.before.has_value())
-                detail += "  " + noteName (first.before->midiNote);
+                detail += "  " + noteName (first.before->midiNote)
+                          + " v" + juce::String (first.before->velocity);
             if (first.after.has_value())
                 detail += (first.before.has_value() ? "  ->  " : "  +  ")
-                          + noteName (first.after->midiNote);
+                          + noteName (first.after->midiNote)
+                          + " v" + juce::String (first.after->velocity);
         }
+
+        auto provenance = juce::String {};
+        if (editPreview->command.seed.has_value())
+            provenance = "SEED "
+                         + juce::String::formatted ("%lld",
+                                                    static_cast<long long> (*editPreview->command.seed))
+                         + "  /  ";
         editProposalDiffLabel.setText (counts + "\n" + detail
-                                           + "\nA " + shortStateHash (editPreview->beforeContentSha256)
+                                           + "\n" + provenance
+                                           + "A " + shortStateHash (editPreview->beforeContentSha256)
                                            + "  /  B " + shortStateHash (editPreview->afterContentSha256),
                                        juce::dontSendNotification);
         editProposalDiffLabel.setTooltip ("Accepted A: " + editPreview->beforeContentSha256
-                                          + "\nCandidate B: " + editPreview->afterContentSha256);
+                                          + "\nCandidate B: " + editPreview->afterContentSha256
+                                          + (editPreview->command.seed.has_value()
+                                                 ? "\nSeed: " + juce::String::formatted (
+                                                     "%lld",
+                                                     static_cast<long long> (*editPreview->command.seed))
+                                                 : juce::String {}));
     }
     else if (selected.has_value())
     {
@@ -1087,17 +1148,17 @@ void MainEditorComponent::refreshEditPreviewControls()
                                               + "  " + noteName (selected->midiNote),
                                           juce::dontSendNotification);
         editProposalSummaryLabel.setColour (juce::Label::textColourId, textMain);
-        editProposalDiffLabel.setText ("Preview selected +1 creates candidate B.\n"
-                                       "The accepted song stays unchanged until Apply.",
+        editProposalDiffLabel.setText ("Selected +1 or Loop dynamics (seed 18421).\n"
+                                       "Accepted song stays unchanged until Apply.",
                                        juce::dontSendNotification);
         editProposalDiffLabel.setTooltip ({});
     }
     else
     {
-        editProposalSummaryLabel.setText ("SELECT A NOTE TO PROPOSE AN EDIT",
+        editProposalSummaryLabel.setText ("READY  /  LOOP DYNAMICS OR SELECT A NOTE",
                                           juce::dontSendNotification);
         editProposalSummaryLabel.setColour (juce::Label::textColourId, textMuted);
-        editProposalDiffLabel.setText ("Candidate notes are previewed separately.\n"
+        editProposalDiffLabel.setText ("Loop dynamics varies all note velocities with seed 18421.\n"
                                        "Audition A/B, then Apply or Reject.",
                                        juce::dontSendNotification);
         editProposalDiffLabel.setTooltip ({});
@@ -1105,6 +1166,9 @@ void MainEditorComponent::refreshEditPreviewControls()
 
     previewSelectedEditButton.setEnabled (ready && ! pending && ! soundCandidate.has_value()
                                           && selected.has_value() && selected->midiNote < 127);
+    const auto loopNoteCount = project.getNotes().size();
+    previewLoopVariationButton.setEnabled (ready && ! pending && ! soundCandidate.has_value()
+                                           && loopNoteCount > 0 && loopNoteCount <= 128);
     auditionEditProjectButton.setEnabled (ready && pending);
     auditionEditCandidateButton.setEnabled (ready && pending);
     applyEditButton.setEnabled (ready && pending);
@@ -1528,7 +1592,8 @@ void MainEditorComponent::prepareM5PreviewForSnapshot()
         return;
 
     pianoRoll->setSelectedNote (notes.front().id);
-    previewSelectedNoteEdit();
+    previewLoopVelocityVariation();
+    auditionEditCandidate();
     updateStatus();
 }
 
@@ -1652,6 +1717,67 @@ juce::var MainEditorComponent::runM5WorkflowSelfTest()
     project.markClean();
     refreshProjectControls();
 
+    previewLoopVelocityVariation();
+    const auto seededVelocityPreviewCreated = hasPendingEditPreview()
+                                              && editPreview->command.seed.has_value()
+                                              && *editPreview->command.seed
+                                                     == editorVelocityVariationSeed;
+    const auto seededVelocityDiffCount = seededVelocityPreviewCreated
+                                             ? static_cast<int> (editPreview->noteDiffs.size())
+                                             : 0;
+    const auto seededVelocityCandidateSha = seededVelocityPreviewCreated
+                                                ? editPreview->afterContentSha256
+                                                : juce::String {};
+    auto seededVelocityBounded = seededVelocityPreviewCreated
+                                 && seededVelocityDiffCount == static_cast<int> (notes.size());
+    for (const auto& diff : seededVelocityPreviewCreated
+                                ? editPreview->noteDiffs
+                                : std::vector<NoteEditDiff> {})
+    {
+        if (! diff.before.has_value() || ! diff.after.has_value())
+        {
+            seededVelocityBounded = false;
+            break;
+        }
+
+        const auto velocityDelta = std::abs (diff.after->velocity - diff.before->velocity);
+        seededVelocityBounded = seededVelocityBounded
+                                && diff.action == NoteEditAction::update
+                                && velocityDelta >= 1
+                                && velocityDelta <= editorVelocityVariationMaximumDelta
+                                && diff.after->beat == diff.before->beat
+                                && diff.after->lengthBeats == diff.before->lengthBeats
+                                && diff.after->midiNote == diff.before->midiNote;
+    }
+
+    auditionEditCandidate();
+    const auto seededVelocityAuditionPreservedA = seededVelocityPreviewCreated
+                                                   && auditioningEditCandidate
+                                                   && project.getContentSha256() == beforeHash
+                                                   && ! project.isDirty();
+    rejectEditPreview();
+    const auto seededVelocityRejectedWithoutMutation = ! hasPendingEditPreview()
+                                                        && project.getContentSha256() == beforeHash
+                                                        && ! project.isDirty();
+
+    previewLoopVelocityVariation();
+    const auto seededVelocityRepeatMatched = hasPendingEditPreview()
+                                               && editPreview->afterContentSha256
+                                                      == seededVelocityCandidateSha;
+    applyEditPreview();
+    const auto seededVelocityApplied = ! hasPendingEditPreview()
+                                       && project.getContentSha256()
+                                              == seededVelocityCandidateSha
+                                       && project.isDirty();
+    const auto seededVelocityApplyProducedOneUndo = project.canUndo()
+                                                    && project.getUndoDescription()
+                                                           .containsIgnoreCase ("Apply edit");
+    const auto seededVelocityUndoPerformed = project.undo();
+    const auto seededVelocityUndoRestoredA = seededVelocityUndoPerformed
+                                             && project.getContentSha256() == beforeHash;
+    project.markClean();
+    refreshProjectControls();
+
     auto closeAccepted = std::make_shared<std::atomic<bool>> (false);
     requestClose ([closeAccepted] { closeAccepted->store (true); });
     const auto closeAcceptedWithoutWarning = closeAccepted->load();
@@ -1682,6 +1808,26 @@ juce::var MainEditorComponent::runM5WorkflowSelfTest()
     resultObject->setProperty ("redoRestoredCandidate", redoRestoredCandidate);
     resultObject->setProperty ("stalePreviewInvalidated", stalePreviewInvalidated);
     resultObject->setProperty ("finalRestored", finalRestored);
+    resultObject->setProperty ("seededVelocitySeed", editorVelocityVariationSeed);
+    resultObject->setProperty ("seededVelocityMaximumDelta",
+                               editorVelocityVariationMaximumDelta);
+    resultObject->setProperty ("seededVelocityPreviewCreated",
+                               seededVelocityPreviewCreated);
+    resultObject->setProperty ("seededVelocityDiffCount", seededVelocityDiffCount);
+    resultObject->setProperty ("seededVelocityCandidateSha256",
+                               seededVelocityCandidateSha);
+    resultObject->setProperty ("seededVelocityBounded", seededVelocityBounded);
+    resultObject->setProperty ("seededVelocityAuditionPreservedA",
+                               seededVelocityAuditionPreservedA);
+    resultObject->setProperty ("seededVelocityRejectedWithoutMutation",
+                               seededVelocityRejectedWithoutMutation);
+    resultObject->setProperty ("seededVelocityRepeatMatched",
+                               seededVelocityRepeatMatched);
+    resultObject->setProperty ("seededVelocityApplied", seededVelocityApplied);
+    resultObject->setProperty ("seededVelocityApplyProducedOneUndo",
+                               seededVelocityApplyProducedOneUndo);
+    resultObject->setProperty ("seededVelocityUndoRestoredA",
+                               seededVelocityUndoRestoredA);
     resultObject->setProperty ("closeAcceptedWithoutWarning", closeAcceptedWithoutWarning);
     resultObject->setProperty ("invalidSampleCount", engine.getInvalidSampleCount());
     resultObject->setProperty ("processorExceptionCount", engine.getProcessorExceptionCount());
@@ -1705,6 +1851,14 @@ juce::var MainEditorComponent::runM5WorkflowSelfTest()
                         && redoRestoredCandidate
                         && stalePreviewInvalidated
                         && finalRestored
+                        && seededVelocityPreviewCreated
+                        && seededVelocityBounded
+                        && seededVelocityAuditionPreservedA
+                        && seededVelocityRejectedWithoutMutation
+                        && seededVelocityRepeatMatched
+                        && seededVelocityApplied
+                        && seededVelocityApplyProducedOneUndo
+                        && seededVelocityUndoRestoredA
                         && closeAcceptedWithoutWarning
                         && engine.getInvalidSampleCount() == 0
                         && engine.getProcessorExceptionCount() == 0;
@@ -2022,7 +2176,12 @@ void MainEditorComponent::resized()
     editProposalSummaryLabel.setBounds (proposal.removeFromTop (28));
     editProposalDiffLabel.setBounds (proposal.removeFromTop (50));
     proposal.removeFromTop (4);
-    previewSelectedEditButton.setBounds (proposal.removeFromTop (28));
+    auto previewActions = proposal.removeFromTop (28);
+    const auto previewGap = 4;
+    const auto previewWidth = (previewActions.getWidth() - previewGap) / 2;
+    previewSelectedEditButton.setBounds (previewActions.removeFromLeft (previewWidth));
+    previewActions.removeFromLeft (previewGap);
+    previewLoopVariationButton.setBounds (previewActions);
     proposal.removeFromTop (5);
     auto editActions = proposal.removeFromTop (28);
     const auto actionGap = 4;

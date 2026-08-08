@@ -11,6 +11,17 @@ namespace
 {
 constexpr int projectPpq = 960;
 constexpr int maximumCommandChanges = 128;
+constexpr std::int64_t maximumSeed = 2147483647;
+constexpr int maximumVelocityDelta = 32;
+
+std::uint32_t nextVariationValue (std::uint32_t& state)
+{
+    state += 0x9e3779b9u;
+    auto value = state;
+    value = (value ^ (value >> 16u)) * 0x85ebca6bu;
+    value = (value ^ (value >> 13u)) * 0xc2b2ae35u;
+    return value ^ (value >> 16u);
+}
 
 juce::var makeObject()
 {
@@ -339,6 +350,58 @@ juce::String serialiseEditCommand (const EditCommand& command)
     }
     object->setProperty ("changes", changes);
     return juce::JSON::toString (root, true);
+}
+
+juce::Result resolveSeededVelocityVariation (const SongProject& activeProject,
+                                             const SeededVelocityVariation& variation,
+                                             EditCommand& destination)
+{
+    if (variation.seed < 0 || variation.seed > maximumSeed)
+        return juce::Result::fail ("Velocity variation seed must be from 0 through 2147483647");
+    if (variation.maximumDelta < 1 || variation.maximumDelta > maximumVelocityDelta)
+        return juce::Result::fail ("Velocity variation maximumDelta must be from 1 through 32");
+    if (variation.noteIds.empty() || variation.noteIds.size() > maximumCommandChanges)
+        return juce::Result::fail ("Velocity variation must target from 1 through 128 notes");
+
+    auto noteIds = variation.noteIds;
+    std::sort (noteIds.begin(), noteIds.end(), [] (const auto& first, const auto& second)
+    {
+        return first.compare (second) < 0;
+    });
+    for (std::size_t index = 1; index < noteIds.size(); ++index)
+        if (noteIds[index] == noteIds[index - 1])
+            return juce::Result::fail ("Velocity variation cannot target one note more than once");
+
+    EditCommand command;
+    command.projectContentSha256 = activeProject.getContentSha256();
+    command.summary = "Vary " + juce::String (static_cast<int> (noteIds.size()))
+                      + " note velocities by up to " + juce::String (variation.maximumDelta);
+    command.seed = variation.seed;
+    command.changes.reserve (noteIds.size());
+
+    auto randomState = static_cast<std::uint32_t> (variation.seed);
+    const auto span = static_cast<std::uint32_t> (variation.maximumDelta * 2 + 1);
+    for (const auto& noteId : noteIds)
+    {
+        const auto before = activeProject.findNote (noteId);
+        if (! before.has_value())
+            return juce::Result::fail ("Velocity variation targets an unknown note id: " + noteId);
+
+        const auto randomValue = nextVariationValue (randomState);
+        auto delta = static_cast<int> (randomValue % span) - variation.maximumDelta;
+        if (delta == 0)
+            delta = (randomValue & 0x80000000u) != 0 ? 1 : -1;
+
+        auto after = *before;
+        after.velocity = juce::jlimit (1, 127, before->velocity + delta);
+        if (after.velocity == before->velocity)
+            after.velocity = before->velocity == 127 ? 126 : before->velocity + 1;
+
+        command.changes.push_back ({ NoteEditAction::update, noteId, after });
+    }
+
+    destination = std::move (command);
+    return juce::Result::ok();
 }
 
 juce::Result createEditCommandPreview (const EditCommand& command,
