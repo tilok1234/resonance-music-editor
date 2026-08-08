@@ -1,8 +1,8 @@
 # Resonance Music Editor
 
-Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. The project now has its first editable song and sound-design slice plus the host-side foundation for previewable edit commands: a native Windows editor with real-time WASAPI output, a piano roll, lossless song projects, one inventory-approved Surge XT instrument track, and a host-owned A/B sound workflow.
+Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. The project now has its first editable song, sound-design, and reversible note-proposal slices: a native Windows editor with real-time WASAPI output, a piano roll, lossless song projects, one inventory-approved Surge XT instrument track, host-owned A/B sound, and an editor-owned A/B note preview.
 
-The current scope is deliberately one instrument track and one looping clip. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. A version-1 JSON command can now build a validated non-mutating note candidate and apply it as one Undo transaction, but its visual preview/audition UI and any natural-language model integration remain later work alongside factory-preset indexing, arrangement, automation, and game-state music tools.
+The current scope is deliberately one instrument track and one looping clip. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. A version-1 command builds a validated non-mutating note candidate; the editor shows its before/after diff, auditions project A or candidate B through the normal immutable sequence path, and applies it as one Undo transaction or rejects it unchanged. Bounded multi-note transform resolvers and any natural-language model integration remain later work alongside factory-preset indexing, arrangement, automation, and game-state music tools.
 
 ![First playable Resonance Music Editor UI](artifacts/realtime-ui-snapshot.png)
 
@@ -47,6 +47,15 @@ Keep the master level low for the first listen. It defaults to `-12 dB`, and tra
 
 Unsaved project changes are marked with `*`. New, Open, and window close ask before discarding project edits, an unapplied B, or live Surge state that matches neither known live-equivalent snapshot.
 
+## Preview and apply a note proposal
+
+1. Select a piano-roll note.
+2. Press **Preview selected +1** in the **M5 Note Proposal** card. This creates a separate candidate B one semitone above the selected note without changing or dirtying the song.
+3. Read the change count and exact note diff, then use **Audition A** and **Audition B** to switch the realtime loop between the accepted project and candidate.
+4. Press **Apply** to make B one undoable project edit, or **Reject** to restore A without mutation.
+
+Orange marks the accepted before-note and blue marks the proposed after-note. Save writes accepted A only while a proposal remains pending, and New, Open, or Close warns before discarding that proposal. The sound and note candidate lanes are intentionally interlocked so there is only one active A/B decision at a time.
+
 ## Compare and apply a Surge sound
 
 1. Press **Open Surge XT** and choose or design a sound in Surge's native window.
@@ -58,9 +67,9 @@ Save writes only the accepted project sound. An unapplied B remains preview stat
 
 ## Proven checkpoints
 
-### M5 edit-command foundation
+### M5 edit-command and note-proposal workflow
 
-The first M5 host-only slice was implemented on 2026-08-09 without changing song-project schema version 1 or editor version 0.3.0:
+The first two M5 host-side slices were implemented on 2026-08-09 without changing song-project schema version 1 or editor version 0.3.0:
 
 - added a strict version-1 `editNotes` JSON schema, parser, and serializer;
 - added full-project content SHA-256 preconditions and stale-command/stale-Apply rejection;
@@ -68,9 +77,13 @@ The first M5 host-only slice was implemented on 2026-08-09 without changing song
 - exposed concrete before/after note diffs and candidate content hashes;
 - made Apply and Reject consume the preview exactly once, with Apply mapping to one named Undo transaction;
 - preserved an optional deterministic seed for the bounded transforms that remain to be implemented;
-- passed 103 native project/round-trip/command assertions and validated 12 artifacts and fixtures, including `tests/fixtures/edit-command-note-patch-v1.json`.
+- gave the editor ownership of one pending preview with visible add/update/remove overlays, counts, hashes, and exact note detail;
+- added A/B note audition through the same fixed-capacity sequence publication path used by normal playback;
+- added explicit Apply/Reject, Save-A isolation, stale-preview invalidation, discard warnings, and a sound/note candidate interlock;
+- preserved the accepted starter loop's legacy `0.82`-beat articulation during pitch-only edits while still requiring changed timing to resolve at 960 PPQ;
+- passed 107 native project/round-trip/command assertions, the packaged M5 workflow test, and 13 schema-validated artifacts and fixtures.
 
-This is a technical command-core checkpoint, not a completed M5 interaction or musical acceptance gate. The editor still needs a visible note diff, candidate A/B audition, explicit proposal controls, and bounded transform resolvers. See `docs/M5_EDIT_COMMAND_FOUNDATION_2026-08-09.md`.
+This is a technical proposal-workflow checkpoint, not completed M5 or musical approval. The editor still needs its first seeded bounded multi-note transform and broader proposal generation before any model service is considered. See `docs/M5_EDIT_COMMAND_FOUNDATION_2026-08-09.md` and `docs/M5_NOTE_PROPOSAL_WORKFLOW_CHECKPOINT_2026-08-09.md`.
 
 ### Accepted host-owned sound workflow
 
@@ -190,9 +203,9 @@ The build copies four production executables to `bin`:
 
 ## Next implementation slice
 
-1. Preserve the accepted M4 `0.3.0` sound-workflow contract and the new M5 command-core invariants.
-2. Connect `EditCommandPreview` to a visible before/after note diff and candidate A/B audition, with explicit Apply/Reject.
-3. Add the first bounded deterministic transform only after that proposal UI uses the same candidate contract.
-4. Do not combine M5 with factory-preset parsing, multi-track expansion, arrangement, or model-service integration.
+1. Preserve the accepted M4 `0.3.0` sound workflow and the tested M5 proposal lifecycle.
+2. Add the first seeded bounded multi-note transform over the same resolved-command contract.
+3. Show its multi-note diff through the existing card and prove the same seed resolves identically without mutating A.
+4. Do not combine this with factory-preset parsing, multi-track expansion, arrangement, or model-service integration.
 
 Architecture and evidence are recorded in `docs/ADR-0001-vst3-host-foundation.md`, `docs/ADR-0002-crash-isolated-plugin-scanning.md`, `docs/ADR-0003-realtime-audio-engine.md`, `docs/ADR-0004-host-owned-sound-snapshots.md`, and the dated checkpoint files under `docs/`.

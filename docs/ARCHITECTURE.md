@@ -11,9 +11,11 @@ flowchart LR
     U["Manual editor controls"] --> M["SongProject ValueTree"]
     B["Host-owned A/B sound controls"] --> M
     B --> V
-    A["Future AI translator"] -. "version-1 JSON" .-> C["EditCommand validator and candidate"]
-    C --> D["Before/after note diff"]
-    C -->|"Apply once"| M
+    A["Future AI translator"] -. "version-1 JSON" .-> EC["EditCommand validator and candidate"]
+    EC --> D["Before/after note diff"]
+    D --> PB["Editor proposal card"]
+    PB -->|"Apply once"| M
+    PB -->|"Audition candidate B"| S
     M --> S["Fixed-capacity SequenceSnapshot"]
     S --> R["RealtimeEngine audio callback"]
     K["Mouse and hardware MIDI"] --> R
@@ -21,14 +23,14 @@ flowchart LR
     V --> G["Master gain and sample guards"]
     G --> W["Windows Audio / WASAPI"]
 
-    P["VST3 bundle"] --> C["Disposable scanner child"]
-    C --> I["Inventory controller"]
+    P["VST3 bundle"] --> SC["Disposable scanner child"]
+    SC --> I["Inventory controller"]
     I --> Q["Inventory and quarantine JSON"]
     Q --> L["Known plug-in loader"]
     L --> V
 ```
 
-Solid lines are implemented host-side boundaries. The dotted AI translation path and the editor-facing command preview UI are not implemented.
+Solid lines are implemented host-side boundaries. Only the dotted AI translation path is unimplemented in this diagram; the current proposal card is driven by a bounded manual `+1` note action.
 
 ## Production executables
 
@@ -45,9 +47,9 @@ Solid lines are implemented host-side boundaries. The dotted AI translation path
 
 | Area | Main files | Owns |
 | --- | --- | --- |
-| Application lifecycle | `src/realtime_main.cpp` | arguments, settings, window creation, self-test, UI snapshot, idle test |
-| Main UI | `src/editor_component.*` | transport, device controls, file choosers, project actions, native plug-in window |
-| Piano roll | `src/piano_roll.*` | note hit testing, selection, add, move, resize, delete, vertical scroll |
+| Application lifecycle | `src/realtime_main.cpp` | arguments, settings, window creation, self-tests, UI snapshot, idle test |
+| Main UI | `src/editor_component.*` | transport, device controls, file choosers, project actions, proposal ownership, native plug-in window |
+| Piano roll | `src/piano_roll.*` | note hit testing, selection, add, move, resize, delete, vertical scroll, proposal overlays |
 | Song model | `src/song_project.*` | ValueTree state, stable note IDs, Undo/Redo, JSON conversion, validation |
 | Edit-command core | `src/edit_command.*` | strict version-1 parsing, content-hash preconditions, candidate projects, note diffs, consume-once Apply/Reject |
 | Scheduling | `src/loop_scheduler.h` | sample-offset MIDI events, note wrap, fixed-capacity sequence contract |
@@ -62,6 +64,8 @@ Solid lines are implemented host-side boundaries. The dotted AI translation path
 ## Interactive ownership
 
 `MainEditorComponent` owns one `SongProject`, one `RealtimeEngine`, one device manager, one accepted plug-in record, and the editor controls. The project is the authoritative symbolic state. UI operations modify the project; its change callback refreshes controls and publishes a new sequence snapshot.
+
+The component may also own one pending `EditCommandPreview`. That preview contains an independent candidate project and is never authoritative. Audition A publishes the active project's immutable sequence; Audition B publishes the candidate sequence. Apply suppresses intermediate UI publication while the command core performs its one Undo transaction, then publishes the accepted result once. Reject republishes A. Any unrelated project change invalidates the old content-hash precondition and clears the preview. The sound and note candidate lanes are mutually interlocked.
 
 The current model contains:
 
@@ -159,15 +163,15 @@ See [VST3 hosting](VST3_HOSTING.md) and [ADR-0002](ADR-0002-crash-isolated-plugi
 The current single-track shape is deliberate, but several seams are intended for growth:
 
 - `SongProject` can evolve from one track and clip into track and arrangement collections through an explicit schema migration.
-- structured edit commands now sit above the same note operations and Undo manager used by the piano roll; their visual preview and audition controls remain to be connected;
+- structured edit commands and the proposal card sit above the same note operations, Undo manager, and immutable sequence publisher used by the piano roll;
 - `SequenceSnapshot` can become a per-track render snapshot without exposing the mutable ValueTree to audio code;
 - the engine can grow a graph or mixer while keeping device callback rules intact;
 - automation can publish fixed-capacity curves or block-local parameter events;
 - offline rendering can reuse the validated song and plug-in state while remaining separate from the device callback;
 - game-transition metadata can reference arrangement sections after ordinary arrangement editing exists.
 
-These are extension points, not permission to weaken current invariants. Multi-track, automation, AI translation/service integration, edit-command preview UI, effects, and game-state playback are not implemented yet.
+These are extension points, not permission to weaken current invariants. Multi-track, automation, seeded transform resolution, AI translation/service integration, effects, and game-state playback are not implemented yet.
 
 ## Architectural evidence
 
-The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, and the M5 edit-command foundation. See the [documentation index](README.md) for the full list.
+The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the M5 edit-command foundation, and the M5 note-proposal workflow. See the [documentation index](README.md) for the full list.

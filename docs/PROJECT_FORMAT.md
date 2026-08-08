@@ -161,6 +161,8 @@ M5 edit commands are proposal documents, not fields inside `.resonance.json`. Th
 
 Preview parses and validates the command against a separate candidate project. Reject discards that candidate. Apply rechecks the hash and reproduces the preview through ordinary `SongProject` note operations as one Undo transaction. Commands and pending previews are intentionally not saved in song-project schema version 1.
 
+The editor may audition a pending candidate through an immutable realtime sequence, but Save still serializes only the active accepted project. A pitch-only update may preserve an existing note's legacy non-tick-exact timing byte-semantically; any start or length changed by a command must resolve to an integer tick at 960 PPQ. This compatibility exception prevents old accepted articulation such as `0.82` beats from being silently quantized by an unrelated pitch edit.
+
 ## Compatibility and migrations
 
 Do not reinterpret version 1 fields in place. A future change that adds multiple tracks, arrangement sections, automation, effects, or game-transition metadata must:

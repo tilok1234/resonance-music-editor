@@ -10,9 +10,9 @@ Resonance is a clean-room restart of a Windows game-music editor. The current ap
 
 The accepted M4 snapshot-first sound workflow is frozen at commit `7af6573` on `codex/m4-accepted-0.3.0` and draft PR #1. It captures live Surge state as ephemeral B, auditions project A and candidate B through the same instance, applies B as one dirty Undo transaction, restores live sound state on Undo/Redo, and saves only the accepted project snapshot. The held-note scheduler defect is fixed and user-confirmed. The user preferred B as less annoying and passed Apply, dirty marker, Undo, Redo, Save, Close, and Open. Final recapture exposed lifecycle-dependent opaque Surge encodings for the same restored sound; the repaired packaged native workflow reopens and plays the exact saved B, captures unchanged B with matching `91ED214E` identities, rejects it, stays clean, and closes without a false warning. The user explicitly accepted M4 at 2026-08-08 23:54 +02:00.
 
-M5 is now in progress on `codex/m5-edit-command-foundation`, based directly on that accepted M4 commit. The first host-only slice implements command schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, an independent candidate `SongProject`, explicit before/after note diffs, and consume-once Apply/Reject. Apply rechecks staleness and creates one Undo transaction; Reject leaves the active song clean and unchanged. No editor preview UI, candidate audition, bounded transform resolver, natural-language translator, or model service has been added yet.
+M5 is now in progress on `codex/m5-edit-command-foundation`, based directly on that accepted M4 commit. The command foundation implements schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, an independent candidate `SongProject`, explicit before/after note diffs, and consume-once Apply/Reject. Source checkpoint `3d3a91b` connects that core to an editor-owned note-proposal card: the piano roll shows before/after overlays, A/B publishes active or candidate through the normal immutable sequence path, Save preserves accepted A, Apply is one Undo transaction, Reject is non-mutating, and any unrelated project edit invalidates stale B. The first manual producer transposes one selected note up a semitone. No seeded multi-note transform resolver, natural-language translator, or model service has been added yet.
 
-The accepted M4 publication baseline is `7af6573` (`Accept M4 host-owned sound workflow`) on `codex/m4-accepted-0.3.0`, available as draft PR #1. Always verify live `HEAD`, upstream state, and the working tree before relying on that value; the M5 foundation is a separate stacked branch until M4 lands on `main`.
+The accepted M4 publication baseline is `7af6573` (`Accept M4 host-owned sound workflow`) on `codex/m4-accepted-0.3.0`, available as draft PR #1. The M5 branch is a stacked draft PR #2; its command foundation is `290fdfb` and its proposal implementation is `3d3a91b`. Always verify live `HEAD`, upstream state, and the working tree before relying on those values or assuming M4 has landed on `main`.
 
 Project version: `0.3.0` (accepted M4 host-owned sound workflow)
 
@@ -47,9 +47,14 @@ Read [the product vision](docs/PRODUCT_VISION.md) before changing product scope.
 - Non-mutating command candidates with explicit before/after note diffs.
 - Consume-once command Apply/Reject; Apply is one named Undo transaction.
 - Portable schema-validated command fixture with deterministic seed provenance.
-- Save isolation: unapplied previews never silently replace the accepted project sound.
+- Editor-owned M5 note-proposal card with exact change counts, first-note detail, and before/after hashes.
+- Orange before-note and blue after-note piano-roll overlays for add, update, and remove diffs.
+- Note A/B audition through normal immutable sequence snapshots without mutating the project.
+- Explicit note Apply/Reject, automatic stale invalidation, and one-step Undo/Redo.
+- Save isolation: unapplied note or sound previews never silently replace accepted A.
+- Mutually exclusive sound and note candidate lanes plus pending-preview discard warnings.
 - Separate exact saved-state integrity from the live-equivalent hash observed after Surge restore.
-- Silent packaged self-test, UI snapshot mode, and idle CPU regression mode.
+- Silent packaged self-test, M4 and M5 native workflow modes, UI snapshot mode, and idle CPU regression mode.
 
 ## Current verified local baseline
 
@@ -58,9 +63,12 @@ The latest machine-local reports available when this handoff was prepared showed
 | Gate | Result |
 | --- | --- |
 | Scheduler assertions | 83 passed |
-| Project/round-trip/command assertions | 103 passed |
-| Schema-validated artifacts and fixtures | 12 passed |
+| Project/round-trip/command assertions | 107 passed |
+| Schema-validated artifacts and fixtures | 13 passed |
 | Edit-command candidate SHA-256 | `27a69dbc6331f951a7d06a16bbf02970b77f9cc0af52a1365b095654867babea` |
+| M5 proposal A SHA-256 | `7833b2e817743f6079612c685f2a0659e154d769d530077d5da1f34544a117ff` |
+| M5 proposal B SHA-256 | `90fdd1363b5e1855c985983fd47917c39c58b4f6e977f1fc507447e2cf5d2f88` |
+| Packaged M5 workflow | passed; preview, Save-A, A/B, Reject, Apply, one Undo/Redo, stale invalidation, clean Close |
 | Surge XT | 1.3.4 |
 | Live Surge parameters | 2,855; matched inventory |
 | Current accepted inventory records | 1 |
@@ -71,7 +79,9 @@ The latest machine-local reports available when this handoff was prepared showed
 | Host-owned real-Surge sound name | `Self-test Surge state`; exact round trip |
 | Latest captured real Surge state | 67,345 bytes; SHA-256 `a771b28878606e1b830c9c5f02a46686328cc690e03153d2bd141cf0eee8ea40` |
 | Exact saved-B packaged workflow | passed; A/B `91ED214E`, clean Reject and Close |
-| Packaged editor SHA-256 | `c43d72941325d2568d1bac0ed4661a6c5b4c17bb9e5ef422b05e8e5c2dd71d91` |
+| Packaged UI snapshot | 88,375 bytes; visually inspected with candidate overlay and proposal card |
+| UI idle gate | 1,234.4 ms process CPU over 6,049 ms |
+| Packaged editor SHA-256 | `1815e8d6fc9838d039f25c1021b00250f42620a2c06285edc86f9ff98bafad52` |
 
 Device name, sample rate, block size, latency, full path-derived identifier, and bundle fingerprint are machine observations. Regenerate rather than copying them to another machine.
 
@@ -108,7 +118,7 @@ Both paths are now covered by packaged acceptance modes.
 - Only the accepted A snapshot is persisted. The ephemeral B candidate is intentionally not stored across application restarts.
 - No multiple tracks, mixer, pan, mute, solo, buses, or effects chain.
 - No arrangement timeline, sections, tempo changes, or automation lanes.
-- The host-side note-command core exists, but there is no editor preview/audition UI, bounded transform resolver, natural-language translator, or connected AI service.
+- The note-command core and one-note editor proposal workflow exist, but there is no seeded multi-note transform resolver, natural-language translator, or connected AI service.
 - No game-state transitions, stem management, offline final-song export, or engine adapter.
 - Scanner isolation does not contain a failure from a VST3 already processing in the editor.
 - The build script currently assumes the Visual Studio 18 Community installation and generator.
@@ -116,7 +126,7 @@ Both paths are now covered by packaged acceptance modes.
 
 ## Recommended next gate
 
-Continue [Roadmap M5: Unified edit-command layer](docs/ROADMAP.md#m5-unified-edit-command-layer) by connecting `EditCommandPreview` to an editor-owned proposal card: show added/updated/removed notes, publish the candidate through the normal immutable sequence path for A/B audition, and expose explicit Apply/Reject. Then add the first bounded deterministic transform over the same resolved-command contract. Do not combine this gate with `.fxp` indexing, multi-track, arrangement, or live model-service integration.
+Continue [Roadmap M5: Unified edit-command layer](docs/ROADMAP.md#m5-unified-edit-command-layer) with the first seeded bounded multi-note transform over the existing proposal card and resolved-command contract. The same project, selection, parameters, and seed must resolve to identical concrete changes; preview must not mutate A; the existing overlay/A/B/Apply/Reject lifecycle must handle the larger diff unchanged. Do not combine this gate with `.fxp` indexing, multi-track, arrangement, or live model-service integration.
 
 ## First takeover actions
 
@@ -157,7 +167,7 @@ First read HANDOFF.md and docs/README.md completely, then inspect git status, th
 
 The product is a music-only editor aimed mainly at video-game music. Manual and future AI edits must share one versioned project model, and technical tests must remain separate from listening approval.
 
-M4 is accepted as version 0.3.0 and published at commit 7af6573 on draft PR #1. M5 is in progress on codex/m5-edit-command-foundation: its version-1 note-command schema, content-hash precondition, candidate/diff core, consume-once Apply/Reject, one-Undo behavior, and portable fixture pass 103 native project assertions and 12 schema validations. Next connect the preview to visible note diff and A/B audition controls; do not add a live AI service, multi-track, arrangement, or factory .fxp indexing in that slice.
+M4 is accepted as version 0.3.0 and published at commit 7af6573 on draft PR #1. M5 is in progress on codex/m5-edit-command-foundation and draft PR #2. Its command foundation plus source checkpoint 3d3a91b implement a visual editor-owned note proposal with immutable A/B audition, Save-A isolation, explicit Apply/Reject, one Undo/Redo, and stale invalidation; 107 native project assertions and 13 schema validations pass. Next add one seeded bounded multi-note transform over that same proposal contract. Do not add a live AI service, multi-track, arrangement, or factory .fxp indexing in that slice.
 ```
 
 ## Handoff maintenance

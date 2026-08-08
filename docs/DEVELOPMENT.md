@@ -128,13 +128,15 @@ The realtime script also runs the M5 command-core cases using the portable `test
 
 ## Non-interactive editor modes
 
-The packaged editor has three test modes used by `test-realtime.ps1`:
+The packaged editor has five test modes used by the Release gates:
 
 | Argument | Behavior |
 | --- | --- |
 | `--self-test` | opens the accepted device and Surge instance, checks identity/state/project behavior, writes JSON, and intentionally emits no music |
 | `--ui-snapshot` | constructs the packaged UI, writes the 1220x800 snapshot, and exits |
 | `--ui-idle-test` | holds the UI for a four-second observation window used to catch message-thread CPU regressions |
+| `--m4-workflow-test` | opens an explicit accepted song, plays it, and exercises unchanged sound Capture/Reject/Close lifecycle; it can emit audio |
+| `--m5-workflow-test` | keeps transport stopped and exercises note preview, Save-A, A/B, Reject, Apply, Undo/Redo, stale invalidation, and cleanup |
 
 These are automated gates, not normal authoring modes.
 

@@ -79,7 +79,7 @@ VST3 does not guarantee one uniform factory-preset browsing experience across al
 
 ## M5: Unified edit-command layer
 
-Status: in progress. The 2026-08-09 foundation implements schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, non-mutating candidate projects, explicit note diffs, consume-once Apply/Reject, one-transaction Undo/Redo, strict stale/invalid rejection, seed preservation, native tests, and a portable schema-validated fixture. The visual diff UI, candidate A/B audition, bounded transform resolvers, and any natural-language translator remain open.
+Status: in progress. The 2026-08-09 foundation implements schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, non-mutating candidate projects, explicit note diffs, consume-once Apply/Reject, one-transaction Undo/Redo, strict stale/invalid rejection, seed preservation, native tests, and a portable schema-validated fixture. The follow-up editor slice owns one pending preview, renders before/after note overlays and counts, auditions A/B through normal immutable sequence publication, applies or rejects explicitly, preserves accepted A on Save, and invalidates stale previews. Seeded bounded multi-note transform resolvers and any natural-language translator remain open.
 
 ### Goal
 

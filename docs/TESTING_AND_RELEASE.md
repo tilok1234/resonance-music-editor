@@ -114,9 +114,19 @@ For an explicitly selected saved project, the Release editor can exercise the pr
 
 This hidden mode opens the configured Windows Audio device and processes the song for 4.5 seconds. It requires A's post-processing live-equivalent hash to remain stable through playback, unchanged B to match A with `STATE MATCHES A`, Reject to preserve a clean project, and Close to proceed without a false discard warning. Unlike `--self-test`, this mode can emit audible audio; use a safe output level. It is a technical identity and interaction gate, not a new listening judgment.
 
+### Packaged M5 native proposal gate
+
+The Release editor exercises the production note-proposal controls without browser automation:
+
+```powershell
+.\bin\ResonanceMusicEditor.exe --m5-workflow-test --report <report.json>
+```
+
+This hidden mode keeps transport stopped. It creates a selected-note `+1` candidate, proves the active song remains clean and hash-identical, saves and reloads accepted A while B remains pending, checks the sound/note candidate interlock, switches both A/B controls, rejects without mutation, applies as one Undo transaction, verifies Undo/Redo hashes, invalidates a stale preview after an unrelated edit, restores the original project, and closes without a warning after cleanup. `schema/m5-workflow-test.schema.json` requires every recorded lifecycle condition to pass.
+
 ### Artifact-schema gate
 
-`scripts/validate-artifacts.py` validates the current JSON reports, project fixtures, and edit-command fixture against the schemas under `schema/`. The current full sequence validates 12 artifacts and fixtures.
+`scripts/validate-artifacts.py` validates the current JSON reports, project fixtures, and edit-command fixture against the schemas under `schema/`. The current full sequence validates 13 artifacts and fixtures.
 
 Machine-specific reports are ignored by Git. Schemas and portable `.resonance.json` fixtures are versioned.
 
@@ -137,6 +147,7 @@ Before calling an interaction milestone complete, verify the exact packaged Rele
 - native Surge open, audition strip, keyboard, close, and reopen;
 - sound B capture, A/B audition, Apply, Reject, dirty state, and discard warning;
 - sound Undo/Redo restoring the live instance, then Save, close, and Open preserving the applied sound;
+- note proposal overlay/counts, A/B audition, Save-A isolation, Apply, Reject, one-step Undo/Redo, and discard warning;
 - no stuck note or leftover process;
 - responsive idle behavior.
 

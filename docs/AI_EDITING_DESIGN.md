@@ -1,6 +1,6 @@
 # AI-assisted music editing design
 
-Status: M5 foundation in progress; the version-1 host command, candidate, diff, and Apply/Reject core is implemented, while its editor UI, transforms, natural-language translation, and model-service boundary remain future work
+Status: M5 in progress; the version-1 host command core and editor-owned visual A/B proposal workflow are implemented, while seeded bounded transforms, natural-language translation, and the model-service boundary remain future work
 
 ## Goal
 
@@ -37,7 +37,7 @@ flowchart LR
 
 The model proposes intent. A deterministic host-side engine resolves and validates concrete edits. The active project changes only at Apply.
 
-## Implemented M5 foundation
+## Implemented M5 command and proposal boundary
 
 The first host-side slice is deliberately service-independent:
 
@@ -49,8 +49,14 @@ The first host-side slice is deliberately service-independent:
 - Apply rechecks the content hash, publishes exactly the previewed changes as one named Undo transaction, and consumes the preview;
 - Reject consumes the preview without changing or dirtying the active project;
 - the optional integer seed is preserved as deterministic provenance for later bounded transforms.
+- `MainEditorComponent` owns at most one pending preview and shows its summary, counts, exact first note change, and before/after hashes;
+- the piano roll draws accepted before-notes and proposed after-notes without changing active hit testing;
+- Audition A and B publish either project or candidate through the normal immutable `SequenceSnapshot` path;
+- explicit Apply and Reject preserve the consume-once core, Save writes only A, and unrelated project edits invalidate stale B;
+- note and sound candidate controls are interlocked so the editor never presents two simultaneous A/B decisions;
+- the first manual producer is deliberately narrow: transpose the selected note up one semitone.
 
-The content hash excludes only the editor build-version label. It includes the musical model and accepted opaque instrument state, so a command becomes stale after any material project change. The current editor does not yet display or audition `EditCommandPreview`; those are the next M5 UI steps. The seed is recorded, but randomized transforms are not implemented yet.
+The content hash excludes only the editor build-version label. It includes the musical model and accepted opaque instrument state, so a command becomes stale after any material project change. Existing note timing that predates exact tick storage may be preserved byte-semantically by a pitch-only update; any changed timing must still resolve to an integer tick at 960 PPQ. The seed is recorded, but seeded transform resolution is not implemented yet.
 
 ## Command envelope
 
@@ -168,6 +174,8 @@ A proposal should create a candidate project revision or bounded patch, not muta
 
 The preview engine must not create a second unsafe plug-in scan path. For opaque VST3 state, use explicit before/after snapshots and label the diff as opaque unless parameters are mapped semantically.
 
+The implemented single-note card covers the first, second, and final bullets for note updates: orange before-note, blue after-note, add/update/remove counts, exact note detail, content hashes, and A/B sequence audition. Multi-note transforms will reuse this card; parameter, track, section, and warning views remain future extensions.
+
 ## VST3 parameter and preset edits
 
 The first sound-editing milestone should establish host-owned parameter metadata and named state snapshots. AI should initially operate only on allowlisted parameters with known normalized ranges and stable identifiers.
@@ -207,5 +215,7 @@ The first AI slice should be intentionally small:
 6. audition without changing the active project;
 7. apply as one Undo transaction or reject with no mutation;
 8. cover deterministic resolution, stale proposals, invalid IDs, bounds, and round trips with tests.
+
+Items 1, 2, 4, 5, 6, 7, and the host-side portions of item 8 now have native coverage. The next M5 slice is a seeded bounded multi-note transform. Natural-language translation remains intentionally deferred until that resolver produces identical concrete changes for the same project, selection, parameters, and seed.
 
 Do not begin with open-ended “make a whole soundtrack” generation. The command and preview contract must become trustworthy first.
