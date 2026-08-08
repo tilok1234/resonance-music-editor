@@ -2,7 +2,7 @@
 
 #include <JuceHeader.h>
 
-#include "song_project.h"
+#include "edit_command.h"
 
 #include <functional>
 #include <optional>
@@ -16,6 +16,10 @@ public:
 
     void setPlayheadBeat (double beat);
     void setSelectedNote (const juce::String& id);
+    void setEditPreview (const std::vector<NoteEditDiff>& diffs,
+                         bool auditioningCandidate);
+    void setEditPreviewAudition (bool auditioningCandidate);
+    void clearEditPreview();
     const juce::String& getSelectedNote() const noexcept { return selectedNoteId; }
     void setSelectionChangedCallback (std::function<void (const juce::String&)> callback);
 
@@ -53,8 +57,10 @@ private:
     static constexpr int visibleNoteRows = 29;
     DragMode dragMode = DragMode::none;
     std::optional<SongNote> dragOrigin;
+    std::vector<NoteEditDiff> editPreviewDiffs;
     double dragBeatOffset = 0.0;
     int dragPitchOffset = 0;
+    bool auditioningEditCandidate = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PianoRoll)
 };

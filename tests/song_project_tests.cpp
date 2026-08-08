@@ -5,6 +5,7 @@
 #include "../src/song_project.h"
 
 #include <array>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 
@@ -261,6 +262,35 @@ void testEditCommandFoundation (TestContext& context,
                     "An intervening project change must make Apply stale");
     context.expect (staleApplyPreview.isPending() && staleApplyPreview.reject().wasOk(),
                     "A stale Apply failure must leave the preview available to reject");
+
+    resonance::SongProject legacyTimingProject;
+    auto legacyTimingNote = legacyTimingProject.findNote ("note-1");
+    context.expect (legacyTimingNote.has_value()
+                        && std::abs (legacyTimingNote->lengthBeats - 0.82) < 1.0e-9,
+                    "The accepted starter loop must retain its legacy 0.82-beat articulation");
+    resonance::EditCommand legacyTimingCommand;
+    legacyTimingCommand.projectContentSha256 = legacyTimingProject.getContentSha256();
+    legacyTimingCommand.summary = "Transpose without changing legacy timing";
+    ++legacyTimingNote->midiNote;
+    legacyTimingCommand.changes.push_back ({ resonance::NoteEditAction::update,
+                                             legacyTimingNote->id,
+                                             *legacyTimingNote });
+    resonance::EditCommandPreview legacyTimingPreview;
+    context.expect (resonance::createEditCommandPreview (legacyTimingCommand,
+                                                         legacyTimingProject,
+                                                         legacyTimingPreview).wasOk(),
+                    "An update may preserve accepted legacy timing exactly");
+    const auto preservedTimingNote = legacyTimingPreview.getCandidateProject()->findNote ("note-1");
+    context.expect (preservedTimingNote.has_value()
+                        && std::abs (preservedTimingNote->lengthBeats - 0.82) < 1.0e-9,
+                    "A pitch-only proposal must not quantize the accepted note articulation");
+
+    auto invalidLegacyTimingCommand = legacyTimingCommand;
+    invalidLegacyTimingCommand.changes.front().note->lengthBeats = 0.821;
+    context.expect (resonance::createEditCommandPreview (invalidLegacyTimingCommand,
+                                                         legacyTimingProject,
+                                                         legacyTimingPreview).failed(),
+                    "Changed timing must still resolve to an integer tick at PPQ 960");
 
     resonance::SongProject invalidProject;
     auto unknownTarget = command;

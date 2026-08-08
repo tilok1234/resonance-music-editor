@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include "edit_command.h"
 #include "known_plugin.h"
 #include "piano_roll.h"
 #include "realtime_engine.h"
@@ -28,6 +29,8 @@ public:
     bool keyPressed (const juce::KeyPress& key) override;
     void requestClose (std::function<void()> closeAction);
     juce::var runM4WorkflowSelfTest (const juce::File& projectFile);
+    juce::var runM5WorkflowSelfTest();
+    void prepareM5PreviewForSnapshot();
 
 private:
     class PluginEditorWindow;
@@ -50,6 +53,14 @@ private:
     bool hasUncapturedLiveSoundState();
     void clearSoundCandidate();
     void refreshSoundControls();
+    void previewSelectedNoteEdit();
+    void auditionEditProject();
+    void auditionEditCandidate();
+    void applyEditPreview();
+    void rejectEditPreview();
+    void clearEditPreview (bool publishActiveSequence);
+    void refreshEditPreviewControls();
+    bool hasPendingEditPreview() const noexcept;
     void updateStatus();
     void saveSettings();
     void drawCard (juce::Graphics&, juce::Rectangle<int>) const;
@@ -87,6 +98,7 @@ private:
     std::unique_ptr<juce::FileChooser> activeFileChooser;
     juce::MemoryBlock initialPluginState;
     std::optional<PluginSoundSnapshot> soundCandidate;
+    std::optional<EditCommandPreview> editPreview;
     juce::String acceptedLiveSoundSha256;
     juce::String candidateLiveSoundSha256;
     juce::String auditionedSoundSha256;
@@ -102,6 +114,8 @@ private:
     juce::Label transportPositionLabel;
     juce::Label deviceSummaryLabel;
     juce::Label diagnosticLabel;
+    juce::Label editProposalSummaryLabel;
+    juce::Label editProposalDiffLabel;
     juce::TextButton newButton { "New" };
     juce::TextButton openButton { "Open" };
     juce::TextButton saveButton { "Save" };
@@ -116,6 +130,11 @@ private:
     juce::TextButton auditionCandidateButton { "Audition B" };
     juce::TextButton applySoundButton { "Apply B" };
     juce::TextButton rejectSoundButton { "Reject B" };
+    juce::TextButton previewSelectedEditButton { "Preview selected +1" };
+    juce::TextButton auditionEditProjectButton { "Audition A" };
+    juce::TextButton auditionEditCandidateButton { "Audition B" };
+    juce::TextButton applyEditButton { "Apply" };
+    juce::TextButton rejectEditButton { "Reject" };
     juce::TextEditor soundNameEditor;
     juce::Slider bpmSlider;
     juce::Slider gainSlider;
@@ -134,6 +153,7 @@ private:
     juce::Rectangle<int> loopCardBounds;
     juce::Rectangle<int> keyboardCardBounds;
     juce::Rectangle<int> deviceCardBounds;
+    juce::Rectangle<int> editProposalBounds;
 
     float displayedLeftPeak = 0.0f;
     float displayedRightPeak = 0.0f;
@@ -144,6 +164,8 @@ private:
     bool refreshingProjectControls = false;
     bool bpmGestureActive = false;
     bool velocityGestureActive = false;
+    bool auditioningEditCandidate = false;
+    bool applyingEditPreview = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainEditorComponent)
 };

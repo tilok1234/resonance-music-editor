@@ -258,6 +258,17 @@ public:
         return editor != nullptr ? editor->runM4WorkflowSelfTest (projectFile) : juce::var {};
     }
 
+    juce::var runM5WorkflowSelfTest()
+    {
+        return editor != nullptr ? editor->runM5WorkflowSelfTest() : juce::var {};
+    }
+
+    void prepareM5PreviewForSnapshot()
+    {
+        if (editor != nullptr)
+            editor->prepareM5PreviewForSnapshot();
+    }
+
 private:
     MainEditorComponent* editor = nullptr;
 };
@@ -296,10 +307,12 @@ public:
         const auto snapshotMode = args.contains ("--ui-snapshot");
         const auto idleTestMode = args.contains ("--ui-idle-test");
         const auto m4WorkflowTestMode = args.contains ("--m4-workflow-test");
+        const auto m5WorkflowTestMode = args.contains ("--m5-workflow-test");
         window = std::make_unique<MainWindow> (inventory,
                                                quarantine,
                                                properties.getUserSettings(),
-                                               ! snapshotMode && ! idleTestMode && ! m4WorkflowTestMode);
+                                               ! snapshotMode && ! idleTestMode
+                                                   && ! m4WorkflowTestMode && ! m5WorkflowTestMode);
 
         if (snapshotMode)
         {
@@ -311,6 +324,7 @@ public:
 
                 if (content != nullptr)
                 {
+                    window->prepareM5PreviewForSnapshot();
                     const auto image = content->createComponentSnapshot (content->getLocalBounds(), true, 1.0f);
                     juce::MemoryOutputStream encoded;
                     juce::PNGImageFormat png;
@@ -352,6 +366,24 @@ public:
                                     && static_cast<bool> (object->getProperty ("passed"));
                 const auto reportWritten = writeReport (reportFile, report);
                 setApplicationReturnValue (passed && reportWritten ? 0 : 5);
+                quit();
+            });
+        }
+        else if (m5WorkflowTestMode)
+        {
+            const auto reportFile = resolvePathArgument (args,
+                                                         "--report",
+                                                         "m5-workflow-test-report.json");
+            juce::Timer::callAfterDelay (750, [this, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runM5WorkflowSelfTest()
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 6);
                 quit();
             });
         }

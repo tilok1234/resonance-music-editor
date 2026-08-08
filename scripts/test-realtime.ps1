@@ -11,6 +11,7 @@ $quarantine = Join-Path $artifacts "plugin-quarantine.json"
 $engineReport = Join-Path $artifacts "realtime-engine-test-report.json"
 $projectReport = Join-Path $artifacts "song-project-test-report.json"
 $selfTestReport = Join-Path $artifacts "realtime-self-test.json"
+$m5WorkflowReport = Join-Path $artifacts "m5-workflow-test-report.json"
 $songProjectArtifact = Join-Path $artifacts "realtime-song-project.resonance.json"
 $uiSnapshot = Join-Path $artifacts "realtime-ui-snapshot.png"
 $editCommandFixture = Join-Path $projectRoot "tests\fixtures\edit-command-note-patch-v1.json"
@@ -36,7 +37,7 @@ if (-not (Test-Path -LiteralPath $editor)) {
 }
 
 New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
-Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$songProjectArtifact,$uiSnapshot -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m5WorkflowReport,$songProjectArtifact,$uiSnapshot -Force -ErrorAction SilentlyContinue
 
 & $engineTests --report $engineReport
 if ($LASTEXITCODE -ne 0) {
@@ -105,6 +106,45 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     throw "The hidden self-test left an editor process running"
 }
 
+$m5WorkflowTest = Start-Process -FilePath $editor -ArgumentList "--m5-workflow-test","--report",$m5WorkflowReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($m5WorkflowTest.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $m5WorkflowReport) {
+        Get-Content -LiteralPath $m5WorkflowReport
+    }
+    throw "M5 proposal workflow test failed with exit code $($m5WorkflowTest.ExitCode)"
+}
+
+$m5Result = Get-Content -LiteralPath $m5WorkflowReport -Raw | ConvertFrom-Json
+if (-not $m5Result.passed -or -not $m5Result.previewCreated -or
+    -not $m5Result.activeUnchangedDuringPreview -or -not $m5Result.projectCleanDuringPreview -or
+    -not $m5Result.savePreservedAcceptedA) {
+    throw "The M5 proposal preview mutated or failed to preserve the active project"
+}
+
+if (-not $m5Result.soundLaneInterlocked) {
+    throw "The simultaneous sound and note candidate lanes were not interlocked"
+}
+
+if (-not $m5Result.candidateAuditionSelected -or -not $m5Result.projectAuditionSelected -or
+    -not $m5Result.rejectedWithoutMutation) {
+    throw "The M5 A/B audition or Reject lifecycle failed"
+}
+
+if (-not $m5Result.applied -or -not $m5Result.applyProducedOneUndo -or
+    -not $m5Result.undoRestoredBefore -or -not $m5Result.redoRestoredCandidate) {
+    throw "The M5 Apply and one-Undo/Redo contract failed"
+}
+
+if (-not $m5Result.stalePreviewInvalidated -or -not $m5Result.finalRestored -or
+    -not $m5Result.closeAcceptedWithoutWarning) {
+    throw "The M5 stale-preview or lifecycle cleanup contract failed"
+}
+
+if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
+    throw "The M5 workflow test left an editor process running"
+}
+
 $snapshotTest = Start-Process -FilePath $editor -ArgumentList "--ui-snapshot" -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
 
 if ($snapshotTest.ExitCode -ne 0) {
@@ -154,6 +194,11 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     EditCommandVersion = $projectResult.editCommandVersion
     EditCommandFixture = $projectResult.editCommandFixture
     EditCommandCandidateSha256 = $projectResult.editCommandCandidateSha256
+    M5ProposalNote = $m5Result.selectedNoteId
+    M5ProposalBeforeSha256 = $m5Result.beforeContentSha256
+    M5ProposalCandidateSha256 = $m5Result.candidateContentSha256
+    M5ProposalDiffs = $m5Result.diffCount
+    M5StalePreviewInvalidated = $m5Result.stalePreviewInvalidated
     LiveSurgeStateBytes = $result.songProject.stateBytes
     LiveSurgeStateSha256 = $result.songProject.stateSha256
     LiveSoundName = $result.songProject.soundName

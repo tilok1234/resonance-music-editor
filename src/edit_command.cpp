@@ -154,7 +154,9 @@ bool notesMatch (const SongNote& first, const SongNote& second)
         && first.velocity == second.velocity;
 }
 
-juce::Result validateResolvedNote (const SongNote& note, const SongProject& project)
+juce::Result validateResolvedNote (const SongNote& note,
+                                   const SongProject& project,
+                                   const SongNote* existingNote = nullptr)
 {
     if (note.id.isEmpty())
         return juce::Result::fail ("A resolved note id is required");
@@ -163,15 +165,21 @@ juce::Result validateResolvedNote (const SongNote& note, const SongProject& proj
 
     const auto startTick = juce::roundToInt (note.beat * projectPpq);
     const auto lengthTicks = juce::roundToInt (note.lengthBeats * projectPpq);
-    if (std::abs (note.beat - static_cast<double> (startTick) / projectPpq) > 1.0e-9
-        || std::abs (note.lengthBeats - static_cast<double> (lengthTicks) / projectPpq) > 1.0e-9)
+    const auto preservesExistingStart = existingNote != nullptr
+                                        && std::abs (note.beat - existingNote->beat) < 1.0e-9;
+    const auto preservesExistingLength = existingNote != nullptr
+                                         && std::abs (note.lengthBeats - existingNote->lengthBeats) < 1.0e-9;
+    if ((! preservesExistingStart
+         && std::abs (note.beat - static_cast<double> (startTick) / projectPpq) > 1.0e-9)
+        || (! preservesExistingLength
+            && std::abs (note.lengthBeats - static_cast<double> (lengthTicks) / projectPpq) > 1.0e-9))
         return juce::Result::fail ("Resolved command timing must use integer ticks at PPQ 960");
 
-    const auto loopTicks = juce::roundToInt (project.getLoopLengthBeats() * projectPpq);
-    const auto minimumLengthTicks = juce::roundToInt (project.getSnapBeats() * projectPpq);
-    if (startTick < 0 || startTick >= loopTicks)
+    const auto loop = project.getLoopLengthBeats();
+    if (note.beat < 0.0 || note.beat >= loop)
         return juce::Result::fail ("Resolved note start is outside the target loop");
-    if (lengthTicks < minimumLengthTicks || startTick + lengthTicks > loopTicks)
+    if (note.lengthBeats < project.getSnapBeats()
+        || note.beat + note.lengthBeats > loop + 1.0e-9)
         return juce::Result::fail ("Resolved note length is outside the target loop or below the active snap length");
     if (note.midiNote < 0 || note.midiNote > 127)
         return juce::Result::fail ("Resolved note MIDI pitch must be from 0 through 127");
@@ -396,7 +404,9 @@ juce::Result createEditCommandPreview (const EditCommand& command,
             {
                 if (! change.note.has_value() || change.note->id != change.noteId)
                     return juce::Result::fail ("An update change must contain a matching resolved note");
-                const auto validation = validateResolvedNote (*change.note, *candidate);
+                const auto validation = validateResolvedNote (*change.note,
+                                                              *candidate,
+                                                              &*diff.before);
                 if (validation.failed())
                     return validation;
                 if (notesMatch (*diff.before, *change.note))
