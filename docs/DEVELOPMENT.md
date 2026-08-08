@@ -124,7 +124,7 @@ python .\scripts\validate-artifacts.py
 
 The order matters: later scripts consume binaries and inventory artifacts created by earlier steps. See [Testing and release](TESTING_AND_RELEASE.md) for the contracts behind each gate.
 
-The realtime script also runs the M5 command-core cases using the portable `tests/fixtures/edit-command-note-patch-v1.json` fixture. The test replaces its schema-valid placeholder content hash in memory with the exact active-project hash; do not hard-code a machine report or mutable local path into the fixture.
+The realtime script also runs the M5 command-core cases using the portable `tests/fixtures/edit-command-note-patch-v1.json` fixture. The test replaces its schema-valid placeholder content hash in memory with the exact active-project hash; do not hard-code a machine report or mutable local path into the fixture. The same native suite resolves the seeded whole-loop velocity transform twice from reordered target IDs and records canonical command and candidate SHA-256 evidence.
 
 ## Non-interactive editor modes
 
@@ -136,7 +136,7 @@ The packaged editor has five test modes used by the Release gates:
 | `--ui-snapshot` | constructs the packaged UI, writes the 1220x800 snapshot, and exits |
 | `--ui-idle-test` | holds the UI for a four-second observation window used to catch message-thread CPU regressions |
 | `--m4-workflow-test` | opens an explicit accepted song, plays it, and exercises unchanged sound Capture/Reject/Close lifecycle; it can emit audio |
-| `--m5-workflow-test` | keeps transport stopped and exercises note preview, Save-A, A/B, Reject, Apply, Undo/Redo, stale invalidation, and cleanup |
+| `--m5-workflow-test` | keeps transport stopped and exercises selected-note plus seeded eight-note previews, Save-A, A/B, Reject, Apply, Undo/Redo, deterministic repeat, stale invalidation, and cleanup |
 
 These are automated gates, not normal authoring modes.
 

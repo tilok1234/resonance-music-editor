@@ -1,6 +1,6 @@
 # AI-assisted music editing design
 
-Status: M5 in progress; the version-1 host command core and editor-owned visual A/B proposal workflow are implemented, while seeded bounded transforms, natural-language translation, and the model-service boundary remain future work
+Status: M5 in progress; the version-1 host command core, editor-owned visual A/B proposal workflow, and first seeded bounded multi-note transform are implemented, while broader transform controls, natural-language translation, and the model-service boundary remain future work
 
 ## Goal
 
@@ -48,15 +48,17 @@ The first host-side slice is deliberately service-independent:
 - preview clones the active `SongProject`, validates all targets and bounds, applies the resolved changes only to that candidate, and returns explicit before/after note records and content hashes;
 - Apply rechecks the content hash, publishes exactly the previewed changes as one named Undo transaction, and consumes the preview;
 - Reject consumes the preview without changing or dirtying the active project;
-- the optional integer seed is preserved as deterministic provenance for later bounded transforms.
+- the optional integer seed is preserved as deterministic provenance in resolved commands;
+- `SeededVelocityVariation` validates 1 through 128 note IDs, a 31-bit non-negative seed, and maximum delta 1 through 32, canonicalizes target order, and resolves through a fixed integer mixer into concrete velocity-only updates;
+- identical project content, target set, seed, and maximum delta produce the same serialized command and candidate independently of supplied target order;
 - `MainEditorComponent` owns at most one pending preview and shows its summary, counts, exact first note change, and before/after hashes;
 - the piano roll draws accepted before-notes and proposed after-notes without changing active hit testing;
 - Audition A and B publish either project or candidate through the normal immutable `SequenceSnapshot` path;
 - explicit Apply and Reject preserve the consume-once core, Save writes only A, and unrelated project edits invalidate stale B;
 - note and sound candidate controls are interlocked so the editor never presents two simultaneous A/B decisions;
-- the first manual producer is deliberately narrow: transpose the selected note up one semitone.
+- the first manual producers remain deliberately bounded: transpose the selected note up one semitone, or vary the whole loop's velocities with seed `18421` and maximum delta `8`.
 
-The content hash excludes only the editor build-version label. It includes the musical model and accepted opaque instrument state, so a command becomes stale after any material project change. Existing note timing that predates exact tick storage may be preserved byte-semantically by a pitch-only update; any changed timing must still resolve to an integer tick at 960 PPQ. The seed is recorded, but seeded transform resolution is not implemented yet.
+The content hash excludes only the editor build-version label. It includes the musical model and accepted opaque instrument state, so a command becomes stale after any material project change. Existing note timing that predates exact tick storage may be preserved byte-semantically by a pitch- or velocity-only update; any changed timing must still resolve to an integer tick at 960 PPQ. The current seeded resolver is host-side and service-independent: it records the seed, but preview and Apply use its fully resolved concrete changes rather than rerunning randomness.
 
 ## Command envelope
 
@@ -105,6 +107,7 @@ The host must reject stale project revisions, unknown IDs, unsupported operation
 
 Implement these first because they are easy to preview and test:
 
+- vary velocity within an explicit bound and deterministic seed; the fixed whole-loop form is implemented;
 - quantize with strength rather than only hard snap;
 - humanize timing and velocity within explicit bounds;
 - transpose or constrain to a scale/register;
@@ -216,6 +219,6 @@ The first AI slice should be intentionally small:
 7. apply as one Undo transaction or reject with no mutation;
 8. cover deterministic resolution, stale proposals, invalid IDs, bounds, and round trips with tests.
 
-Items 1, 2, 4, 5, 6, 7, and the host-side portions of item 8 now have native coverage. The next M5 slice is a seeded bounded multi-note transform. Natural-language translation remains intentionally deferred until that resolver produces identical concrete changes for the same project, selection, parameters, and seed.
+Items 1, 2, 4, 5, 6, 7, and the host-side portions of item 8 now have native coverage, including deterministic multi-note resolution. The next M5 slice should expose bounded target, strength, and seed inputs over that proven resolver. Natural-language translation remains intentionally deferred until those explicit host parameters are usable and inspectable.
 
 Do not begin with open-ended “make a whole soundtrack” generation. The command and preview contract must become trustworthy first.

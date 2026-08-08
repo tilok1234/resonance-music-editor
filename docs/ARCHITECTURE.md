@@ -9,9 +9,11 @@ Resonance is a C++20/JUCE 9 Windows application with four production executables
 ```mermaid
 flowchart LR
     U["Manual editor controls"] --> M["SongProject ValueTree"]
+    U --> EP["Bounded edit producers"]
     B["Host-owned A/B sound controls"] --> M
     B --> V
     A["Future AI translator"] -. "version-1 JSON" .-> EC["EditCommand validator and candidate"]
+    EP --> EC
     EC --> D["Before/after note diff"]
     D --> PB["Editor proposal card"]
     PB -->|"Apply once"| M
@@ -30,7 +32,7 @@ flowchart LR
     L --> V
 ```
 
-Solid lines are implemented host-side boundaries. Only the dotted AI translation path is unimplemented in this diagram; the current proposal card is driven by a bounded manual `+1` note action.
+Solid lines are implemented host-side boundaries. Only the dotted AI translation path is unimplemented in this diagram; the current proposal card is driven by bounded manual selected-note `+1` and seeded whole-loop velocity producers.
 
 ## Production executables
 
@@ -51,7 +53,7 @@ Solid lines are implemented host-side boundaries. Only the dotted AI translation
 | Main UI | `src/editor_component.*` | transport, device controls, file choosers, project actions, proposal ownership, native plug-in window |
 | Piano roll | `src/piano_roll.*` | note hit testing, selection, add, move, resize, delete, vertical scroll, proposal overlays |
 | Song model | `src/song_project.*` | ValueTree state, stable note IDs, Undo/Redo, JSON conversion, validation |
-| Edit-command core | `src/edit_command.*` | strict version-1 parsing, content-hash preconditions, candidate projects, note diffs, consume-once Apply/Reject |
+| Edit-command core | `src/edit_command.*` | strict version-1 parsing, content-hash preconditions, deterministic bounded transform resolution, candidate projects, note diffs, consume-once Apply/Reject |
 | Scheduling | `src/loop_scheduler.h` | sample-offset MIDI events, note wrap, fixed-capacity sequence contract |
 | Audio engine | `src/realtime_engine.*` | device callback, transport, MIDI merge, VST3 processing, gain, meters, guards |
 | Accepted plug-in load | `src/known_plugin.*` | inventory/quarantine parse, exact bundle revalidation, selected instrument record |
@@ -170,8 +172,8 @@ The current single-track shape is deliberate, but several seams are intended for
 - offline rendering can reuse the validated song and plug-in state while remaining separate from the device callback;
 - game-transition metadata can reference arrangement sections after ordinary arrangement editing exists.
 
-These are extension points, not permission to weaken current invariants. Multi-track, automation, seeded transform resolution, AI translation/service integration, effects, and game-state playback are not implemented yet.
+These are extension points, not permission to weaken current invariants. Multi-track, automation, broader or user-parameterized transforms, AI translation/service integration, effects, and game-state playback are not implemented yet.
 
 ## Architectural evidence
 
-The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the M5 edit-command foundation, and the M5 note-proposal workflow. See the [documentation index](README.md) for the full list.
+The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the M5 edit-command foundation, the M5 note-proposal workflow, and the first seeded loop-dynamics transform. See the [documentation index](README.md) for the full list.
