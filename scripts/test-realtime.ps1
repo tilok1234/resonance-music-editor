@@ -91,6 +91,10 @@ if (-not $result.songProject.savedPayloadExact -or -not $result.songProject.plug
     throw "The real Surge song-project state did not round-trip exactly"
 }
 
+if (-not $result.songProject.soundNameRoundTrip -or $result.songProject.soundName -ne "Self-test Surge state") {
+    throw "The host-owned sound name did not round-trip with the real Surge state"
+}
+
 if ($result.songProject.noteCount -ne 9 -or $result.songProject.loopLengthBeats -ne 16) {
     throw "The live song-project round trip lost editable note or loop data"
 }
@@ -147,6 +151,7 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     ProjectStateSha256 = $projectResult.stateSha256
     LiveSurgeStateBytes = $result.songProject.stateBytes
     LiveSurgeStateSha256 = $result.songProject.stateSha256
+    LiveSoundName = $result.songProject.soundName
     LiveSongProjectBytes = $result.songProject.fileBytes
     LoopNotes = $engineResult.noteCount
     DeviceType = $result.device.type

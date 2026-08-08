@@ -19,6 +19,13 @@ struct SongNote
     int velocity = 96;
 };
 
+struct PluginSoundSnapshot
+{
+    juce::String name;
+    juce::MemoryBlock state;
+    juce::String stateSha256;
+};
+
 class SongProject final : private juce::ValueTree::Listener
 {
 public:
@@ -51,8 +58,12 @@ public:
                             const juce::String& version);
     juce::String getPluginIdentifier() const;
     juce::String getPluginName() const;
+    juce::String getPluginSoundName() const;
     void setPluginState (const juce::MemoryBlock& state);
+    juce::Result applyPluginSound (const juce::String& soundName,
+                                   const juce::MemoryBlock& state);
     juce::Result getPluginState (juce::MemoryBlock& state) const;
+    juce::Result getPluginSoundSnapshot (PluginSoundSnapshot& snapshot) const;
     juce::String getPluginStateSha256() const;
 
     SequenceSnapshot createSequenceSnapshot() const;
@@ -80,6 +91,9 @@ private:
     juce::ValueTree findNoteTree (const juce::String& id) const;
     juce::var toJsonValue() const;
     static juce::Result valueTreeFromJson (const juce::var& json, juce::ValueTree& destination);
+    juce::Result writePluginSoundSnapshot (const juce::String& soundName,
+                                           const juce::MemoryBlock& state,
+                                           juce::UndoManager* undo);
     void installRoot (juce::ValueTree newRoot, bool shouldBeDirty);
     void projectChanged();
 

@@ -34,7 +34,8 @@ public:
     void flushPendingSequence();
 
     juce::Result capturePluginState (juce::MemoryBlock& destination);
-    juce::Result restorePluginState (const juce::MemoryBlock& state);
+    juce::Result restorePluginState (const juce::MemoryBlock& state,
+                                     juce::MemoryBlock* liveStateAfterRestore = nullptr);
 
     bool isPrepared() const noexcept { return prepared.load(); }
     double getDisplayBeat() const noexcept { return displayBeat.load(); }
@@ -114,6 +115,7 @@ private:
     std::atomic<juce::int64> invalidSamples { 0 };
     std::atomic<int> oversizedBlocks { 0 };
     std::atomic<int> processorExceptions { 0 };
+    std::atomic<juce::uint64> processedBlockCount { 0 };
 
     double absoluteTransportBeat = 0.0;
     juce::int64 transportSamples = 0;

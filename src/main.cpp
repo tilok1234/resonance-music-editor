@@ -3,6 +3,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <vector>
 
 namespace
 {
@@ -41,7 +42,112 @@ struct RenderMetrics
     juce::int64 nonFiniteSamples = 0;
     juce::int64 renderedSamples = 0;
     int outputChannels = 0;
+    juce::MemoryBlock stateBeforeRender;
+    juce::MemoryBlock stateAfterRender;
+    juce::MemoryBlock stateAfterReset;
+    juce::MemoryBlock stateAfterPreparedRestore;
+    juce::MemoryBlock stateAfterRepeatedPreparedRestore;
+    juce::String parameterSha256BeforeRender;
+    juce::String parameterSha256AfterRender;
+    int changedParametersAfterRender = 0;
 };
+
+std::vector<float> captureParameterValues (juce::AudioPluginInstance& plugin)
+{
+    std::vector<float> values;
+    values.reserve (static_cast<std::size_t> (plugin.getParameters().size()));
+
+    for (auto* parameter : plugin.getParameters())
+        values.push_back (parameter != nullptr ? parameter->getValue() : 0.0f);
+
+    return values;
+}
+
+juce::String parameterSnapshotHash (const std::vector<float>& values)
+{
+    return juce::SHA256 (values.data(), values.size() * sizeof (float)).toHexString();
+}
+
+int countChangedParameters (const std::vector<float>& before, const std::vector<float>& after)
+{
+    const auto compared = juce::jmin (before.size(), after.size());
+    auto changed = static_cast<int> (before.size() > after.size()
+                                         ? before.size() - after.size()
+                                         : after.size() - before.size());
+
+    for (std::size_t index = 0; index < compared; ++index)
+        if (before[index] != after[index])
+            ++changed;
+
+    return changed;
+}
+
+juce::int64 countDifferingStateBytes (const juce::MemoryBlock& before,
+                                      const juce::MemoryBlock& after)
+{
+    const auto compared = juce::jmin (before.getSize(), after.getSize());
+    const auto* beforeBytes = static_cast<const juce::uint8*> (before.getData());
+    const auto* afterBytes = static_cast<const juce::uint8*> (after.getData());
+    auto changed = static_cast<juce::int64> (before.getSize() > after.getSize()
+                                                 ? before.getSize() - after.getSize()
+                                                 : after.getSize() - before.getSize());
+
+    for (std::size_t index = 0; index < compared; ++index)
+        if (beforeBytes[index] != afterBytes[index])
+            ++changed;
+
+    return changed;
+}
+
+juce::int64 countCommonPrefixBytes (const juce::MemoryBlock& first,
+                                    const juce::MemoryBlock& second)
+{
+    const auto compared = juce::jmin (first.getSize(), second.getSize());
+    const auto* firstBytes = static_cast<const juce::uint8*> (first.getData());
+    const auto* secondBytes = static_cast<const juce::uint8*> (second.getData());
+    std::size_t index = 0;
+    while (index < compared && firstBytes[index] == secondBytes[index])
+        ++index;
+    return static_cast<juce::int64> (index);
+}
+
+juce::String stateTailHex (const juce::MemoryBlock& state)
+{
+    constexpr std::size_t tailBytes = 16;
+    const auto start = state.getSize() > tailBytes ? state.getSize() - tailBytes : 0;
+    juce::MemoryBlock tail (static_cast<const juce::uint8*> (state.getData()) + start,
+                            state.getSize() - start);
+    return juce::String::toHexString (tail.getData(), static_cast<int> (tail.getSize()), 1);
+}
+
+juce::MemoryBlock loadProjectPluginState (const juce::File& projectFile,
+                                          juce::String& soundName,
+                                          juce::String& savedHash)
+{
+    const auto parsed = juce::JSON::parse (projectFile.loadFileAsString());
+    auto* root = parsed.getDynamicObject();
+    if (root == nullptr)
+        throw std::runtime_error ("State-project root is not a JSON object");
+
+    const auto* tracks = root->getProperty ("tracks").getArray();
+    if (tracks == nullptr || tracks->isEmpty())
+        throw std::runtime_error ("State project contains no track");
+
+    auto* track = tracks->getReference (0).getDynamicObject();
+    auto* instrument = track != nullptr ? track->getProperty ("instrument").getDynamicObject() : nullptr;
+    if (instrument == nullptr)
+        throw std::runtime_error ("State project contains no instrument object");
+
+    soundName = instrument->getProperty ("soundName").toString();
+    savedHash = instrument->getProperty ("stateSha256").toString();
+    juce::MemoryBlock state;
+    if (! state.fromBase64Encoding (instrument->getProperty ("state").toString()) || state.isEmpty())
+        throw std::runtime_error ("State project contains invalid plug-in state data");
+    if (! savedHash.equalsIgnoreCase (juce::SHA256 (state).toHexString()))
+        throw std::runtime_error ("State project plug-in state failed its SHA-256 check");
+
+    return state;
+}
 
 juce::String getArgumentValue (const juce::StringArray& args, const juce::String& flag)
 {
@@ -58,7 +164,8 @@ void printUsage()
     std::cout
         << "Resonance Host Probe 0.1.0\n"
         << "Usage:\n"
-        << "  ResonanceHostProbe --plugin <bundle.vst3> --wav <output.wav> --report <report.json>\n";
+        << "  ResonanceHostProbe --plugin <bundle.vst3> --wav <output.wav> --report <report.json>"
+           " [--state-project <song.resonance.json>]\n";
 }
 
 juce::var describePlugin (const juce::PluginDescription& description)
@@ -147,6 +254,9 @@ RenderMetrics renderProbe (juce::AudioPluginInstance& plugin, const juce::File& 
                                                 plugin.getTotalNumOutputChannels());
     juce::AudioBuffer<float> rendered (2, totalSamples);
     juce::AudioBuffer<float> block (processingChannels, blockSize);
+    RenderMetrics metrics;
+    metrics.outputChannels = plugin.getTotalNumOutputChannels();
+    metrics.renderedSamples = totalSamples;
     rendered.clear();
 
     OfflinePlayHead playHead;
@@ -154,15 +264,15 @@ RenderMetrics renderProbe (juce::AudioPluginInstance& plugin, const juce::File& 
     plugin.setRateAndBufferSizeDetails (probeSampleRate, blockSize);
     plugin.prepareToPlay (probeSampleRate, blockSize);
     plugin.reset();
+    plugin.getStateInformation (metrics.stateBeforeRender);
+    const auto parameterValuesBeforeRender = captureParameterValues (plugin);
+    metrics.parameterSha256BeforeRender = parameterSnapshotHash (parameterValuesBeforeRender);
 
     const auto noteAt = [] (double seconds) {
         return static_cast<juce::int64> (std::llround (seconds * probeSampleRate));
     };
 
     double sumSquares = 0.0;
-    RenderMetrics metrics;
-    metrics.outputChannels = plugin.getTotalNumOutputChannels();
-    metrics.renderedSamples = totalSamples;
 
     for (int blockStart = 0; blockStart < totalSamples; blockStart += blockSize)
     {
@@ -209,6 +319,21 @@ RenderMetrics renderProbe (juce::AudioPluginInstance& plugin, const juce::File& 
         }
     }
 
+    plugin.getStateInformation (metrics.stateAfterRender);
+    const auto parameterValuesAfterRender = captureParameterValues (plugin);
+    metrics.parameterSha256AfterRender = parameterSnapshotHash (parameterValuesAfterRender);
+    metrics.changedParametersAfterRender = countChangedParameters (parameterValuesBeforeRender,
+                                                                   parameterValuesAfterRender);
+    plugin.reset();
+    plugin.getStateInformation (metrics.stateAfterReset);
+    plugin.setStateInformation (metrics.stateBeforeRender.getData(),
+                                static_cast<int> (metrics.stateBeforeRender.getSize()));
+    plugin.reset();
+    plugin.getStateInformation (metrics.stateAfterPreparedRestore);
+    plugin.setStateInformation (metrics.stateAfterPreparedRestore.getData(),
+                                static_cast<int> (metrics.stateAfterPreparedRestore.getSize()));
+    plugin.reset();
+    plugin.getStateInformation (metrics.stateAfterRepeatedPreparedRestore);
     plugin.releaseResources();
     plugin.setPlayHead (nullptr);
     metrics.rms = std::sqrt (sumSquares / static_cast<double> (totalSamples * rendered.getNumChannels()));
@@ -219,7 +344,10 @@ RenderMetrics renderProbe (juce::AudioPluginInstance& plugin, const juce::File& 
     return metrics;
 }
 
-int runProbe (const juce::File& pluginPath, const juce::File& wavPath, const juce::File& reportPath)
+int runProbe (const juce::File& pluginPath,
+              const juce::File& wavPath,
+              const juce::File& reportPath,
+              const juce::File& stateProjectPath)
 {
     auto* reportObject = new juce::DynamicObject();
     juce::var report (reportObject);
@@ -262,10 +390,50 @@ int runProbe (const juce::File& pluginPath, const juce::File& wavPath, const juc
     if (firstInstance == nullptr)
         throw std::runtime_error (("Initial plug-in load failed: " + error).toStdString());
 
+    juce::MemoryBlock requestedState;
+    juce::String requestedSoundName;
+    juce::String requestedStateHash;
+    if (stateProjectPath != juce::File())
+    {
+        if (! stateProjectPath.existsAsFile())
+            throw std::runtime_error ("The requested state project does not exist");
+
+        requestedState = loadProjectPluginState (stateProjectPath,
+                                                 requestedSoundName,
+                                                 requestedStateHash);
+        firstInstance->setStateInformation (requestedState.getData(),
+                                            static_cast<int> (requestedState.getSize()));
+        reportObject->setProperty ("stateProjectPath", stateProjectPath.getFullPathName());
+        reportObject->setProperty ("stateProjectSoundName", requestedSoundName);
+        reportObject->setProperty ("stateProjectSha256", requestedStateHash);
+    }
+
     juce::MemoryBlock originalState;
     firstInstance->getStateInformation (originalState);
     const auto originalStateHash = juce::SHA256 (originalState.getData(), originalState.getSize()).toHexString();
     firstInstance.reset();
+
+    auto headlessPreparedInstance = createInstance (manager, *selected, error);
+    if (headlessPreparedInstance == nullptr)
+        throw std::runtime_error (("Headless prepared plug-in load failed: " + error).toStdString());
+    headlessPreparedInstance->setNonRealtime (false);
+    headlessPreparedInstance->setRateAndBufferSizeDetails (probeSampleRate, blockSize);
+    headlessPreparedInstance->prepareToPlay (probeSampleRate, blockSize);
+    const auto& headlessInputState = requestedState.isEmpty() ? originalState : requestedState;
+    headlessPreparedInstance->setStateInformation (headlessInputState.getData(),
+                                                   static_cast<int> (headlessInputState.getSize()));
+    headlessPreparedInstance->reset();
+    juce::MemoryBlock stateAfterHeadlessPreparedRestore;
+    headlessPreparedInstance->getStateInformation (stateAfterHeadlessPreparedRestore);
+    headlessPreparedInstance->setStateInformation (stateAfterHeadlessPreparedRestore.getData(),
+                                                   static_cast<int> (stateAfterHeadlessPreparedRestore.getSize()));
+    headlessPreparedInstance->reset();
+    juce::MemoryBlock stateAfterRepeatedHeadlessPreparedRestore;
+    headlessPreparedInstance->getStateInformation (stateAfterRepeatedHeadlessPreparedRestore);
+    headlessPreparedInstance->releaseResources();
+    headlessPreparedInstance.reset();
+    const auto headlessPreparedRestoreIdempotent = stateAfterHeadlessPreparedRestore
+                                                   == stateAfterRepeatedHeadlessPreparedRestore;
 
     auto restoredInstance = createInstance (manager, *selected, error);
     if (restoredInstance == nullptr)
@@ -301,6 +469,8 @@ int runProbe (const juce::File& pluginPath, const juce::File& wavPath, const juc
     const auto parameterCount = restoredInstance->getParameters().size();
     const auto programCount = restoredInstance->getNumPrograms();
 
+    restoredInstance->setStateInformation (originalState.getData(),
+                                           static_cast<int> (originalState.getSize()));
     const auto metrics = renderProbe (*restoredInstance, wavPath);
     restoredInstance.reset();
 
@@ -308,16 +478,66 @@ int runProbe (const juce::File& pluginPath, const juce::File& wavPath, const juc
     const auto noInvalidSamples = metrics.nonFiniteSamples == 0;
     const auto stateCaptured = ! originalState.isEmpty();
     const auto waveWritten = wavPath.existsAsFile() && wavPath.getSize() > 44;
-    const auto passed = nonSilent && noInvalidSamples && stateCaptured && waveWritten;
+    const auto stateStableThroughRender = metrics.stateBeforeRender == metrics.stateAfterRender
+                                          && metrics.stateBeforeRender == metrics.stateAfterReset;
+    const auto parametersStableThroughRender = metrics.changedParametersAfterRender == 0;
+    const auto preparedRestoreIdempotent = metrics.stateAfterPreparedRestore
+                                           == metrics.stateAfterRepeatedPreparedRestore;
+    const auto passed = nonSilent && noInvalidSamples && stateCaptured && waveWritten
+                        && stateStableThroughRender && parametersStableThroughRender
+                        && preparedRestoreIdempotent && headlessPreparedRestoreIdempotent;
 
     reportObject->setProperty ("stateBytes", static_cast<juce::int64> (originalState.getSize()));
     reportObject->setProperty ("restoredStateBytes", static_cast<juce::int64> (restoredState.getSize()));
     reportObject->setProperty ("stateSha256", originalStateHash);
     reportObject->setProperty ("restoredStateSha256", restoredStateHash);
     reportObject->setProperty ("stateByteExactAfterReload", originalStateHash == restoredStateHash);
+    reportObject->setProperty ("stateSha256AfterHeadlessPreparedRestore",
+                               juce::SHA256 (stateAfterHeadlessPreparedRestore).toHexString());
+    reportObject->setProperty ("stateSha256AfterRepeatedHeadlessPreparedRestore",
+                               juce::SHA256 (stateAfterRepeatedHeadlessPreparedRestore).toHexString());
+    reportObject->setProperty ("headlessPreparedRestoreIdempotent",
+                               headlessPreparedRestoreIdempotent);
     reportObject->setProperty ("stateBytesAfterEditorCreation", static_cast<juce::int64> (stateAfterEditorCreation.getSize()));
     reportObject->setProperty ("stateSha256AfterEditorCreation", stateAfterEditorHash);
     reportObject->setProperty ("editorCreationChangedStateBytes", restoredStateHash != stateAfterEditorHash);
+    if (! requestedState.isEmpty())
+    {
+        reportObject->setProperty ("stateProjectRestoredByteExact", requestedState == originalState);
+        reportObject->setProperty ("stateProjectBytes", static_cast<juce::int64> (requestedState.getSize()));
+        reportObject->setProperty ("stateProjectRestoreDifferingBytes",
+                                   countDifferingStateBytes (requestedState, originalState));
+        reportObject->setProperty ("stateProjectRestoreCommonPrefixBytes",
+                                   countCommonPrefixBytes (requestedState, originalState));
+        reportObject->setProperty ("stateProjectTailHex", stateTailHex (requestedState));
+        reportObject->setProperty ("stateAfterRestoreTailHex", stateTailHex (originalState));
+    }
+    reportObject->setProperty ("stateBytesBeforeRender",
+                               static_cast<juce::int64> (metrics.stateBeforeRender.getSize()));
+    reportObject->setProperty ("stateSha256BeforeRender", juce::SHA256 (metrics.stateBeforeRender).toHexString());
+    reportObject->setProperty ("stateBytesAfterRender",
+                               static_cast<juce::int64> (metrics.stateAfterRender.getSize()));
+    reportObject->setProperty ("stateSha256AfterRender", juce::SHA256 (metrics.stateAfterRender).toHexString());
+    reportObject->setProperty ("stateByteExactAfterRender",
+                               metrics.stateBeforeRender == metrics.stateAfterRender);
+    reportObject->setProperty ("differingStateBytesAfterRender",
+                               countDifferingStateBytes (metrics.stateBeforeRender,
+                                                        metrics.stateAfterRender));
+    reportObject->setProperty ("stateBytesAfterReset",
+                               static_cast<juce::int64> (metrics.stateAfterReset.getSize()));
+    reportObject->setProperty ("stateSha256AfterReset", juce::SHA256 (metrics.stateAfterReset).toHexString());
+    reportObject->setProperty ("stateByteExactAfterReset",
+                               metrics.stateBeforeRender == metrics.stateAfterReset);
+    reportObject->setProperty ("stateSha256AfterPreparedRestore",
+                               juce::SHA256 (metrics.stateAfterPreparedRestore).toHexString());
+    reportObject->setProperty ("stateSha256AfterRepeatedPreparedRestore",
+                               juce::SHA256 (metrics.stateAfterRepeatedPreparedRestore).toHexString());
+    reportObject->setProperty ("preparedRestoreIdempotent", preparedRestoreIdempotent);
+    reportObject->setProperty ("parameterSha256BeforeRender", metrics.parameterSha256BeforeRender);
+    reportObject->setProperty ("parameterSha256AfterRender", metrics.parameterSha256AfterRender);
+    reportObject->setProperty ("changedParametersAfterRender", metrics.changedParametersAfterRender);
+    reportObject->setProperty ("stateStableThroughRender", stateStableThroughRender);
+    reportObject->setProperty ("parametersStableThroughRender", parametersStableThroughRender);
     reportObject->setProperty ("parameterCount", parameterCount);
     reportObject->setProperty ("programCount", programCount);
     reportObject->setProperty ("advertisesEditor", advertisesEditor);
@@ -357,6 +577,7 @@ int main (int argc, char* argv[])
     const auto plugin = getArgumentValue (args, "--plugin");
     const auto wav = getArgumentValue (args, "--wav");
     const auto report = getArgumentValue (args, "--report");
+    const auto stateProject = getArgumentValue (args, "--state-project");
 
     if (plugin.isEmpty() || wav.isEmpty() || report.isEmpty())
     {
@@ -370,7 +591,10 @@ int main (int argc, char* argv[])
         if (! pluginFile.exists())
             throw std::runtime_error ("The requested VST3 bundle does not exist");
 
-        return runProbe (pluginFile, juce::File (wav), juce::File (report));
+        return runProbe (pluginFile,
+                         juce::File (wav),
+                         juce::File (report),
+                         stateProject.isNotEmpty() ? juce::File (stateProject) : juce::File());
     }
     catch (const std::exception& error)
     {
