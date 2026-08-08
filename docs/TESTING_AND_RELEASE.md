@@ -74,9 +74,13 @@ The optional `--state-project <song.resonance.json>` probe input restores an exa
 | Suite | Current passed assertions |
 | --- | ---: |
 | Real-time loop scheduler | 83 |
-| Song project and round trip | 63 |
+| Song project, round trip, and edit commands | 103 |
 
-The tests cover timing boundaries, the real 44.1 kHz / 441-sample exact-block case, loop wrap, note-off behavior, event balance, project defaults, edit constraints, stable IDs, note and sound Undo/Redo, named opaque sound integrity, backward-compatible `soundName` loading, JSON round trips, malformed data, state hashes, and relocation-compatible VST3 identity.
+The tests cover timing boundaries, the real 44.1 kHz / 441-sample exact-block case, loop wrap, note-off behavior, event balance, project defaults, edit constraints, stable IDs, note and sound Undo/Redo, named opaque sound integrity, backward-compatible `soundName` loading, JSON round trips, malformed data, state hashes, and relocation-compatible VST3 identity. The M5 cases additionally prove strict versioned command parsing and round trip, deterministic seed preservation, exact content-hash preconditions, non-mutating candidates, concrete note diffs, consume-once Apply/Reject, one-Undo Apply, stale preview and stale Apply rejection, unknown targets, invalid bounds, and duplicate-target rejection against the portable command fixture.
+
+### M5 edit-command core gate
+
+`scripts/test-realtime.ps1` passes `tests/fixtures/edit-command-note-patch-v1.json` to `SongProjectTests.exe`. The fixture's schema-valid all-zero content hash is replaced in memory with the exact active-project SHA-256, keeping the committed fixture portable while exercising a current command. The structured report records command version 1, the fixture name, and the resulting candidate SHA-256. These tests prove the host command boundary only; they do not prove a visible diff, candidate audition, transform quality, or musical approval.
 
 ### Packaged silent self-test
 
@@ -112,7 +116,7 @@ This hidden mode opens the configured Windows Audio device and processes the son
 
 ### Artifact-schema gate
 
-`scripts/validate-artifacts.py` validates the current JSON reports and project fixtures against the schemas under `schema/`. The current full sequence validates 11 artifacts.
+`scripts/validate-artifacts.py` validates the current JSON reports, project fixtures, and edit-command fixture against the schemas under `schema/`. The current full sequence validates 12 artifacts and fixtures.
 
 Machine-specific reports are ignored by Git. Schemas and portable `.resonance.json` fixtures are versioned.
 

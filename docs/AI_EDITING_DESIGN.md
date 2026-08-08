@@ -1,6 +1,6 @@
 # AI-assisted music editing design
 
-Status: proposed contract; no AI command system is implemented yet
+Status: M5 foundation in progress; the version-1 host command, candidate, diff, and Apply/Reject core is implemented, while its editor UI, transforms, natural-language translation, and model-service boundary remain future work
 
 ## Goal
 
@@ -37,6 +37,21 @@ flowchart LR
 
 The model proposes intent. A deterministic host-side engine resolves and validates concrete edits. The active project changes only at Apply.
 
+## Implemented M5 foundation
+
+The first host-side slice is deliberately service-independent:
+
+- `schema/edit-command.schema.json` defines command version 1;
+- `src/edit_command.*` strictly parses and serializes fully resolved `editNotes` commands;
+- every command targets the current `track-1` / `loop-1` IDs and carries the exact active-project content SHA-256;
+- add, update, and remove changes use stable note IDs and integer ticks at 960 PPQ;
+- preview clones the active `SongProject`, validates all targets and bounds, applies the resolved changes only to that candidate, and returns explicit before/after note records and content hashes;
+- Apply rechecks the content hash, publishes exactly the previewed changes as one named Undo transaction, and consumes the preview;
+- Reject consumes the preview without changing or dirtying the active project;
+- the optional integer seed is preserved as deterministic provenance for later bounded transforms.
+
+The content hash excludes only the editor build-version label. It includes the musical model and accepted opaque instrument state, so a command becomes stale after any material project change. The current editor does not yet display or audition `EditCommandPreview`; those are the next M5 UI steps. The seed is recorded, but randomized transforms are not implemented yet.
+
 ## Command envelope
 
 A future command format should include:
@@ -51,21 +66,28 @@ A future command format should include:
 - human-readable summary;
 - concrete additions, updates, removals, or generated section references.
 
-Illustrative, non-implemented example:
+The implemented version-1 envelope uses concrete, already-resolved note changes:
 
 ```json
 {
   "commandVersion": 1,
-  "projectRevision": 42,
-  "operation": "transformNotes",
-  "selection": { "clipId": "loop-1", "noteIds": ["note-1", "note-2"] },
-  "intent": {
-    "energyDelta": 0.25,
-    "preservePitchContour": true,
-    "maxTimingShiftBeats": 0.125
-  },
+  "projectContentSha256": "<64 hexadecimal characters>",
+  "operation": "editNotes",
+  "target": { "trackId": "track-1", "clipId": "loop-1" },
   "seed": 18421,
-  "summary": "Increase rhythmic drive while preserving the motif"
+  "summary": "Increase rhythmic drive while preserving the motif",
+  "changes": [
+    {
+      "action": "update",
+      "note": {
+        "id": "note-1",
+        "startTick": 0,
+        "lengthTicks": 720,
+        "midiNote": 50,
+        "velocity": 100
+      }
+    }
+  ]
 }
 ```
 

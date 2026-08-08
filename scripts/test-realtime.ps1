@@ -13,6 +13,7 @@ $projectReport = Join-Path $artifacts "song-project-test-report.json"
 $selfTestReport = Join-Path $artifacts "realtime-self-test.json"
 $songProjectArtifact = Join-Path $artifacts "realtime-song-project.resonance.json"
 $uiSnapshot = Join-Path $artifacts "realtime-ui-snapshot.png"
+$editCommandFixture = Join-Path $projectRoot "tests\fixtures\edit-command-note-patch-v1.json"
 
 function Find-BuiltBinary([string]$Name) {
     $binary = Get-ChildItem -LiteralPath $buildDir -Recurse -Filter $Name |
@@ -47,13 +48,13 @@ if (-not $engineResult.passed -or $engineResult.assertions -lt 10) {
     throw "Realtime scheduler report did not pass its assertion gate"
 }
 
-& $projectTests --report $projectReport
+& $projectTests --report $projectReport --edit-command-fixture $editCommandFixture
 if ($LASTEXITCODE -ne 0) {
     throw "Song project tests failed with exit code $LASTEXITCODE"
 }
 
 $projectResult = Get-Content -LiteralPath $projectReport -Raw | ConvertFrom-Json
-if (-not $projectResult.passed -or $projectResult.assertions -lt 25) {
+if (-not $projectResult.passed -or $projectResult.assertions -lt 50) {
     throw "Song project report did not pass its assertion gate"
 }
 
@@ -95,7 +96,8 @@ if (-not $result.songProject.soundNameRoundTrip -or $result.songProject.soundNam
     throw "The host-owned sound name did not round-trip with the real Surge state"
 }
 
-if ($result.songProject.noteCount -ne 9 -or $result.songProject.loopLengthBeats -ne 16) {
+if ($result.songProject.noteCount -ne 9 -or $result.songProject.loopLengthBeats -ne 16 -or
+    $result.songProject.fixtureNoteId -ne "note-self-test-1") {
     throw "The live song-project round trip lost editable note or loop data"
 }
 
@@ -149,6 +151,9 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     ProjectAssertions = $projectResult.assertions
     ProjectRoundTripBytes = $projectResult.roundTripBytes
     ProjectStateSha256 = $projectResult.stateSha256
+    EditCommandVersion = $projectResult.editCommandVersion
+    EditCommandFixture = $projectResult.editCommandFixture
+    EditCommandCandidateSha256 = $projectResult.editCommandCandidateSha256
     LiveSurgeStateBytes = $result.songProject.stateBytes
     LiveSurgeStateSha256 = $result.songProject.stateSha256
     LiveSoundName = $result.songProject.soundName

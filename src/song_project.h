@@ -49,8 +49,11 @@ public:
     std::vector<SongNote> getNotes() const;
     std::optional<SongNote> findNote (const juce::String& id) const;
     juce::String addNote (double beat, double lengthBeats, int midiNote, int velocity);
+    juce::Result insertNote (const SongNote& note);
     bool updateNote (const SongNote& note);
     bool removeNote (const juce::String& id);
+
+    juce::String getContentSha256() const;
 
     void setPluginMetadata (const juce::String& identifier,
                             const juce::String& name,

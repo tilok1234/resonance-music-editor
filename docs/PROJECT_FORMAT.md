@@ -155,6 +155,12 @@ Opening is intentionally fail-closed:
 
 A failed parse, identity check, state check, or restore leaves the active project model in place. Transport is stopped before restore for lifecycle safety.
 
+## External edit commands
+
+M5 edit commands are proposal documents, not fields inside `.resonance.json`. Their independent version-1 contract is `schema/edit-command.schema.json`. A command carries the SHA-256 of the active project's canonical material JSON, where only `editorVersion` is omitted from hashing. The hash therefore covers notes, timing, metadata, and the accepted opaque instrument state without forcing a song-project schema migration.
+
+Preview parses and validates the command against a separate candidate project. Reject discards that candidate. Apply rechecks the hash and reproduces the preview through ordinary `SongProject` note operations as one Undo transaction. Commands and pending previews are intentionally not saved in song-project schema version 1.
+
 ## Compatibility and migrations
 
 Do not reinterpret version 1 fields in place. A future change that adds multiple tracks, arrangement sections, automation, effects, or game-transition metadata must:

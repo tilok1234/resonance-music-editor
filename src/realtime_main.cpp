@@ -142,7 +142,9 @@ int runSelfTest (const juce::StringArray& args)
         if (soundApplyResult.failed())
             throw std::runtime_error (soundApplyResult.getErrorMessage().toStdString());
         song.beginUndoTransaction ("Self-test note");
-        song.addNote (10.5, 0.75, 67, 109);
+        const auto noteInsertResult = song.insertNote ({ "note-self-test-1", 10.5, 0.75, 67, 109 });
+        if (noteInsertResult.failed())
+            throw std::runtime_error (noteInsertResult.getErrorMessage().toStdString());
 
         const auto projectSaveResult = song.saveToFile (songProjectFile);
         if (projectSaveResult.failed())
@@ -162,6 +164,7 @@ int runSelfTest (const juce::StringArray& args)
 
         const auto savedPayloadExact = reopenedPluginState == livePluginState;
         const auto soundNameRoundTrip = reopenedSong.getPluginSoundName() == "Self-test Surge state";
+        const auto fixtureNotePresent = reopenedSong.findNote ("note-self-test-1").has_value();
         plugin->setStateInformation (reopenedPluginState.getData(),
                                      static_cast<int> (reopenedPluginState.getSize()));
         juce::MemoryBlock recapturedPluginState;
@@ -176,6 +179,7 @@ int runSelfTest (const juce::StringArray& args)
         songObject->setProperty ("stateSha256", song.getPluginStateSha256());
         songObject->setProperty ("soundName", reopenedSong.getPluginSoundName());
         songObject->setProperty ("noteCount", static_cast<int> (reopenedSong.getNotes().size()));
+        songObject->setProperty ("fixtureNoteId", "note-self-test-1");
         songObject->setProperty ("tempoBpm", reopenedSong.getTempoBpm());
         songObject->setProperty ("loopLengthBeats", reopenedSong.getLoopLengthBeats());
         songObject->setProperty ("savedPayloadExact", savedPayloadExact);
@@ -206,7 +210,7 @@ int runSelfTest (const juce::StringArray& args)
         reportObject->setProperty ("passed",
                                    parameterCountMatches && stereoOutput
                                        && savedPayloadExact && pluginRestoreExact
-                                       && soundNameRoundTrip);
+                                       && soundNameRoundTrip && fixtureNotePresent);
     }
     catch (const std::exception& error)
     {

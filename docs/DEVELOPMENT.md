@@ -124,6 +124,8 @@ python .\scripts\validate-artifacts.py
 
 The order matters: later scripts consume binaries and inventory artifacts created by earlier steps. See [Testing and release](TESTING_AND_RELEASE.md) for the contracts behind each gate.
 
+The realtime script also runs the M5 command-core cases using the portable `tests/fixtures/edit-command-note-patch-v1.json` fixture. The test replaces its schema-valid placeholder content hash in memory with the exact active-project hash; do not hard-code a machine report or mutable local path into the fixture.
+
 ## Non-interactive editor modes
 
 The packaged editor has three test modes used by `test-realtime.ps1`:

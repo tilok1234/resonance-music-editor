@@ -17,7 +17,7 @@ The focus is game music. General sound-effect creation is not part of this roadm
 | F2 First real-time editor | Complete | accepted Surge plays through explicit Windows Audio with safe transport and diagnostics |
 | F3 Editable single-track song | Complete | piano roll, Undo/Redo, exact state, and `.resonance.json` save/open |
 | M4 Sound and preset workflow | Complete | Accepted as version 0.3.0 after A/B, persistence, lifecycle, and listening gates passed |
-| M5 Unified edit-command layer | Planned next | manual and future AI edits share validated, previewable project operations |
+| M5 Unified edit-command layer | In progress | version-1 note-command core is proven; editor preview/audition and bounded transforms remain |
 | M6 Multi-track and mixer | Planned | several instruments play through a safe mixer and schema migration |
 | M7 Arrangement, automation, and effects | Planned | full sections, curves, buses, and dependable song structure |
 | M8 AI music assistant | Planned | natural-language requests resolve to bounded command proposals |
@@ -44,7 +44,7 @@ Delivered the first piano roll, stable note IDs, gesture-level Undo/Redo, tempo/
 
 ## M4: Sound and preset workflow
 
-The snapshot-first implementation and its bounded packaged retest are complete. The user preferred B, the saved project preserved it, and the exact native reopen/play/unchanged-recapture/reject/close sequence passed. The user explicitly accepted M4 at 2026-08-08 23:54 +02:00, establishing editor version 0.3.0. M5 is the next milestone.
+The snapshot-first implementation and its bounded packaged retest are complete. The user preferred B, the saved project preserved it, and the exact native reopen/play/unchanged-recapture/reject/close sequence passed. The user explicitly accepted M4 at 2026-08-08 23:54 +02:00, establishing editor version 0.3.0. M5 is now in progress on a separate branch.
 
 ### Goal
 
@@ -78,6 +78,8 @@ Manual Capture B, A/B, Apply, dirty marker, Undo, Redo, Save/Open, and the user'
 VST3 does not guarantee one uniform factory-preset browsing experience across all instruments. [ADR-0004](ADR-0004-host-owned-sound-snapshots.md) chose named opaque state snapshots because Surge reports zero host programs while its `.fxp` library is vendor-specific. Factory-file indexing remains deferred.
 
 ## M5: Unified edit-command layer
+
+Status: in progress. The 2026-08-09 foundation implements schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, non-mutating candidate projects, explicit note diffs, consume-once Apply/Reject, one-transaction Undo/Redo, strict stale/invalid rejection, seed preservation, native tests, and a portable schema-validated fixture. The visual diff UI, candidate A/B audition, bounded transform resolvers, and any natural-language translator remain open.
 
 ### Goal
 

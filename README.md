@@ -1,8 +1,8 @@
 # Resonance Music Editor
 
-Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. The project now has its first editable song and sound-design slice: a native Windows editor with real-time WASAPI output, a piano roll, lossless song projects, one inventory-approved Surge XT instrument track, and a host-owned A/B sound workflow.
+Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. The project now has its first editable song and sound-design slice plus the host-side foundation for previewable edit commands: a native Windows editor with real-time WASAPI output, a piano roll, lossless song projects, one inventory-approved Surge XT instrument track, and a host-owned A/B sound workflow.
 
-The current scope is deliberately one instrument track and one looping clip. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. Factory-preset indexing, arrangement tracks, automation, AI commands, and game-state music tools remain later work.
+The current scope is deliberately one instrument track and one looping clip. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. A version-1 JSON command can now build a validated non-mutating note candidate and apply it as one Undo transaction, but its visual preview/audition UI and any natural-language model integration remain later work alongside factory-preset indexing, arrangement, automation, and game-state music tools.
 
 ![First playable Resonance Music Editor UI](artifacts/realtime-ui-snapshot.png)
 
@@ -19,7 +19,7 @@ Start with the [documentation index](docs/README.md). It separates current behav
 - [Development guide](docs/DEVELOPMENT.md) - Windows setup, local dependencies, build, run, test, and troubleshooting.
 - [Project format](docs/PROJECT_FORMAT.md) - the versioned `.resonance.json` contract and migration rules.
 - [VST3 hosting](docs/VST3_HOSTING.md) - scanning, quarantine, identity, loading, state, and native-editor behavior.
-- [AI editing design](docs/AI_EDITING_DESIGN.md) - the proposed reversible command model shared with manual editing.
+- [AI editing design](docs/AI_EDITING_DESIGN.md) - the implemented command foundation and the remaining reversible editing plan.
 - [Testing and release](docs/TESTING_AND_RELEASE.md) - automated gates, listening gates, artifacts, and release checklist.
 - [Roadmap](docs/ROADMAP.md) - completed foundations and the ordered route to a game-music production editor.
 - [Current handoff](HANDOFF.md) - exact live status, known limitations, and a ready-to-paste fresh-task prompt.
@@ -57,6 +57,20 @@ Unsaved project changes are marked with `*`. New, Open, and window close ask bef
 Save writes only the accepted project sound. An unapplied B remains preview state and is not silently substituted into the project. Undo/Redo restores the corresponding live Surge state as well as the saved model. The exact saved SHA-256 protects project bytes; the UI separately tracks the live-equivalent hash returned by Surge after restore because one sound can have lifecycle-dependent opaque encodings. The current snapshot-first workflow intentionally does not parse or index Surge's vendor-specific `.fxp` library; see `docs/ADR-0004-host-owned-sound-snapshots.md`.
 
 ## Proven checkpoints
+
+### M5 edit-command foundation
+
+The first M5 host-only slice was implemented on 2026-08-09 without changing song-project schema version 1 or editor version 0.3.0:
+
+- added a strict version-1 `editNotes` JSON schema, parser, and serializer;
+- added full-project content SHA-256 preconditions and stale-command/stale-Apply rejection;
+- resolved note add, update, and remove changes into a separate candidate `SongProject` without dirtying the active song;
+- exposed concrete before/after note diffs and candidate content hashes;
+- made Apply and Reject consume the preview exactly once, with Apply mapping to one named Undo transaction;
+- preserved an optional deterministic seed for the bounded transforms that remain to be implemented;
+- passed 103 native project/round-trip/command assertions and validated 12 artifacts and fixtures, including `tests/fixtures/edit-command-note-patch-v1.json`.
+
+This is a technical command-core checkpoint, not a completed M5 interaction or musical acceptance gate. The editor still needs a visible note diff, candidate A/B audition, explicit proposal controls, and bounded transform resolvers. See `docs/M5_EDIT_COMMAND_FOUNDATION_2026-08-09.md`.
 
 ### Accepted host-owned sound workflow
 
@@ -176,8 +190,9 @@ The build copies four production executables to `bin`:
 
 ## Next implementation slice
 
-1. Preserve the accepted M4 `0.3.0` sound-workflow contract and its exact saved-B evidence.
-2. Begin M5's unified validated edit-command layer as a separate implementation scope.
-3. Do not combine M5 with factory-preset parsing, multi-track expansion, arrangement, or model-service integration.
+1. Preserve the accepted M4 `0.3.0` sound-workflow contract and the new M5 command-core invariants.
+2. Connect `EditCommandPreview` to a visible before/after note diff and candidate A/B audition, with explicit Apply/Reject.
+3. Add the first bounded deterministic transform only after that proposal UI uses the same candidate contract.
+4. Do not combine M5 with factory-preset parsing, multi-track expansion, arrangement, or model-service integration.
 
 Architecture and evidence are recorded in `docs/ADR-0001-vst3-host-foundation.md`, `docs/ADR-0002-crash-isolated-plugin-scanning.md`, `docs/ADR-0003-realtime-audio-engine.md`, `docs/ADR-0004-host-owned-sound-snapshots.md`, and the dated checkpoint files under `docs/`.

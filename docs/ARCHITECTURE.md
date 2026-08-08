@@ -11,7 +11,9 @@ flowchart LR
     U["Manual editor controls"] --> M["SongProject ValueTree"]
     B["Host-owned A/B sound controls"] --> M
     B --> V
-    A["Future structured AI commands"] -. "same validated edits" .-> M
+    A["Future AI translator"] -. "version-1 JSON" .-> C["EditCommand validator and candidate"]
+    C --> D["Before/after note diff"]
+    C -->|"Apply once"| M
     M --> S["Fixed-capacity SequenceSnapshot"]
     S --> R["RealtimeEngine audio callback"]
     K["Mouse and hardware MIDI"] --> R
@@ -26,7 +28,7 @@ flowchart LR
     L --> V
 ```
 
-Solid lines are implemented. The dotted AI path is a planned seam, not a current feature.
+Solid lines are implemented host-side boundaries. The dotted AI translation path and the editor-facing command preview UI are not implemented.
 
 ## Production executables
 
@@ -47,6 +49,7 @@ Solid lines are implemented. The dotted AI path is a planned seam, not a current
 | Main UI | `src/editor_component.*` | transport, device controls, file choosers, project actions, native plug-in window |
 | Piano roll | `src/piano_roll.*` | note hit testing, selection, add, move, resize, delete, vertical scroll |
 | Song model | `src/song_project.*` | ValueTree state, stable note IDs, Undo/Redo, JSON conversion, validation |
+| Edit-command core | `src/edit_command.*` | strict version-1 parsing, content-hash preconditions, candidate projects, note diffs, consume-once Apply/Reject |
 | Scheduling | `src/loop_scheduler.h` | sample-offset MIDI events, note wrap, fixed-capacity sequence contract |
 | Audio engine | `src/realtime_engine.*` | device callback, transport, MIDI merge, VST3 processing, gain, meters, guards |
 | Accepted plug-in load | `src/known_plugin.*` | inventory/quarantine parse, exact bundle revalidation, selected instrument record |
@@ -156,15 +159,15 @@ See [VST3 hosting](VST3_HOSTING.md) and [ADR-0002](ADR-0002-crash-isolated-plugi
 The current single-track shape is deliberate, but several seams are intended for growth:
 
 - `SongProject` can evolve from one track and clip into track and arrangement collections through an explicit schema migration.
-- structured edit commands can sit above the same project operations used by the piano roll;
+- structured edit commands now sit above the same note operations and Undo manager used by the piano roll; their visual preview and audition controls remain to be connected;
 - `SequenceSnapshot` can become a per-track render snapshot without exposing the mutable ValueTree to audio code;
 - the engine can grow a graph or mixer while keeping device callback rules intact;
 - automation can publish fixed-capacity curves or block-local parameter events;
 - offline rendering can reuse the validated song and plug-in state while remaining separate from the device callback;
 - game-transition metadata can reference arrangement sections after ordinary arrangement editing exists.
 
-These are extension points, not permission to weaken current invariants. Multi-track, automation, AI editing, effects, and game-state playback are not implemented yet.
+These are extension points, not permission to weaken current invariants. Multi-track, automation, AI translation/service integration, edit-command preview UI, effects, and game-state playback are not implemented yet.
 
 ## Architectural evidence
 
-The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, and the accepted M4 sound workflow. See the [documentation index](README.md) for the full list.
+The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, and the M5 edit-command foundation. See the [documentation index](README.md) for the full list.

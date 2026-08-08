@@ -1,5 +1,6 @@
 #include <JuceHeader.h>
 
+#include "../src/edit_command.h"
 #include "../src/plugin_identity.h"
 #include "../src/song_project.h"
 
@@ -141,6 +142,168 @@ void testSoundSnapshotAndUndo (TestContext& context)
                     "An empty sound state must be rejected");
 }
 
+void testEditCommandFoundation (TestContext& context,
+                                const juce::File& fixtureFile,
+                                juce::String& candidateSha256)
+{
+    context.expect (fixtureFile.existsAsFile(), "The portable edit-command fixture must exist");
+
+    resonance::SongProject project;
+    const auto beforeHash = project.getContentSha256();
+    context.expect (beforeHash.length() == 64, "A project content precondition must be a SHA-256 hash");
+    context.expect (! project.isDirty(), "Creating a command precondition must not dirty the project");
+
+    constexpr auto placeholderHash =
+        "0000000000000000000000000000000000000000000000000000000000000000";
+    const auto commandJson = fixtureFile.loadFileAsString().replace (placeholderHash, beforeHash);
+    resonance::EditCommand command;
+    context.expect (resonance::parseEditCommand (commandJson, command).wasOk(),
+                    "The version-1 note-patch fixture must parse");
+    context.expect (command.commandVersion == 1 && command.operation == "editNotes",
+                    "The parsed command must preserve its version and operation");
+    context.expect (command.seed.has_value() && *command.seed == 18421,
+                    "The deterministic seed must survive command parsing");
+    context.expect (command.changes.size() == 3,
+                    "The fixture must contain one update, one remove, and one add");
+
+    resonance::EditCommand roundTrippedCommand;
+    context.expect (resonance::parseEditCommand (resonance::serialiseEditCommand (command),
+                                                 roundTrippedCommand).wasOk(),
+                    "A parsed edit command must round-trip through canonical JSON");
+    context.expect (roundTrippedCommand.projectContentSha256 == beforeHash
+                        && roundTrippedCommand.seed == command.seed
+                        && roundTrippedCommand.changes.size() == command.changes.size(),
+                    "The command round trip must preserve its precondition, seed, and changes");
+
+    resonance::EditCommandPreview preview;
+    context.expect (resonance::createEditCommandPreview (command, project, preview).wasOk(),
+                    "A valid command must create a candidate preview");
+    context.expect (preview.isPending() && preview.getCandidateProject() != nullptr,
+                    "A new preview must expose a pending candidate project");
+    context.expect (project.getContentSha256() == beforeHash && ! project.isDirty(),
+                    "Preview creation must not mutate or dirty the active project");
+    context.expect (preview.beforeContentSha256 == beforeHash
+                        && preview.afterContentSha256 != beforeHash,
+                    "A preview must carry distinct before and after content hashes");
+    context.expect (preview.noteDiffs.size() == 3,
+                    "The candidate preview must expose one concrete diff per change");
+
+    const auto* candidate = preview.getCandidateProject();
+    context.expect (candidate->getNotes().size() == project.getNotes().size(),
+                    "One removal plus one addition must preserve the note count");
+    context.expect (! candidate->findNote ("note-2").has_value(),
+                    "The candidate must contain the resolved removal");
+    const auto added = candidate->findNote ("note-m5-fixture-1");
+    context.expect (added.has_value() && added->midiNote == 67 && added->velocity == 88,
+                    "The candidate must contain the exact resolved addition");
+    const auto updated = candidate->findNote ("note-1");
+    context.expect (updated.has_value() && updated->midiNote == 50
+                        && updated->velocity == 100 && updated->lengthBeats == 0.75,
+                    "The candidate must contain the exact resolved update");
+
+    const auto expectedAfterHash = preview.afterContentSha256;
+    candidateSha256 = expectedAfterHash;
+    context.expect (preview.applyTo (project).wasOk(),
+                    "Applying a current preview must succeed");
+    context.expect (! preview.isPending() && preview.getCandidateProject() == nullptr,
+                    "Apply must consume the preview exactly once");
+    context.expect (project.getContentSha256() == expectedAfterHash && project.isDirty(),
+                    "Apply must publish the exact previewed project and mark it dirty");
+    context.expect (project.getUndoDescription() == "Apply edit: Tighten the opening motif",
+                    "Apply must create one named Undo transaction");
+    context.expect (preview.applyTo (project).failed(),
+                    "An applied preview must reject a second Apply");
+    context.expect (project.undo(), "The accepted command must be undoable in one action");
+    context.expect (project.getContentSha256() == beforeHash,
+                    "One Undo must restore the complete pre-command project");
+    context.expect (project.redo(), "The accepted command must be redoable in one action");
+    context.expect (project.getContentSha256() == expectedAfterHash,
+                    "One Redo must restore the exact previewed candidate");
+
+    resonance::SongProject rejectProject;
+    auto rejectCommand = command;
+    rejectCommand.projectContentSha256 = rejectProject.getContentSha256();
+    resonance::EditCommandPreview rejectedPreview;
+    context.expect (resonance::createEditCommandPreview (rejectCommand,
+                                                         rejectProject,
+                                                         rejectedPreview).wasOk(),
+                    "A fresh project must accept the portable command fixture");
+    const auto rejectHash = rejectProject.getContentSha256();
+    context.expect (rejectedPreview.reject().wasOk(), "Reject must consume a pending preview");
+    context.expect (rejectProject.getContentSha256() == rejectHash && ! rejectProject.isDirty(),
+                    "Reject must leave the active project byte-semantically unchanged");
+    context.expect (rejectedPreview.reject().failed()
+                        && rejectedPreview.applyTo (rejectProject).failed(),
+                    "A rejected preview must reject every later decision");
+
+    resonance::SongProject staleProject;
+    auto staleCommand = command;
+    staleCommand.projectContentSha256 = staleProject.getContentSha256();
+    staleProject.beginUndoTransaction ("Change tempo before preview");
+    staleProject.setTempoBpm (121.0);
+    resonance::EditCommandPreview stalePreview;
+    context.expect (resonance::createEditCommandPreview (staleCommand,
+                                                         staleProject,
+                                                         stalePreview).failed(),
+                    "A stale command must be rejected before preview");
+
+    resonance::SongProject staleApplyProject;
+    auto staleApplyCommand = command;
+    staleApplyCommand.projectContentSha256 = staleApplyProject.getContentSha256();
+    resonance::EditCommandPreview staleApplyPreview;
+    context.expect (resonance::createEditCommandPreview (staleApplyCommand,
+                                                         staleApplyProject,
+                                                         staleApplyPreview).wasOk(),
+                    "A current command must preview before an intervening edit");
+    staleApplyProject.beginUndoTransaction ("Intervening edit");
+    staleApplyProject.setTempoBpm (122.0);
+    context.expect (staleApplyPreview.applyTo (staleApplyProject).failed(),
+                    "An intervening project change must make Apply stale");
+    context.expect (staleApplyPreview.isPending() && staleApplyPreview.reject().wasOk(),
+                    "A stale Apply failure must leave the preview available to reject");
+
+    resonance::SongProject invalidProject;
+    auto unknownTarget = command;
+    unknownTarget.projectContentSha256 = invalidProject.getContentSha256();
+    unknownTarget.clipId = "missing-clip";
+    resonance::EditCommandPreview invalidPreview;
+    context.expect (resonance::createEditCommandPreview (unknownTarget,
+                                                         invalidProject,
+                                                         invalidPreview).failed(),
+                    "An unknown clip target must be rejected");
+
+    auto unknownNote = command;
+    unknownNote.projectContentSha256 = invalidProject.getContentSha256();
+    unknownNote.changes[0].noteId = "missing-note";
+    unknownNote.changes[0].note->id = "missing-note";
+    context.expect (resonance::createEditCommandPreview (unknownNote,
+                                                         invalidProject,
+                                                         invalidPreview).failed(),
+                    "An unknown update note id must be rejected");
+
+    auto invalidBounds = command;
+    invalidBounds.projectContentSha256 = invalidProject.getContentSha256();
+    invalidBounds.changes[0].note->lengthBeats = 1.0 / 960.0;
+    context.expect (resonance::createEditCommandPreview (invalidBounds,
+                                                         invalidProject,
+                                                         invalidPreview).failed(),
+                    "A command shorter than the active snap length must be rejected");
+
+    auto duplicateTarget = command;
+    duplicateTarget.projectContentSha256 = invalidProject.getContentSha256();
+    duplicateTarget.changes.push_back (duplicateTarget.changes.front());
+    context.expect (resonance::createEditCommandPreview (duplicateTarget,
+                                                         invalidProject,
+                                                         invalidPreview).failed(),
+                    "A command that changes one note twice must be rejected");
+
+    resonance::EditCommand invalidVersion;
+    context.expect (resonance::parseEditCommand (
+                        commandJson.replace ("\"commandVersion\": 1", "\"commandVersion\": 2"),
+                        invalidVersion).failed(),
+                    "An unsupported command version must be rejected during parsing");
+}
+
 void testRoundTrip (TestContext& context, int& savedBytes, juce::String& stateSha)
 {
     resonance::SongProject project;
@@ -218,15 +381,19 @@ int main (int argc, char* argv[])
 {
     juce::StringArray args (argv + 1, argc - 1);
     const auto reportPath = argumentValue (args, "--report");
+    const auto editCommandFixturePath = argumentValue (args, "--edit-command-fixture");
     TestContext context;
     int savedBytes = 0;
     juce::String stateSha;
+    juce::String editCommandCandidateSha;
 
     auto* reportObject = new juce::DynamicObject();
     juce::var report (reportObject);
     reportObject->setProperty ("schemaVersion", 1);
     reportObject->setProperty ("testVersion", JUCE_APPLICATION_VERSION_STRING);
     reportObject->setProperty ("juceVersion", juce::SystemStats::getJUCEVersion());
+    reportObject->setProperty ("editCommandVersion", resonance::EditCommand::supportedVersion);
+    reportObject->setProperty ("editCommandFixture", juce::File (editCommandFixturePath).getFileName());
 
     try
     {
@@ -234,10 +401,14 @@ int main (int argc, char* argv[])
         testSequenceSnapshot (context);
         testRelocatedPluginIdentity (context);
         testSoundSnapshotAndUndo (context);
+        testEditCommandFoundation (context,
+                                   juce::File (editCommandFixturePath),
+                                   editCommandCandidateSha);
         testRoundTrip (context, savedBytes, stateSha);
         reportObject->setProperty ("assertions", context.assertions);
         reportObject->setProperty ("roundTripBytes", savedBytes);
         reportObject->setProperty ("stateSha256", stateSha);
+        reportObject->setProperty ("editCommandCandidateSha256", editCommandCandidateSha);
         reportObject->setProperty ("passed", true);
     }
     catch (const std::exception& error)
@@ -245,6 +416,7 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("assertions", context.assertions);
         reportObject->setProperty ("roundTripBytes", savedBytes);
         reportObject->setProperty ("stateSha256", stateSha);
+        reportObject->setProperty ("editCommandCandidateSha256", editCommandCandidateSha);
         reportObject->setProperty ("passed", false);
         reportObject->setProperty ("error", error.what());
     }
