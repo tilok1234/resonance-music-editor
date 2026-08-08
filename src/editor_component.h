@@ -54,7 +54,8 @@ private:
     void clearSoundCandidate();
     void refreshSoundControls();
     void previewSelectedNoteEdit();
-    void previewLoopVelocityVariation();
+    void previewVelocityVariation();
+    juce::Result readVelocityVariationControls (SeededVelocityVariation& variation) const;
     void installEditPreview (EditCommand command, const juce::String& readyStatus);
     void auditionEditProject();
     void auditionEditCandidate();
@@ -118,6 +119,9 @@ private:
     juce::Label diagnosticLabel;
     juce::Label editProposalSummaryLabel;
     juce::Label editProposalDiffLabel;
+    juce::Label dynamicsScopeLabel;
+    juce::Label dynamicsStrengthLabel;
+    juce::Label dynamicsSeedLabel;
     juce::TextButton newButton { "New" };
     juce::TextButton openButton { "Open" };
     juce::TextButton saveButton { "Save" };
@@ -133,12 +137,15 @@ private:
     juce::TextButton applySoundButton { "Apply B" };
     juce::TextButton rejectSoundButton { "Reject B" };
     juce::TextButton previewSelectedEditButton { "Selected +1" };
-    juce::TextButton previewLoopVariationButton { "Loop dynamics" };
+    juce::TextButton previewDynamicsButton { "Preview dynamics" };
     juce::TextButton auditionEditProjectButton { "Audition A" };
     juce::TextButton auditionEditCandidateButton { "Audition B" };
     juce::TextButton applyEditButton { "Apply" };
     juce::TextButton rejectEditButton { "Reject" };
     juce::TextEditor soundNameEditor;
+    juce::ComboBox dynamicsScopeCombo;
+    juce::TextEditor dynamicsStrengthEditor;
+    juce::TextEditor dynamicsSeedEditor;
     juce::Slider bpmSlider;
     juce::Slider gainSlider;
     juce::Slider velocitySlider;

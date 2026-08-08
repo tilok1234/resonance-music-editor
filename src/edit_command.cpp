@@ -375,7 +375,9 @@ juce::Result resolveSeededVelocityVariation (const SongProject& activeProject,
     EditCommand command;
     command.projectContentSha256 = activeProject.getContentSha256();
     command.summary = "Vary " + juce::String (static_cast<int> (noteIds.size()))
-                      + " note velocities by up to " + juce::String (variation.maximumDelta);
+                      + (noteIds.size() == 1 ? " note velocity by up to "
+                                             : " note velocities by up to ")
+                      + juce::String (variation.maximumDelta);
     command.seed = variation.seed;
     command.changes.reserve (noteIds.size());
 

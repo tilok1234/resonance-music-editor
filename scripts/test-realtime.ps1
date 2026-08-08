@@ -165,6 +165,29 @@ if (-not $m5Result.seededVelocityAuditionPreservedA -or
     throw "The M5 seeded loop-dynamics lifecycle failed"
 }
 
+if (-not $m5Result.parameterControlsAvailable -or
+    $m5Result.parameterizedScope -ne "selectedNote" -or
+    $m5Result.parameterizedSeed -ne 90210 -or
+    $m5Result.parameterizedMaximumDelta -ne 3 -or
+    $m5Result.parameterizedDiffCount -ne 1 -or
+    -not $m5Result.parameterizedPreviewCreated -or
+    -not $m5Result.parameterizedSummaryMatched -or
+    -not $m5Result.parameterizedTargetMatched -or
+    -not $m5Result.parameterizedBounded -or
+    -not $m5Result.parameterizedCandidateDiffered) {
+    throw "The M5 target, strength, and seed controls did not resolve the requested command"
+}
+
+if (-not $m5Result.parameterizedAuditionPreservedA -or
+    -not $m5Result.parameterizedRejectedWithoutMutation -or
+    -not $m5Result.parameterizedRepeatMatched -or
+    -not $m5Result.parameterizedApplied -or
+    -not $m5Result.parameterizedApplyProducedOneUndo -or
+    -not $m5Result.parameterizedUndoRestoredA -or
+    -not $m5Result.invalidDynamicsSettingsBlocked) {
+    throw "The M5 parameterized dynamics lifecycle or invalid-settings guard failed"
+}
+
 if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     throw "The M5 workflow test left an editor process running"
 }
@@ -229,6 +252,12 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     SeededVelocityMaximumDelta = $m5Result.seededVelocityMaximumDelta
     SeededVelocityCandidateSha256 = $m5Result.seededVelocityCandidateSha256
     SeededVelocityDiffs = $m5Result.seededVelocityDiffCount
+    ParameterizedDynamicsScope = $m5Result.parameterizedScope
+    ParameterizedDynamicsSeed = $m5Result.parameterizedSeed
+    ParameterizedDynamicsMaximumDelta = $m5Result.parameterizedMaximumDelta
+    ParameterizedDynamicsCandidateSha256 = $m5Result.parameterizedCandidateSha256
+    ParameterizedDynamicsDiffs = $m5Result.parameterizedDiffCount
+    InvalidDynamicsSettingsBlocked = $m5Result.invalidDynamicsSettingsBlocked
     LiveSurgeStateBytes = $result.songProject.stateBytes
     LiveSurgeStateSha256 = $result.songProject.stateSha256
     LiveSoundName = $result.songProject.soundName
