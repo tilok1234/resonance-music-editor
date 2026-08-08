@@ -4,7 +4,7 @@ Date: 2026-08-09
 
 Status: technical editor workflow passed; seeded transforms and musical approval remain open
 
-Source checkpoint: `3d3a91b` (`Add M5 note proposal workflow`)
+Source checkpoints: `3d3a91b` (`Add M5 note proposal workflow`) and `c6f62f2` (`Stabilize M5 UI snapshot evidence`)
 
 ## Scope
 
@@ -75,11 +75,12 @@ The Release sequence passed with:
 - 13 schema-validated artifacts and fixtures in total;
 - silent packaged Surge self-test with no rescan and no emitted music;
 - Windows Audio at 44.1 kHz / 441 samples on the observed machine;
-- 88,375-byte packaged UI snapshot, visually inspected with the proposal card and before/after overlay visible;
-- 1,234.4 ms process CPU over the 6,049 ms idle observation;
+- 88,165-byte packaged UI snapshot, visually inspected with the proposal card and before/after overlay visible;
+- two independent UI renders with identical SHA-256 `3597faab221c4d125d778ca91a607f61137a756bd6183bc3e4cd58b4052d008a`;
+- 1,171.9 ms process CPU over the 6,091 ms idle observation;
 - Surge XT 1.3.4 compatibility probe with 2,855 parameters and a bounded non-silent render;
 - scanner-isolation timeout code 21, invalid-bundle code 22, one accepted inventory record, and zero production quarantine entries;
-- packaged editor SHA-256 `1815e8d6fc9838d039f25c1021b00250f42620a2c06285edc86f9ff98bafad52`.
+- packaged editor SHA-256 `54f2db5048aceadf37599faa9a910366402aedaec0025eb13e7dadce3c41f301`.
 
 ![M5 note proposal with before and after overlay](../artifacts/realtime-ui-snapshot.png)
 

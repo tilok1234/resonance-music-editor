@@ -12,7 +12,7 @@ The accepted M4 snapshot-first sound workflow is frozen at commit `7af6573` on `
 
 M5 is now in progress on `codex/m5-edit-command-foundation`, based directly on that accepted M4 commit. The command foundation implements schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, an independent candidate `SongProject`, explicit before/after note diffs, and consume-once Apply/Reject. Source checkpoint `3d3a91b` connects that core to an editor-owned note-proposal card: the piano roll shows before/after overlays, A/B publishes active or candidate through the normal immutable sequence path, Save preserves accepted A, Apply is one Undo transaction, Reject is non-mutating, and any unrelated project edit invalidates stale B. The first manual producer transposes one selected note up a semitone. No seeded multi-note transform resolver, natural-language translator, or model service has been added yet.
 
-The accepted M4 publication baseline is `7af6573` (`Accept M4 host-owned sound workflow`) on `codex/m4-accepted-0.3.0`, available as draft PR #1. The M5 branch is a stacked draft PR #2; its command foundation is `290fdfb` and its proposal implementation is `3d3a91b`. Always verify live `HEAD`, upstream state, and the working tree before relying on those values or assuming M4 has landed on `main`.
+The accepted M4 publication baseline is `7af6573` (`Accept M4 host-owned sound workflow`) on `codex/m4-accepted-0.3.0`, available as draft PR #1. The M5 branch is a stacked draft PR #2; its command foundation is `290fdfb`, proposal implementation is `3d3a91b`, and deterministic UI-evidence follow-up is `c6f62f2`. Always verify live `HEAD`, upstream state, and the working tree before relying on those values or assuming M4 has landed on `main`.
 
 Project version: `0.3.0` (accepted M4 host-owned sound workflow)
 
@@ -79,9 +79,9 @@ The latest machine-local reports available when this handoff was prepared showed
 | Host-owned real-Surge sound name | `Self-test Surge state`; exact round trip |
 | Latest captured real Surge state | 67,345 bytes; SHA-256 `a771b28878606e1b830c9c5f02a46686328cc690e03153d2bd141cf0eee8ea40` |
 | Exact saved-B packaged workflow | passed; A/B `91ED214E`, clean Reject and Close |
-| Packaged UI snapshot | 88,375 bytes; visually inspected with candidate overlay and proposal card |
-| UI idle gate | 1,234.4 ms process CPU over 6,049 ms |
-| Packaged editor SHA-256 | `1815e8d6fc9838d039f25c1021b00250f42620a2c06285edc86f9ff98bafad52` |
+| Packaged UI snapshot | 88,165 bytes; SHA-256 `3597faab221c4d125d778ca91a607f61137a756bd6183bc3e4cd58b4052d008a`; visually inspected and reproduced byte-identically twice |
+| UI idle gate | 1,171.9 ms process CPU over 6,091 ms |
+| Packaged editor SHA-256 | `54f2db5048aceadf37599faa9a910366402aedaec0025eb13e7dadce3c41f301` |
 
 Device name, sample rate, block size, latency, full path-derived identifier, and bundle fingerprint are machine observations. Regenerate rather than copying them to another machine.
 
