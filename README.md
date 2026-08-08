@@ -44,7 +44,7 @@ The Release acceptance gate passed on 2026-08-08:
 - saved and reopened the native Windows project chooser flow;
 - stored note timing at 960 PPQ with stable IDs and a versioned JSON schema;
 - captured a real 67,340-byte Surge state in a 91,334-byte project, reopened it, restored it, and recaptured it byte-for-byte;
-- passed 79 scheduler assertions, 37 project-model/round-trip assertions, the silent Surge self-test, and 11 schema-validated artifacts;
+- passed 79 scheduler assertions, 41 project-model/round-trip assertions, the silent Surge self-test, and 11 schema-validated artifacts;
 - passed the four-second packaged UI idle regression at 1,171.9 ms process CPU over 5,519 ms including startup.
 
 See `docs/EDITABLE_SONG_CHECKPOINT_2026-08-08.md` for architecture and evidence. This is technical acceptance, not listening approval of a preset or composition.
