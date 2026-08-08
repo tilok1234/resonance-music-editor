@@ -163,7 +163,7 @@ Preview parses and validates the command against a separate candidate project. R
 
 The editor may audition a pending candidate through an immutable realtime sequence, but Save still serializes only the active accepted project. A pitch- or velocity-only update may preserve an existing note's legacy non-tick-exact timing byte-semantically; any start or length changed by a command must resolve to an integer tick at 960 PPQ. This compatibility exception prevents old accepted articulation such as `0.82` beats from being silently quantized by an unrelated edit.
 
-The current **Loop dynamics** producer is also outside the song-project schema. It resolves explicit target note IDs, seed, and maximum delta into an ordinary concrete version-1 `editNotes` command before preview. The command stores the seed as provenance, but its concrete velocity values are authoritative: Apply does not rerun the pseudo-random resolver. This keeps Save/Open unchanged and makes a reviewed B independent of future resolver implementation changes.
+The dynamics target, maximum-delta, and seed controls are also outside the song-project schema. They are session-only proposal inputs that resolve whole-loop or selected-note IDs into an ordinary concrete version-1 `editNotes` command before preview. The command stores the seed as provenance, but its concrete velocity values are authoritative: Apply does not rerun the pseudo-random resolver. Pending B and its inputs are not persisted. This keeps Save/Open unchanged and makes a reviewed B independent of future resolver implementation changes.
 
 ## Compatibility and migrations
 

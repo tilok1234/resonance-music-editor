@@ -10,9 +10,9 @@ Resonance is a clean-room restart of a Windows game-music editor. The current ap
 
 The accepted M4 snapshot-first sound workflow is frozen at commit `7af6573` on `codex/m4-accepted-0.3.0` and draft PR #1. It captures live Surge state as ephemeral B, auditions project A and candidate B through the same instance, applies B as one dirty Undo transaction, restores live sound state on Undo/Redo, and saves only the accepted project snapshot. The held-note scheduler defect is fixed and user-confirmed. The user preferred B as less annoying and passed Apply, dirty marker, Undo, Redo, Save, Close, and Open. Final recapture exposed lifecycle-dependent opaque Surge encodings for the same restored sound; the repaired packaged native workflow reopens and plays the exact saved B, captures unchanged B with matching `91ED214E` identities, rejects it, stays clean, and closes without a false warning. The user explicitly accepted M4 at 2026-08-08 23:54 +02:00.
 
-M5 is now in progress on `codex/m5-edit-command-foundation`, based directly on that accepted M4 commit. The command foundation implements schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, an independent candidate `SongProject`, explicit before/after note diffs, and consume-once Apply/Reject. Source checkpoint `3d3a91b` connects that core to an editor-owned note-proposal card: the piano roll shows before/after overlays, A/B publishes active or candidate through the normal immutable sequence path, Save preserves accepted A, Apply is one Undo transaction, Reject is non-mutating, and any unrelated project edit invalidates stale B. Implementation checkpoint `2351cb6` adds the first deterministic multi-note resolver and a **Loop dynamics** producer: target IDs are canonicalized, seed `18421` resolves all eight starter notes into concrete velocity-only updates bounded by `8`, and the existing larger-diff lifecycle passes unchanged. The selected-note `+1` producer remains available. No natural-language translator or model service has been added.
+M5 is now a technical implementation candidate on `codex/m5-edit-command-foundation`, based directly on the accepted M4 commit. The command foundation implements schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, an independent candidate `SongProject`, explicit before/after note diffs, and consume-once Apply/Reject. Source checkpoint `3d3a91b` connects that core to an editor-owned note-proposal card. Checkpoint `2351cb6` adds the first deterministic multi-note resolver. Checkpoint `ef9710d` completes the bounded host input slice: **Whole loop** or **Selected note**, maximum velocity delta `1` through `32`, and seed `0` through `2147483647` resolve into concrete velocity-only B; invalid input is blocked and inputs freeze while B is pending. The selected-note `+1` producer remains available. The full automated Release gate passes, but the user has not yet performed or accepted the packaged control/listening pass. No natural-language translator or model service has been added.
 
-The accepted M4 publication baseline is `7af6573` (`Accept M4 host-owned sound workflow`) on `codex/m4-accepted-0.3.0`, available as draft PR #1. The M5 branch is a stacked draft PR #2; its command foundation is `290fdfb`, proposal implementation is `3d3a91b`, deterministic UI-evidence follow-up is `c6f62f2`, final one-note evidence is `4a660ef`, and seeded loop-dynamics implementation is `2351cb6`. Always verify live `HEAD`, upstream state, and the working tree before relying on those values or assuming M4 has landed on `main`.
+The accepted M4 publication baseline is `7af6573` (`Accept M4 host-owned sound workflow`) on `codex/m4-accepted-0.3.0`, available as draft PR #1. The M5 branch is a stacked draft PR #2; its command foundation is `290fdfb`, proposal implementation is `3d3a91b`, deterministic UI-evidence follow-up is `c6f62f2`, final one-note evidence is `4a660ef`, seeded loop-dynamics implementation is `2351cb6`, and parameterized controls implementation is `ef9710d`. Always verify live `HEAD`, upstream state, and the working tree before relying on those values or assuming M4 has landed on `main`.
 
 Project version: `0.3.0` (accepted M4 host-owned sound workflow)
 
@@ -49,7 +49,8 @@ Read [the product vision](docs/PRODUCT_VISION.md) before changing product scope.
 - Portable schema-validated command fixture with deterministic seed provenance.
 - Deterministic whole-loop velocity resolver with canonical target ordering and strict seed, delta, duplicate, and missing-target rejection.
 - Editor-owned M5 note-proposal card with exact change counts, first-note detail, and before/after hashes.
-- Fixed **Loop dynamics** proposal for all eight starter notes using seed `18421` and maximum delta `8`.
+- Explicit whole-loop/selected-note target, maximum-delta, and seed controls above **Preview dynamics**.
+- Fail-closed input ranges, selected-note requirement, and frozen controls while B is pending.
 - Orange before-note and blue after-note piano-roll overlays for add, update, and remove diffs.
 - Note A/B audition through normal immutable sequence snapshots without mutating the project.
 - Explicit note Apply/Reject, automatic stale invalidation, and one-step Undo/Redo.
@@ -73,7 +74,8 @@ The latest machine-local reports available when this handoff was prepared showed
 | M5 proposal A SHA-256 | `7833b2e817743f6079612c685f2a0659e154d769d530077d5da1f34544a117ff` |
 | M5 proposal B SHA-256 | `90fdd1363b5e1855c985983fd47917c39c58b4f6e977f1fc507447e2cf5d2f88` |
 | Packaged seeded velocity B SHA-256 | `3a41dece2c8ba4e6ee149c8122f088ac57f306d64a567d50631599593c706a9c` |
-| Packaged M5 workflow | passed; one-note lifecycle plus deterministic eight-note preview, repeat, A/B, Reject, Apply, and one-Undo restore |
+| Parameterized selected-note B SHA-256 | `896eb3db48ebac34cb888a01a8ec2566805aa7e6f376e74f2f3dc17f1bd9b882` from seed `90210`, maximum delta `3` |
+| Packaged M5 workflow | passed; prior lifecycles plus parameter control consumption, deterministic repeat, invalid-input block, A/B, Reject, Apply, and one-Undo restore |
 | Surge XT | 1.3.4 |
 | Live Surge parameters | 2,855; matched inventory |
 | Current accepted inventory records | 1 |
@@ -84,9 +86,9 @@ The latest machine-local reports available when this handoff was prepared showed
 | Host-owned real-Surge sound name | `Self-test Surge state`; exact round trip |
 | Latest captured real Surge state | 67,345 bytes; SHA-256 `a771b28878606e1b830c9c5f02a46686328cc690e03153d2bd141cf0eee8ea40` |
 | Exact saved-B packaged workflow | passed; A/B `91ED214E`, clean Reject and Close |
-| Packaged UI snapshot | 90,049 bytes; SHA-256 `159bd5d3764b178849033e8ac3f24338ac979b3a1c32a4463b1aa733ec342cec`; visually inspected and reproduced byte-identically twice |
-| UI idle gate | 1,218.8 ms process CPU over 5,528 ms |
-| Packaged editor SHA-256 | `070732f8766ea7fb35be088fdc08ecae567c4c5bf8fc0df6a61c17fd3dfa67fc` |
+| Packaged UI snapshot | 92,959 bytes; SHA-256 `749f82b847006ae62a4910eb69cae8e7941aa84dddfbe12fb076cdbf82ec4435`; visually inspected and reproduced byte-identically twice |
+| UI idle gate | 1,359.4 ms process CPU over 5,836 ms |
+| Packaged editor SHA-256 | `8f33cc8ffc114fbde6b5857cf53fc43aee2f2ac4e060fe00bc29736ce03b0730` |
 
 Device name, sample rate, block size, latency, full path-derived identifier, and bundle fingerprint are machine observations. Regenerate rather than copying them to another machine.
 
@@ -123,7 +125,8 @@ Both paths are now covered by packaged acceptance modes.
 - Only the accepted A snapshot is persisted. The ephemeral B candidate is intentionally not stored across application restarts.
 - No multiple tracks, mixer, pan, mute, solo, buses, or effects chain.
 - No arrangement timeline, sections, tempo changes, or automation lanes.
-- The note-command core, one-note producer, and first fixed seeded whole-loop dynamics transform exist, but target/strength/seed controls, broader transforms, a natural-language translator, and a connected AI service do not.
+- The command/proposal core and first parameterized seeded velocity transform exist, but target scope is limited to whole loop or one selected note; additional transforms, natural-language translation, and a connected AI service do not.
+- Dynamics target, strength, and seed are session-only proposal inputs; pending B and its controls are intentionally not persisted in song-project schema version 1.
 - No game-state transitions, stem management, offline final-song export, or engine adapter.
 - Scanner isolation does not contain a failure from a VST3 already processing in the editor.
 - The build script currently assumes the Visual Studio 18 Community installation and generator.
@@ -131,7 +134,7 @@ Both paths are now covered by packaged acceptance modes.
 
 ## Recommended next gate
 
-Continue [Roadmap M5: Unified edit-command layer](docs/ROADMAP.md#m5-unified-edit-command-layer) by turning the fixed whole-loop demonstration into an explicit bounded transform request with target scope, strength, and seed controls. Identical project content, targets, parameters, and seed must still resolve to the same concrete command and candidate; changed parameters must remain visible before Apply. Do not combine this gate with `.fxp` indexing, multi-track, arrangement, or live model-service integration.
+Run the exact packaged M5 interaction/listening gate before calling the milestone complete. Preview both **Whole loop** and **Selected note** with at least two strengths or seeds; inspect the diff and frozen controls; audition A/B; Reject; repeat identical settings; then Apply and Undo. Record whether the controls are understandable and whether the dynamics are musically useful, followed by explicit M5 acceptance or a narrow repair request. Do not combine this gate with `.fxp` indexing, multi-track, arrangement, additional transform families, or live model-service integration.
 
 ## First takeover actions
 
@@ -172,7 +175,7 @@ First read HANDOFF.md and docs/README.md completely, then inspect git status, th
 
 The product is a music-only editor aimed mainly at video-game music. Manual and future AI edits must share one versioned project model, and technical tests must remain separate from listening approval.
 
-M4 is accepted as version 0.3.0 and published at commit 7af6573 on draft PR #1. M5 is in progress on codex/m5-edit-command-foundation and draft PR #2. Its command foundation and visual editor-owned proposal workflow provide immutable A/B audition, Save-A isolation, explicit Apply/Reject, one Undo/Redo, and stale invalidation. Checkpoint 2351cb6 adds a deterministic eight-note Loop dynamics proposal with seed 18421 and maximum velocity delta 8; 122 native project assertions and 13 schema validations pass. Next expose explicit bounded target, strength, and seed controls over that resolver. Do not add a live AI service, multi-track, arrangement, or factory .fxp indexing in that slice.
+M4 is accepted as version 0.3.0 and published at commit 7af6573 on draft PR #1. M5 is a technical implementation candidate on codex/m5-edit-command-foundation and draft PR #2. Its command foundation and visual proposal workflow provide immutable A/B audition, Save-A isolation, explicit Apply/Reject, one Undo/Redo, and stale invalidation. Checkpoint ef9710d adds explicit Whole loop/Selected note, maximum-delta, and seed controls over the deterministic velocity resolver; 122 native project assertions and 13 schema validations pass. Next run the exact packaged manual interaction/listening gate and obtain explicit M5 acceptance or a narrow repair request. Do not add a live AI service, multi-track, arrangement, extra transforms, or factory .fxp indexing in that gate.
 ```
 
 ## Handoff maintenance

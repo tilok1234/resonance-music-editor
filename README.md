@@ -2,7 +2,7 @@
 
 Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. The project now has its first editable song, sound-design, and reversible note-proposal slices: a native Windows editor with real-time WASAPI output, a piano roll, lossless song projects, one inventory-approved Surge XT instrument track, host-owned A/B sound, and an editor-owned A/B note preview.
 
-The current scope is deliberately one instrument track and one looping clip. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. A version-1 command builds a validated non-mutating note candidate; the editor shows its before/after diff, auditions project A or candidate B through the normal immutable sequence path, and applies it as one Undo transaction or rejects it unchanged. The first deterministic transform varies whole-loop velocities within an explicit bound from a fixed seed and resolves to ordinary concrete note updates before preview. Broader transform controls and any natural-language model integration remain later work alongside factory-preset indexing, arrangement, automation, and game-state music tools.
+The current scope is deliberately one instrument track and one looping clip. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. A version-1 command builds a validated non-mutating note candidate; the editor shows its before/after diff, auditions project A or candidate B through the normal immutable sequence path, and applies it as one Undo transaction or rejects it unchanged. The first deterministic transform varies either the whole loop or one selected note using an explicit maximum velocity change and seed, then resolves those inputs to ordinary concrete note updates before preview. Additional transform families and any natural-language model integration remain later work alongside factory-preset indexing, arrangement, automation, and game-state music tools.
 
 ![First playable Resonance Music Editor UI](artifacts/realtime-ui-snapshot.png)
 
@@ -49,10 +49,11 @@ Unsaved project changes are marked with `*`. New, Open, and window close ask bef
 
 ## Preview and apply a note proposal
 
-1. To preview a focused edit, select a piano-roll note and press **Selected +1**. To preview the bounded whole-loop transform, press **Loop dynamics**; it uses seed `18421` and changes every note's velocity by at most `8`.
-2. Read the change count, first exact note diff, seed, and A/B hashes.
-3. Use **Audition A** and **Audition B** to switch the realtime loop between the accepted project and candidate.
-4. Press **Apply** to make B one undoable project edit, or **Reject** to restore A without mutation.
+1. Choose **Whole loop** or **Selected note**, enter **MAX +/-** from `1` through `32`, and enter a seed from `0` through `2147483647`. Selected-note scope requires a piano-roll selection.
+2. Press **Preview dynamics**. The defaults are whole loop, maximum delta `8`, and seed `18421`. For the separate pitch proof, select a note and press **Selected +1**.
+3. Read the change count, first exact note diff, seed, and A/B hashes. Proposal inputs freeze while B is pending.
+4. Use **Audition A** and **Audition B** to switch the realtime loop between the accepted project and candidate.
+5. Press **Apply** to make B one undoable project edit, or **Reject** to restore A without mutation.
 
 Orange marks the accepted before-note and blue marks the proposed after-note. Save writes accepted A only while a proposal remains pending, and New, Open, or Close warns before discarding that proposal. The sound and note candidate lanes are intentionally interlocked so there is only one active A/B decision at a time.
 
@@ -69,7 +70,7 @@ Save writes only the accepted project sound. An unapplied B remains preview stat
 
 ### M5 edit-command and note-proposal workflow
 
-The first three M5 host-side slices were implemented on 2026-08-09 without changing song-project schema version 1 or editor version 0.3.0:
+The first four M5 host-side slices were implemented on 2026-08-09 without changing song-project schema version 1 or editor version 0.3.0:
 
 - added a strict version-1 `editNotes` JSON schema, parser, and serializer;
 - added full-project content SHA-256 preconditions and stale-command/stale-Apply rejection;
@@ -77,15 +78,16 @@ The first three M5 host-side slices were implemented on 2026-08-09 without chang
 - exposed concrete before/after note diffs and candidate content hashes;
 - made Apply and Reject consume the preview exactly once, with Apply mapping to one named Undo transaction;
 - preserved an optional deterministic seed in resolved commands;
-- added a host-side whole-loop velocity resolver with canonical target order, a 31-bit seed, a `1`-through-`32` maximum delta, strict target validation, and platform-independent integer resolution;
-- made seed `18421` and maximum delta `8` available as **Loop dynamics**, producing eight concrete velocity-only updates in the starter loop;
+- added a host-side seeded velocity resolver with canonical target order, a 31-bit seed, a `1`-through-`32` maximum delta, strict target validation, and platform-independent integer resolution;
+- added explicit whole-loop/selected-note target, maximum-delta, and seed controls above **Preview dynamics**, retaining seed `18421` and delta `8` as defaults;
+- disabled Preview for invalid settings, required a selection for selected-note scope, and froze all three inputs while B is pending;
 - gave the editor ownership of one pending preview with visible add/update/remove overlays, counts, hashes, and exact note detail;
 - added A/B note audition through the same fixed-capacity sequence publication path used by normal playback;
 - added explicit Apply/Reject, Save-A isolation, stale-preview invalidation, discard warnings, and a sound/note candidate interlock;
 - preserved the accepted starter loop's legacy `0.82`-beat articulation during pitch-only edits while still requiring changed timing to resolve at 960 PPQ;
 - passed 122 native project/round-trip/command assertions, the expanded packaged M5 workflow test, and 13 schema-validated artifacts and fixtures.
 
-This is a technical proposal-workflow checkpoint, not completed M5 or musical approval. The fixed transform proves deterministic multi-note resolution and lifecycle reuse; useful target/strength/seed controls and broader proposal generation remain before any model service is considered. See `docs/M5_EDIT_COMMAND_FOUNDATION_2026-08-09.md`, `docs/M5_NOTE_PROPOSAL_WORKFLOW_CHECKPOINT_2026-08-09.md`, and `docs/M5_SEEDED_LOOP_DYNAMICS_CHECKPOINT_2026-08-09.md`.
+This is the technical implementation candidate for M5, not user interaction or musical approval. The bounded controls now prove deterministic resolution from explicit host inputs; a packaged manual audition and acceptance decision remain before M5 can be called complete. See `docs/M5_EDIT_COMMAND_FOUNDATION_2026-08-09.md`, `docs/M5_NOTE_PROPOSAL_WORKFLOW_CHECKPOINT_2026-08-09.md`, `docs/M5_SEEDED_LOOP_DYNAMICS_CHECKPOINT_2026-08-09.md`, and `docs/M5_DYNAMICS_CONTROLS_CHECKPOINT_2026-08-09.md`.
 
 ### Accepted host-owned sound workflow
 
@@ -203,11 +205,11 @@ The build copies four production executables to `bin`:
 
 `ScannerHangFixture.exe`, `RealtimeEngineTests.exe`, and `SongProjectTests.exe` stay in the build tree because they are development-only test programs. Exact SHA-256 values for the packaged binaries are recorded in `artifacts/release-binaries.sha256`.
 
-## Next implementation slice
+## Next acceptance gate
 
 1. Preserve the accepted M4 `0.3.0` sound workflow and the tested M5 proposal lifecycle.
-2. Turn the fixed whole-loop demonstration into a small explicit transform request with bounded target scope, strength, and seed controls.
-3. Keep resolution host-side and prove changed parameters create concrete reviewable commands while identical inputs remain byte-deterministic.
-4. Do not combine this with factory-preset parsing, multi-track expansion, arrangement, or model-service integration.
+2. In the exact packaged editor, preview both whole-loop and selected-note dynamics with at least two strengths or seeds.
+3. Confirm the controls, larger diff, A/B sound, Reject, Apply, and one Undo are understandable and useful, then record an explicit M5 acceptance or repair request.
+4. Keep additional transforms, factory-preset parsing, multi-track expansion, arrangement, and model-service integration outside this acceptance gate.
 
 Architecture and evidence are recorded in `docs/ADR-0001-vst3-host-foundation.md`, `docs/ADR-0002-crash-isolated-plugin-scanning.md`, `docs/ADR-0003-realtime-audio-engine.md`, `docs/ADR-0004-host-owned-sound-snapshots.md`, and the dated checkpoint files under `docs/`.

@@ -32,7 +32,7 @@ flowchart LR
     L --> V
 ```
 
-Solid lines are implemented host-side boundaries. Only the dotted AI translation path is unimplemented in this diagram; the current proposal card is driven by bounded manual selected-note `+1` and seeded whole-loop velocity producers.
+Solid lines are implemented host-side boundaries. Only the dotted AI translation path is unimplemented in this diagram; the current proposal card is driven by bounded manual selected-note `+1` and seeded velocity producers with whole-loop/selected-note target, maximum-delta, and seed inputs.
 
 ## Production executables
 
@@ -172,8 +172,8 @@ The current single-track shape is deliberate, but several seams are intended for
 - offline rendering can reuse the validated song and plug-in state while remaining separate from the device callback;
 - game-transition metadata can reference arrangement sections after ordinary arrangement editing exists.
 
-These are extension points, not permission to weaken current invariants. Multi-track, automation, broader or user-parameterized transforms, AI translation/service integration, effects, and game-state playback are not implemented yet.
+These are extension points, not permission to weaken current invariants. Multi-track, automation, additional transform families, AI translation/service integration, effects, and game-state playback are not implemented yet.
 
 ## Architectural evidence
 
-The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the M5 edit-command foundation, the M5 note-proposal workflow, and the first seeded loop-dynamics transform. See the [documentation index](README.md) for the full list.
+The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the M5 edit-command foundation, the M5 note-proposal workflow, the first seeded loop-dynamics transform, and its explicit controls. See the [documentation index](README.md) for the full list.

@@ -1,6 +1,6 @@
 # AI-assisted music editing design
 
-Status: M5 in progress; the version-1 host command core, editor-owned visual A/B proposal workflow, and first seeded bounded multi-note transform are implemented, while broader transform controls, natural-language translation, and the model-service boundary remain future work
+Status: M5 technical implementation candidate; the version-1 host command core, editor-owned visual A/B workflow, seeded bounded velocity transform, and explicit target/strength/seed controls are implemented, while packaged user acceptance, additional transforms, natural-language translation, and the model-service boundary remain future work
 
 ## Goal
 
@@ -56,7 +56,8 @@ The first host-side slice is deliberately service-independent:
 - Audition A and B publish either project or candidate through the normal immutable `SequenceSnapshot` path;
 - explicit Apply and Reject preserve the consume-once core, Save writes only A, and unrelated project edits invalidate stale B;
 - note and sound candidate controls are interlocked so the editor never presents two simultaneous A/B decisions;
-- the first manual producers remain deliberately bounded: transpose the selected note up one semitone, or vary the whole loop's velocities with seed `18421` and maximum delta `8`.
+- the manual producers remain deliberately bounded: transpose the selected note up one semitone, or vary velocities for the whole loop or selected note with explicit maximum delta and seed;
+- the proposal card validates maximum delta `1` through `32` and seed `0` through `2147483647`, requires a current selection for selected-note scope, and freezes all request inputs while B is pending.
 
 The content hash excludes only the editor build-version label. It includes the musical model and accepted opaque instrument state, so a command becomes stale after any material project change. Existing note timing that predates exact tick storage may be preserved byte-semantically by a pitch- or velocity-only update; any changed timing must still resolve to an integer tick at 960 PPQ. The current seeded resolver is host-side and service-independent: it records the seed, but preview and Apply use its fully resolved concrete changes rather than rerunning randomness.
 
@@ -107,7 +108,7 @@ The host must reject stale project revisions, unknown IDs, unsupported operation
 
 Implement these first because they are easy to preview and test:
 
-- vary velocity within an explicit bound and deterministic seed; the fixed whole-loop form is implemented;
+- vary whole-loop or selected-note velocity within an explicit bound and deterministic seed; this first parameterized form is implemented;
 - quantize with strength rather than only hard snap;
 - humanize timing and velocity within explicit bounds;
 - transpose or constrain to a scale/register;
@@ -219,6 +220,6 @@ The first AI slice should be intentionally small:
 7. apply as one Undo transaction or reject with no mutation;
 8. cover deterministic resolution, stale proposals, invalid IDs, bounds, and round trips with tests.
 
-Items 1, 2, 4, 5, 6, 7, and the host-side portions of item 8 now have native coverage, including deterministic multi-note resolution. The next M5 slice should expose bounded target, strength, and seed inputs over that proven resolver. Natural-language translation remains intentionally deferred until those explicit host parameters are usable and inspectable.
+Items 1, 2, 4, 5, 6, 7, and the host-side portions of item 8 now have native coverage, including deterministic multi-note resolution and explicit bounded host inputs. The remaining M5 gate is packaged user review of control clarity and musical usefulness. Natural-language translation remains intentionally deferred to the later AI milestone rather than being folded into M5 acceptance.
 
 Do not begin with open-ended “make a whole soundtrack” generation. The command and preview contract must become trustworthy first.

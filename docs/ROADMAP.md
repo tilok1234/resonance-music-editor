@@ -17,7 +17,7 @@ The focus is game music. General sound-effect creation is not part of this roadm
 | F2 First real-time editor | Complete | accepted Surge plays through explicit Windows Audio with safe transport and diagnostics |
 | F3 Editable single-track song | Complete | piano roll, Undo/Redo, exact state, and `.resonance.json` save/open |
 | M4 Sound and preset workflow | Complete | Accepted as version 0.3.0 after A/B, persistence, lifecycle, and listening gates passed |
-| M5 Unified edit-command layer | In progress | command core, editor A/B proposal, and first seeded bounded transform are proven; broader controls remain |
+| M5 Unified edit-command layer | In progress | technical command, A/B, deterministic transform, and explicit controls pass; packaged user acceptance remains |
 | M6 Multi-track and mixer | Planned | several instruments play through a safe mixer and schema migration |
 | M7 Arrangement, automation, and effects | Planned | full sections, curves, buses, and dependable song structure |
 | M8 AI music assistant | Planned | natural-language requests resolve to bounded command proposals |
@@ -79,7 +79,7 @@ VST3 does not guarantee one uniform factory-preset browsing experience across al
 
 ## M5: Unified edit-command layer
 
-Status: in progress. The 2026-08-09 foundation implements schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, non-mutating candidate projects, explicit note diffs, consume-once Apply/Reject, one-transaction Undo/Redo, strict stale/invalid rejection, seed provenance, native tests, and a portable schema-validated fixture. The editor slice owns one pending preview, renders before/after note overlays and counts, auditions A/B through normal immutable sequence publication, applies or rejects explicitly, preserves accepted A on Save, and invalidates stale previews. Checkpoint `2351cb6` adds the first deterministic bounded resolver: canonical whole-loop targets plus seed `18421` and maximum delta `8` resolve into eight concrete velocity-only updates, and the existing lifecycle handles the larger diff unchanged. Explicit target/strength/seed controls, additional transform families, and any natural-language translator remain open.
+Status: in progress pending packaged user acceptance. The 2026-08-09 foundation implements schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, non-mutating candidate projects, explicit note diffs, consume-once Apply/Reject, one-transaction Undo/Redo, strict stale/invalid rejection, seed provenance, native tests, and a portable schema-validated fixture. The editor owns one pending preview, renders before/after note overlays and counts, auditions A/B through normal immutable sequence publication, applies or rejects explicitly, preserves accepted A on Save, and invalidates stale previews. Checkpoint `2351cb6` adds deterministic bounded velocity resolution. Checkpoint `ef9710d` exposes whole-loop/selected-note target, maximum delta, and seed controls, fails closed on invalid input, and proves repeat, A/B, Reject, Apply, and one Undo through the packaged native workflow. Additional transform families and natural-language translation remain later work, not blockers for this bounded M5 vertical slice.
 
 ### Goal
 
@@ -98,6 +98,15 @@ Give every edit a validated command and diff representation before connecting an
 - command tests and portable fixtures.
 
 Manual UI actions do not all need to serialize as external JSON immediately, but they and external commands must converge on the same model operations and invariants.
+
+### Acceptance gate
+
+- preview whole-loop and selected-note dynamics through the exact packaged editor;
+- vary strength or seed and confirm the resolved diff changes while identical inputs repeat;
+- verify proposal inputs freeze while B is pending;
+- audition A/B, Reject without mutation, Apply as one transaction, and Undo to A;
+- obtain an explicit user judgment on control clarity and musical usefulness;
+- record acceptance before marking M5 complete or advancing to M6.
 
 ## M6: Multi-track and mixer
 

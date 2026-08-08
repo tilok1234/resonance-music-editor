@@ -1,6 +1,6 @@
 # Resonance Music Editor documentation
 
-This index is the entry point for product, architecture, development, and handoff information. Resonance is an early but working Windows-native game-music editor: version 0.3.0 edits one looping MIDI clip, drives one inventory-approved Surge XT VST3 instrument, plays through WASAPI, and preserves an explicitly accepted named plug-in state in a versioned project file. The M4 A/B sound workflow passed packaged interaction, state-lifecycle, and user listening gates and is accepted. M5 is in progress; its host-side version-1 note-command core, editor-owned visual A/B proposal workflow, and first deterministic seeded whole-loop dynamics transform are implemented, while broader transform controls and model translation are not.
+This index is the entry point for product, architecture, development, and handoff information. Resonance is an early but working Windows-native game-music editor: version 0.3.0 edits one looping MIDI clip, drives one inventory-approved Surge XT VST3 instrument, plays through WASAPI, and preserves an explicitly accepted named plug-in state in a versioned project file. The M4 A/B sound workflow passed packaged interaction, state-lifecycle, and user listening gates and is accepted. M5 is a technical implementation candidate: its version-1 command core, visual A/B proposal workflow, deterministic seeded velocity transform, and explicit target/strength/seed controls pass automated gates; packaged user acceptance remains open.
 
 ## Read this first
 
@@ -70,6 +70,7 @@ An ADR records a durable decision and its consequences. Add a new ADR when a cha
 - [M5 edit-command foundation](M5_EDIT_COMMAND_FOUNDATION_2026-08-09.md)
 - [M5 note-proposal workflow](M5_NOTE_PROPOSAL_WORKFLOW_CHECKPOINT_2026-08-09.md)
 - [M5 seeded loop-dynamics transform](M5_SEEDED_LOOP_DYNAMICS_CHECKPOINT_2026-08-09.md)
+- [M5 parameterized dynamics controls](M5_DYNAMICS_CONTROLS_CHECKPOINT_2026-08-09.md)
 
 The acceptance files distinguish implementation proof from musical approval. A passing scheduler, schema, or audio-device test does not mean that a preset, loop, mix, or composition has passed a listening review.
 

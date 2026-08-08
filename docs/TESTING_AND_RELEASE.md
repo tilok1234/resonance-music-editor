@@ -122,7 +122,7 @@ The Release editor exercises the production note-proposal controls without brows
 .\bin\ResonanceMusicEditor.exe --m5-workflow-test --report <report.json>
 ```
 
-This hidden mode keeps transport stopped. It first creates a selected-note `+1` candidate, proves the active song remains clean and hash-identical, saves and reloads accepted A while B remains pending, checks the sound/note candidate interlock, switches both A/B controls, rejects without mutation, applies as one Undo transaction, verifies Undo/Redo hashes, invalidates a stale preview after an unrelated edit, and restores the original project. It then creates the eight-note **Loop dynamics** candidate with seed `18421` and maximum delta `8`, verifies velocity-only bounds, auditions and rejects without mutating A, repeats the preview and compares its candidate hash, applies exact B, and restores A with one Undo before clean Close. `schema/m5-workflow-test.schema.json` requires every recorded lifecycle condition to pass.
+This hidden mode keeps transport stopped. It first creates a selected-note `+1` candidate, proves the active song remains clean and hash-identical, saves and reloads accepted A while B remains pending, checks the sound/note candidate interlock, switches both A/B controls, rejects without mutation, applies as one Undo transaction, verifies Undo/Redo hashes, invalidates a stale preview after an unrelated edit, and restores the original project. It then creates the default eight-note dynamics candidate with seed `18421` and maximum delta `8`, verifies velocity-only bounds, auditions and rejects without mutating A, repeats the preview, applies exact B, and restores A with one Undo. Finally it enters selected-note scope, maximum delta `3`, and seed `90210` through the production controls; verifies one targeted bounded diff and a changed candidate; repeats A/B, Reject, deterministic preview, Apply, and Undo; and proves invalid delta `33` disables Preview before clean Close. `schema/m5-workflow-test.schema.json` requires every recorded lifecycle condition to pass.
 
 ### Artifact-schema gate
 
@@ -147,7 +147,7 @@ Before calling an interaction milestone complete, verify the exact packaged Rele
 - native Surge open, audition strip, keyboard, close, and reopen;
 - sound B capture, A/B audition, Apply, Reject, dirty state, and discard warning;
 - sound Undo/Redo restoring the live instance, then Save, close, and Open preserving the applied sound;
-- selected-note and whole-loop dynamics proposal overlays/counts, seed and velocity detail, A/B audition, Save-A isolation, Apply, Reject, one-step Undo/Redo, and discard warning;
+- whole-loop/selected-note target, maximum-delta, and seed entry; invalid-input feedback; frozen pending controls; proposal overlays/counts; seed and velocity detail; A/B audition; Save-A isolation; Apply; Reject; one-step Undo/Redo; and discard warning;
 - no stuck note or leftover process;
 - responsive idle behavior.
 
