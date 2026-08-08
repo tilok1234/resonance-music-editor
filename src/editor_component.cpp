@@ -1529,6 +1529,7 @@ void MainEditorComponent::prepareM5PreviewForSnapshot()
 
     pianoRoll->setSelectedNote (notes.front().id);
     previewSelectedNoteEdit();
+    updateStatus();
 }
 
 juce::var MainEditorComponent::runM5WorkflowSelfTest()
