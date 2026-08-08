@@ -71,6 +71,11 @@ double loopForComboId (int id)
         default: return 32.0;
     }
 }
+
+juce::String shortStateHash (const juce::String& hash)
+{
+    return hash.substring (0, 8).toUpperCase();
+}
 } // namespace
 
 class MainEditorComponent::PluginEditorWindow final : public juce::DocumentWindow
@@ -166,9 +171,9 @@ private:
             playButton.setButtonText (isPlaying ? "Pause loop" : "Play loop");
             playButton.setEnabled (engine.isPrepared());
             statusLabel.setText (isPlaying
-                                     ? "LOOP PLAYING - EDIT SURGE TO HEAR CHANGES LIVE"
-                                     : "AUDITION READY - PLAY THE LOOP OR CLICK THE KEYS",
-                                 juce::dontSendNotification);
+                                     ? "LOOP PLAYING - EDIT SURGE, THEN CAPTURE B IN RESONANCE"
+                                     : "AUDITION READY - EDIT SURGE, THEN CAPTURE B IN RESONANCE",
+                                  juce::dontSendNotification);
             statusLabel.setColour (juce::Label::textColourId, isPlaying ? primary : textMuted);
         }
 
@@ -265,7 +270,7 @@ void MainEditorComponent::configureControls()
     titleLabel.setColour (juce::Label::textColourId, textMain);
     addAndMakeVisible (titleLabel);
 
-    subtitleLabel.setText ("EDITABLE VST3 SONG  /  ONE SURGE TRACK", juce::dontSendNotification);
+    subtitleLabel.setText ("EDITABLE VST3 SONG  /  A-B SOUND WORKFLOW", juce::dontSendNotification);
     subtitleLabel.setFont (uiFont (10.5f, juce::Font::bold));
     subtitleLabel.setColour (juce::Label::textColourId, textMuted);
     addAndMakeVisible (subtitleLabel);
@@ -286,6 +291,11 @@ void MainEditorComponent::configureControls()
     trackMetaLabel.setColour (juce::Label::textColourId, textMuted);
     addAndMakeVisible (trackMetaLabel);
 
+    soundWorkflowLabel.setFont (uiFont (11.0f, juce::Font::bold));
+    soundWorkflowLabel.setColour (juce::Label::textColourId, textMuted);
+    soundWorkflowLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (soundWorkflowLabel);
+
     transportPositionLabel.setFont (uiFont (14.0f, juce::Font::bold));
     transportPositionLabel.setColour (juce::Label::textColourId, primary);
     transportPositionLabel.setJustificationType (juce::Justification::centredLeft);
@@ -302,18 +312,23 @@ void MainEditorComponent::configureControls()
     addAndMakeVisible (diagnosticLabel);
 
     for (auto* button : { &newButton, &openButton, &saveButton, &undoButton, &redoButton,
-                          &playButton, &stopButton, &panicButton, &pluginEditorButton })
+                          &playButton, &stopButton, &panicButton, &pluginEditorButton,
+                          &auditionProjectSoundButton, &captureSoundButton,
+                          &auditionCandidateButton, &applySoundButton, &rejectSoundButton })
         addAndMakeVisible (*button);
 
     playButton.setColour (juce::TextButton::buttonColourId, primary.darker (0.55f));
     panicButton.setColour (juce::TextButton::buttonColourId, danger.darker (0.55f));
     saveButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.55f));
+    captureSoundButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.55f));
+    applySoundButton.setColour (juce::TextButton::buttonColourId, primary.darker (0.55f));
+    rejectSoundButton.setColour (juce::TextButton::buttonColourId, danger.darker (0.65f));
 
     newButton.onClick = [this] { confirmDiscardIfNeeded ([this] { startNewProject(); }); };
     openButton.onClick = [this] { confirmDiscardIfNeeded ([this] { chooseProjectToOpen(); }); };
     saveButton.onClick = [this] { saveProject(); };
-    undoButton.onClick = [this] { project.undo(); };
-    redoButton.onClick = [this] { project.redo(); };
+    undoButton.onClick = [this] { performUndoRedo (false); };
+    redoButton.onClick = [this] { performUndoRedo (true); };
     playButton.onClick = [this]
     {
         engine.setPlaying (! engine.isPlaying());
@@ -322,6 +337,31 @@ void MainEditorComponent::configureControls()
     stopButton.onClick = [this] { engine.stopAndRewind(); };
     panicButton.onClick = [this] { engine.panic(); };
     pluginEditorButton.onClick = [this] { openPluginEditor(); };
+    auditionProjectSoundButton.onClick = [this] { auditionProjectSound(); };
+    captureSoundButton.onClick = [this] { captureSoundCandidate(); };
+    auditionCandidateButton.onClick = [this] { auditionSoundCandidate(); };
+    applySoundButton.onClick = [this] { applySoundCandidate(); };
+    rejectSoundButton.onClick = [this] { rejectSoundCandidate(); };
+
+    soundNameEditor.setTextToShowWhenEmpty ("Candidate sound name", textMuted);
+    soundNameEditor.setInputRestrictions (80);
+    soundNameEditor.setText ("Captured sound", false);
+    soundNameEditor.setSelectAllWhenFocused (true);
+    soundNameEditor.onTextChange = [this]
+    {
+        if (! soundCandidate.has_value())
+            return;
+
+        const auto edited = soundNameEditor.getText().trim().substring (0, 80);
+        if (edited.isNotEmpty())
+            soundCandidate->name = edited;
+        refreshSoundControls();
+    };
+    soundNameEditor.setColour (juce::TextEditor::backgroundColourId, background.withAlpha (0.75f));
+    soundNameEditor.setColour (juce::TextEditor::textColourId, textMain);
+    soundNameEditor.setColour (juce::TextEditor::outlineColourId, cardEdge);
+    soundNameEditor.setColour (juce::TextEditor::focusedOutlineColourId, secondary);
+    addAndMakeVisible (soundNameEditor);
 
     bpmLabel.setText ("BPM", juce::dontSendNotification);
     gainLabel.setText ("MASTER", juce::dontSendNotification);
@@ -509,7 +549,11 @@ void MainEditorComponent::initialiseAudioAndPlugin()
     if (stateResult.failed())
         startupError = "Surge state capture failed: " + stateResult.getErrorMessage();
     else
+    {
         project.setPluginState (initialPluginState);
+        acceptedLiveSoundSha256 = project.getPluginStateSha256();
+        auditionedSoundSha256 = acceptedLiveSoundSha256;
+    }
 
     if (rate == 44100.0 || rate == 48000.0 || rate == 88200.0 || rate == 96000.0)
         project.setSampleRate (juce::roundToInt (rate));
@@ -522,11 +566,18 @@ void MainEditorComponent::initialiseAudioAndPlugin()
     deviceManager.addAudioCallback (&engine);
     audioCallbackRegistered = true;
 
+    if (initialPluginState.getSize() > 0)
+    {
+        juce::MemoryBlock preparedLiveState;
+        if (engine.restorePluginState (initialPluginState, &preparedLiveState).wasOk())
+        {
+            acceptedLiveSoundSha256 = juce::SHA256 (preparedLiveState).toHexString();
+            auditionedSoundSha256 = acceptedLiveSoundSha256;
+        }
+    }
+
     trackNameLabel.setText ("01  /  " + pluginRecord.description.name, juce::dontSendNotification);
-    trackMetaLabel.setText (pluginRecord.description.manufacturerName + "  /  VST3 "
-                            + pluginRecord.description.version + "  /  "
-                            + juce::String (pluginRecord.expectedParameterCount) + " parameters",
-                            juce::dontSendNotification);
+    refreshProjectControls();
     updateStatus();
 }
 
@@ -549,6 +600,245 @@ void MainEditorComponent::openPluginEditor()
 
     pluginEditorWindow->setVisible (true);
     pluginEditorWindow->toFront (true);
+    auditionedSoundSha256.clear();
+    projectStatusMessage = "LIVE SURGE EDIT  /  CAPTURE B TO COMPARE OR KEEP A UNCHANGED";
+    refreshSoundControls();
+}
+
+void MainEditorComponent::captureSoundCandidate()
+{
+    juce::MemoryBlock state;
+    const auto result = engine.capturePluginState (state);
+    if (result.failed())
+    {
+        showError ("Could not capture sound B", result.getErrorMessage());
+        return;
+    }
+
+    auto name = soundNameEditor.getText().trim().substring (0, 80);
+    if (name.isEmpty())
+        name = "Captured sound";
+
+    const auto hash = juce::SHA256 (state).toHexString();
+    soundCandidate = PluginSoundSnapshot { name, std::move (state), hash };
+    candidateLiveSoundSha256 = soundCandidate->stateSha256;
+    auditionedSoundSha256 = candidateLiveSoundSha256;
+    const auto acceptedHash = acceptedLiveSoundSha256.isNotEmpty()
+                                  ? acceptedLiveSoundSha256
+                                  : project.getPluginStateSha256();
+    projectStatusMessage = candidateLiveSoundSha256.equalsIgnoreCase (acceptedHash)
+                               ? "B CAPTURED  /  STATE MATCHES A"
+                               : "B CAPTURED  /  AUDITION A-B BEFORE APPLY";
+    refreshSoundControls();
+}
+
+void MainEditorComponent::auditionProjectSound()
+{
+    restoreProjectSound ("AUDITIONING A  /  PROJECT REMAINS UNCHANGED");
+}
+
+void MainEditorComponent::auditionSoundCandidate()
+{
+    if (soundCandidate.has_value())
+        restoreSoundSnapshot (*soundCandidate,
+                              "AUDITIONING B  /  PROJECT REMAINS UNCHANGED",
+                              &candidateLiveSoundSha256);
+}
+
+void MainEditorComponent::applySoundCandidate()
+{
+    if (! soundCandidate.has_value())
+        return;
+
+    auto candidate = *soundCandidate;
+    const auto editedName = soundNameEditor.getText().trim().substring (0, 80);
+    if (editedName.isNotEmpty())
+        candidate.name = editedName;
+
+    PluginSoundSnapshot acceptedBefore;
+    const auto acceptedResult = project.getPluginSoundSnapshot (acceptedBefore);
+    if (acceptedResult.failed())
+    {
+        showError ("Could not read project sound", acceptedResult.getErrorMessage());
+        return;
+    }
+
+    if (! restoreSoundSnapshot (candidate, "APPLYING B", &candidateLiveSoundSha256))
+        return;
+
+    const auto applyResult = project.applyPluginSound (candidate.name, candidate.state);
+    if (applyResult.failed())
+    {
+        restoreSoundSnapshot (acceptedBefore,
+                              "RESTORED A AFTER APPLY FAILURE",
+                              &acceptedLiveSoundSha256);
+        showError ("Could not apply sound B", applyResult.getErrorMessage());
+        return;
+    }
+
+    acceptedLiveSoundSha256 = candidateLiveSoundSha256.isNotEmpty()
+                                  ? candidateLiveSoundSha256
+                                  : project.getPluginStateSha256();
+    auditionedSoundSha256 = acceptedLiveSoundSha256;
+    clearSoundCandidate();
+    projectStatusMessage = "SOUND APPLIED  /  UNDO RESTORES THE PREVIOUS SOUND";
+    refreshProjectControls();
+}
+
+void MainEditorComponent::rejectSoundCandidate()
+{
+    if (! soundCandidate.has_value())
+        return;
+
+    if (! restoreProjectSound ("B REJECTED  /  A RESTORED"))
+        return;
+
+    clearSoundCandidate();
+    projectStatusMessage = "B REJECTED  /  PROJECT SOUND UNCHANGED";
+    refreshSoundControls();
+}
+
+void MainEditorComponent::performUndoRedo (bool redo)
+{
+    const auto previousHash = project.getPluginStateSha256();
+    const auto changed = redo ? project.redo() : project.undo();
+    if (! changed)
+        return;
+
+    if (! previousHash.equalsIgnoreCase (project.getPluginStateSha256()))
+    {
+        clearSoundCandidate();
+        restoreProjectSound (redo
+                                 ? "REDO RESTORED THE ACCEPTED SOUND"
+                                 : "UNDO RESTORED THE PREVIOUS SOUND");
+    }
+    else
+    {
+        refreshProjectControls();
+    }
+}
+
+bool MainEditorComponent::restoreSoundSnapshot (const PluginSoundSnapshot& snapshot,
+                                                const juce::String& actionLabel,
+                                                juce::String* liveStateSha256)
+{
+    if (snapshot.state.getSize() == 0
+        || ! snapshot.stateSha256.equalsIgnoreCase (juce::SHA256 (snapshot.state).toHexString()))
+    {
+        showError ("Invalid sound snapshot", "The sound snapshot failed its state integrity check.");
+        return false;
+    }
+
+    juce::MemoryBlock liveState;
+    const auto restore = engine.restorePluginState (snapshot.state, &liveState);
+    if (restore.failed())
+    {
+        showError ("Could not restore Surge XT", restore.getErrorMessage());
+        return false;
+    }
+
+    const auto restoredLiveHash = juce::SHA256 (liveState).toHexString();
+    if (liveStateSha256 != nullptr)
+        *liveStateSha256 = restoredLiveHash;
+    auditionedSoundSha256 = restoredLiveHash;
+    projectStatusMessage = actionLabel;
+    refreshSoundControls();
+    return true;
+}
+
+bool MainEditorComponent::restoreProjectSound (const juce::String& actionLabel)
+{
+    PluginSoundSnapshot accepted;
+    const auto result = project.getPluginSoundSnapshot (accepted);
+    if (result.failed())
+    {
+        showError ("Could not read project sound", result.getErrorMessage());
+        return false;
+    }
+
+    return restoreSoundSnapshot (accepted, actionLabel, &acceptedLiveSoundSha256);
+}
+
+bool MainEditorComponent::hasUncapturedLiveSoundState()
+{
+    if (engine.getPlugin() == nullptr)
+        return false;
+
+    juce::MemoryBlock liveState;
+    if (engine.capturePluginState (liveState).failed() || liveState.getSize() == 0)
+        return true;
+
+    const auto liveHash = juce::SHA256 (liveState).toHexString();
+    const auto acceptedHash = acceptedLiveSoundSha256.isNotEmpty()
+                                  ? acceptedLiveSoundSha256
+                                  : project.getPluginStateSha256();
+    if (liveHash.equalsIgnoreCase (acceptedHash))
+        return false;
+    if (soundCandidate.has_value()
+        && (liveHash.equalsIgnoreCase (candidateLiveSoundSha256)
+            || liveHash.equalsIgnoreCase (soundCandidate->stateSha256)))
+        return false;
+    return true;
+}
+
+void MainEditorComponent::clearSoundCandidate()
+{
+    soundCandidate.reset();
+    candidateLiveSoundSha256.clear();
+    soundNameEditor.setText ("Captured sound", false);
+}
+
+void MainEditorComponent::refreshSoundControls()
+{
+    const auto ready = engine.getPlugin() != nullptr;
+    const auto savedAcceptedHash = project.getPluginStateSha256();
+    const auto acceptedHash = acceptedLiveSoundSha256.isNotEmpty()
+                                  ? acceptedLiveSoundSha256
+                                  : savedAcceptedHash;
+    const auto candidateHash = soundCandidate.has_value()
+                                   ? (candidateLiveSoundSha256.isNotEmpty()
+                                          ? candidateLiveSoundSha256
+                                          : soundCandidate->stateSha256)
+                                   : juce::String {};
+    auto description = "A  /  " + project.getPluginSoundName();
+    if (acceptedHash.isNotEmpty())
+        description += "  /  " + shortStateHash (acceptedHash);
+
+    if (soundCandidate.has_value())
+    {
+        description += "       B  /  " + soundCandidate->name + "  /  "
+                       + shortStateHash (candidateHash);
+    }
+    else
+        description += "       B  /  CAPTURE FROM LIVE SURGE";
+
+    soundWorkflowLabel.setText (description, juce::dontSendNotification);
+    auto tooltip = "Saved A: " + savedAcceptedHash;
+    if (! acceptedHash.equalsIgnoreCase (savedAcceptedHash))
+        tooltip += "\nLive-equivalent A: " + acceptedHash;
+    if (soundCandidate.has_value())
+        tooltip += "\nB snapshot: " + soundCandidate->stateSha256
+                   + "\nLive-equivalent B: "
+                   + (candidateLiveSoundSha256.isNotEmpty()
+                          ? candidateLiveSoundSha256
+                          : soundCandidate->stateSha256);
+    soundWorkflowLabel.setTooltip (tooltip);
+
+    const auto candidateDiffers = soundCandidate.has_value()
+                                  && (! candidateHash.equalsIgnoreCase (acceptedHash)
+                                      || soundCandidate->name != project.getPluginSoundName());
+    auditionProjectSoundButton.setEnabled (ready && acceptedHash.isNotEmpty());
+    captureSoundButton.setEnabled (ready);
+    auditionCandidateButton.setEnabled (ready && soundCandidate.has_value());
+    applySoundButton.setEnabled (ready && candidateDiffers);
+    rejectSoundButton.setEnabled (ready && soundCandidate.has_value());
+    soundNameEditor.setEnabled (ready);
+
+    auditionProjectSoundButton.setToggleState (auditionedSoundSha256.equalsIgnoreCase (acceptedHash),
+                                                juce::dontSendNotification);
+    auditionCandidateButton.setToggleState (soundCandidate.has_value()
+                                                && auditionedSoundSha256.equalsIgnoreCase (candidateHash),
+                                             juce::dontSendNotification);
 }
 
 void MainEditorComponent::projectChanged()
@@ -575,6 +865,11 @@ void MainEditorComponent::refreshProjectControls()
     bpmSlider.setValue (project.getTempoBpm(), juce::dontSendNotification);
     snapCombo.setSelectedId (snapComboId (project.getSnapBeats()), juce::dontSendNotification);
     loopLengthCombo.setSelectedId (loopComboId (project.getLoopLengthBeats()), juce::dontSendNotification);
+    trackMetaLabel.setText (pluginRecord.description.manufacturerName + "  /  VST3 "
+                            + pluginRecord.description.version + "  /  "
+                            + juce::String (pluginRecord.expectedParameterCount) + " parameters  /  SOUND  "
+                            + project.getPluginSoundName(),
+                            juce::dontSendNotification);
 
     undoButton.setEnabled (project.canUndo());
     redoButton.setEnabled (project.canRedo());
@@ -586,6 +881,8 @@ void MainEditorComponent::refreshProjectControls()
     velocityLabel.setText (selected.has_value() ? "VELOCITY" : "SELECT NOTE", juce::dontSendNotification);
     if (selected.has_value())
         velocitySlider.setValue (selected->velocity, juce::dontSendNotification);
+
+    refreshSoundControls();
 }
 
 void MainEditorComponent::selectedNoteChanged (const juce::String&)
@@ -597,14 +894,17 @@ void MainEditorComponent::startNewProject()
 {
     engine.stopAndRewind();
     pluginEditorWindow.reset();
+    clearSoundCandidate();
     if (initialPluginState.getSize() > 0)
     {
-        const auto restore = engine.restorePluginState (initialPluginState);
+        juce::MemoryBlock liveState;
+        const auto restore = engine.restorePluginState (initialPluginState, &liveState);
         if (restore.failed())
         {
             showError ("Could not reset Surge XT", restore.getErrorMessage());
             return;
         }
+        acceptedLiveSoundSha256 = juce::SHA256 (liveState).toHexString();
     }
 
     project.resetToStarter();
@@ -613,7 +913,12 @@ void MainEditorComponent::startNewProject()
                                pluginRecord.description.manufacturerName,
                                pluginRecord.description.version);
     if (initialPluginState.getSize() > 0)
+    {
         project.setPluginState (initialPluginState);
+        auditionedSoundSha256 = acceptedLiveSoundSha256.isNotEmpty()
+                                    ? acceptedLiveSoundSha256
+                                    : project.getPluginStateSha256();
+    }
     currentProjectFile = {};
     if (pianoRoll != nullptr)
         pianoRoll->setSelectedNote ({});
@@ -681,7 +986,8 @@ void MainEditorComponent::openProjectFile (const juce::File& file)
 
     engine.stopAndRewind();
     pluginEditorWindow.reset();
-    const auto restoreResult = engine.restorePluginState (state);
+    juce::MemoryBlock liveState;
+    const auto restoreResult = engine.restorePluginState (state, &liveState);
     if (restoreResult.failed())
     {
         showError ("Could not restore Surge XT", restoreResult.getErrorMessage());
@@ -691,6 +997,9 @@ void MainEditorComponent::openProjectFile (const juce::File& file)
     project.replaceWith (candidate);
     currentProjectFile = file;
     project.markClean();
+    clearSoundCandidate();
+    acceptedLiveSoundSha256 = juce::SHA256 (liveState).toHexString();
+    auditionedSoundSha256 = acceptedLiveSoundSha256;
     projectStatusMessage = "OPENED  /  " + file.getFileName();
     if (pianoRoll != nullptr)
         pianoRoll->setSelectedNote ({});
@@ -699,7 +1008,9 @@ void MainEditorComponent::openProjectFile (const juce::File& file)
 
 void MainEditorComponent::saveProject()
 {
-    projectStatusMessage = "CAPTURING THE EXACT SURGE STATE";
+    projectStatusMessage = soundCandidate.has_value()
+                               ? "SAVING A  /  B REMAINS AN UNAPPLIED PREVIEW"
+                               : "SAVING THE ACCEPTED PROJECT SOUND";
     updateStatus();
     if (currentProjectFile == juce::File())
         chooseProjectSaveLocation();
@@ -743,11 +1054,11 @@ void MainEditorComponent::saveProjectToFile (juce::File file)
     if (! file.getFileName().endsWithIgnoreCase (".json"))
         file = file.getSiblingFile (file.getFileName() + ".resonance.json");
 
-    juce::MemoryBlock state;
-    const auto stateResult = engine.capturePluginState (state);
+    PluginSoundSnapshot acceptedSound;
+    const auto stateResult = project.getPluginSoundSnapshot (acceptedSound);
     if (stateResult.failed())
     {
-        showError ("Could not capture Surge XT", stateResult.getErrorMessage());
+        showError ("Could not read the accepted project sound", stateResult.getErrorMessage());
         return;
     }
 
@@ -755,7 +1066,6 @@ void MainEditorComponent::saveProjectToFile (juce::File file)
                                pluginRecord.description.name,
                                pluginRecord.description.manufacturerName,
                                pluginRecord.description.version);
-    project.setPluginState (state);
     const auto rate = juce::roundToInt (engine.getSampleRate());
     if (rate == 44100 || rate == 48000 || rate == 88200 || rate == 96000)
         project.setSampleRate (rate);
@@ -769,22 +1079,33 @@ void MainEditorComponent::saveProjectToFile (juce::File file)
 
     currentProjectFile = file;
     project.markClean();
-    projectStatusMessage = "SAVED  /  " + file.getFileName();
+    projectStatusMessage = "SAVED  /  " + file.getFileName()
+                           + (soundCandidate.has_value() ? "  /  B NOT APPLIED" : "");
     refreshProjectControls();
 }
 
 void MainEditorComponent::confirmDiscardIfNeeded (std::function<void()> action)
 {
-    if (! project.isDirty())
+    const auto hasLiveSoundChanges = hasUncapturedLiveSoundState();
+    if (! project.isDirty() && ! soundCandidate.has_value() && ! hasLiveSoundChanges)
     {
         action();
         return;
     }
 
+    juce::StringArray pending;
+    if (project.isDirty())
+        pending.add ("unsaved song edits");
+    if (soundCandidate.has_value())
+        pending.add ("unapplied sound B");
+    if (hasLiveSoundChanges)
+        pending.add ("uncaptured live Surge changes");
+    const auto message = "Discard " + pending.joinIntoString (", ") + "?";
+
     const auto options = juce::MessageBoxOptions()
                              .withIconType (juce::MessageBoxIconType::WarningIcon)
                              .withTitle ("Unsaved song changes")
-                             .withMessage ("Discard the current unsaved edits?")
+                             .withMessage (message)
                              .withButton ("Discard")
                              .withButton ("Cancel")
                              .withAssociatedComponent (this);
@@ -799,6 +1120,110 @@ void MainEditorComponent::confirmDiscardIfNeeded (std::function<void()> action)
 void MainEditorComponent::requestClose (std::function<void()> closeAction)
 {
     confirmDiscardIfNeeded (std::move (closeAction));
+}
+
+juce::var MainEditorComponent::runM4WorkflowSelfTest (const juce::File& projectFile)
+{
+    auto* resultObject = new juce::DynamicObject();
+    juce::var result (resultObject);
+    resultObject->setProperty ("schemaVersion", 1);
+    resultObject->setProperty ("projectPath", projectFile.getFullPathName());
+
+    openProjectFile (projectFile);
+
+    const auto opened = currentProjectFile == projectFile && ! project.isDirty();
+    juce::MemoryBlock baselineLiveState;
+    const auto baselineCapture = engine.capturePluginState (baselineLiveState);
+    const auto baselineLiveHash = baselineCapture.wasOk()
+                                      ? juce::SHA256 (baselineLiveState).toHexString()
+                                      : juce::String {};
+    const auto savedHash = project.getPluginStateSha256();
+    const auto acceptedHashBeforePlay = acceptedLiveSoundSha256;
+    const auto baselineMatchesAccepted = baselineLiveHash.isNotEmpty()
+                                         && baselineLiveHash.equalsIgnoreCase (acceptedHashBeforePlay);
+
+    resultObject->setProperty ("opened", opened);
+    resultObject->setProperty ("projectTitle", project.getTitle());
+    resultObject->setProperty ("soundName", project.getPluginSoundName());
+    resultObject->setProperty ("savedStateSha256", savedHash);
+    resultObject->setProperty ("acceptedLiveStateSha256", acceptedHashBeforePlay);
+    resultObject->setProperty ("baselineLiveStateSha256", baselineLiveHash);
+    resultObject->setProperty ("baselineMatchesAccepted", baselineMatchesAccepted);
+    resultObject->setProperty ("prepared", engine.isPrepared());
+
+    engine.setPlaying (true);
+    updateStatus();
+    const auto startedPlaying = engine.isPlaying();
+    juce::Thread::sleep (4500);
+    const auto displayBeatAfterWait = engine.getDisplayBeat();
+    const auto playheadAdvanced = displayBeatAfterWait > 0.05;
+    engine.stopAndRewind();
+
+    resultObject->setProperty ("startedPlaying", startedPlaying);
+    resultObject->setProperty ("displayBeatAfterWait", displayBeatAfterWait);
+    resultObject->setProperty ("playheadAdvanced", playheadAdvanced);
+    resultObject->setProperty ("invalidSampleCount", engine.getInvalidSampleCount());
+    resultObject->setProperty ("processorExceptionCount", engine.getProcessorExceptionCount());
+
+    captureSoundCandidate();
+    const auto candidateCaptured = soundCandidate.has_value();
+    const auto candidateHash = candidateLiveSoundSha256;
+    const auto candidateMatchesAccepted = candidateCaptured
+                                          && candidateHash.isNotEmpty()
+                                          && candidateHash.equalsIgnoreCase (acceptedLiveSoundSha256);
+    const auto stateMatchStatus = projectStatusMessage.containsIgnoreCase ("STATE MATCHES A");
+    const auto projectCleanAfterCapture = ! project.isDirty();
+    const auto noUncapturedStateAfterCapture = ! hasUncapturedLiveSoundState();
+
+    resultObject->setProperty ("candidateCaptured", candidateCaptured);
+    resultObject->setProperty ("candidateLiveStateSha256", candidateHash);
+    resultObject->setProperty ("candidateMatchesAccepted", candidateMatchesAccepted);
+    resultObject->setProperty ("stateMatchStatus", stateMatchStatus);
+    resultObject->setProperty ("projectCleanAfterCapture", projectCleanAfterCapture);
+    resultObject->setProperty ("noUncapturedStateAfterCapture", noUncapturedStateAfterCapture);
+    resultObject->setProperty ("workflowLabelAfterCapture", soundWorkflowLabel.getText());
+
+    rejectSoundCandidate();
+    const auto candidateRejected = ! soundCandidate.has_value();
+    const auto acceptedRestoredAfterReject = acceptedLiveSoundSha256.isNotEmpty()
+                                             && acceptedLiveSoundSha256.equalsIgnoreCase (candidateHash);
+    const auto projectCleanAfterReject = ! project.isDirty();
+    const auto noUncapturedStateAfterReject = ! hasUncapturedLiveSoundState();
+    const auto projectLabelClean = ! projectNameLabel.getText().containsChar ('*');
+
+    auto closeAccepted = std::make_shared<std::atomic<bool>> (false);
+    requestClose ([closeAccepted] { closeAccepted->store (true); });
+    const auto closeAcceptedWithoutWarning = closeAccepted->load();
+
+    resultObject->setProperty ("candidateRejected", candidateRejected);
+    resultObject->setProperty ("acceptedRestoredAfterReject", acceptedRestoredAfterReject);
+    resultObject->setProperty ("projectCleanAfterReject", projectCleanAfterReject);
+    resultObject->setProperty ("noUncapturedStateAfterReject", noUncapturedStateAfterReject);
+    resultObject->setProperty ("projectLabelClean", projectLabelClean);
+    resultObject->setProperty ("closeAcceptedWithoutWarning", closeAcceptedWithoutWarning);
+    resultObject->setProperty ("finalWorkflowLabel", soundWorkflowLabel.getText());
+
+    const auto passed = opened
+                        && project.getPluginSoundName().isNotEmpty()
+                        && engine.isPrepared()
+                        && baselineMatchesAccepted
+                        && startedPlaying
+                        && playheadAdvanced
+                        && engine.getInvalidSampleCount() == 0
+                        && engine.getProcessorExceptionCount() == 0
+                        && candidateCaptured
+                        && candidateMatchesAccepted
+                        && stateMatchStatus
+                        && projectCleanAfterCapture
+                        && noUncapturedStateAfterCapture
+                        && candidateRejected
+                        && acceptedRestoredAfterReject
+                        && projectCleanAfterReject
+                        && noUncapturedStateAfterReject
+                        && projectLabelClean
+                        && closeAcceptedWithoutWarning;
+    resultObject->setProperty ("passed", passed);
+    return result;
 }
 
 void MainEditorComponent::showError (const juce::String& title, const juce::String& message)
@@ -818,10 +1243,10 @@ bool MainEditorComponent::keyPressed (const juce::KeyPress& key)
     if (command && key.getKeyCode() == 'N') { confirmDiscardIfNeeded ([this] { startNewProject(); }); return true; }
     if (command && key.getKeyCode() == 'Z')
     {
-        key.getModifiers().isShiftDown() ? project.redo() : project.undo();
+        performUndoRedo (key.getModifiers().isShiftDown());
         return true;
     }
-    if (command && key.getKeyCode() == 'Y') { project.redo(); return true; }
+    if (command && key.getKeyCode() == 'Y') { performUndoRedo (true); return true; }
     if (key.getKeyCode() == juce::KeyPress::spaceKey)
     {
         engine.setPlaying (! engine.isPlaying());
@@ -1007,7 +1432,7 @@ void MainEditorComponent::resized()
     auto body = area;
     deviceCardBounds = body.removeFromRight (326);
     body.removeFromRight (12);
-    trackCardBounds = body.removeFromTop (72);
+    trackCardBounds = body.removeFromTop (132);
     body.removeFromTop (12);
     keyboardCardBounds = body.removeFromBottom (154);
     body.removeFromBottom (12);
@@ -1043,10 +1468,26 @@ void MainEditorComponent::resized()
 
     auto track = trackCardBounds.reduced (16);
     track.removeFromRight (44);
-    pluginEditorButton.setBounds (track.removeFromRight (138).reduced (0, 4));
-    track.removeFromRight (12);
-    trackNameLabel.setBounds (track.removeFromTop (31));
-    trackMetaLabel.setBounds (track);
+    auto trackHeader = track.removeFromTop (43);
+    pluginEditorButton.setBounds (trackHeader.removeFromRight (138).reduced (0, 4));
+    trackHeader.removeFromRight (12);
+    trackNameLabel.setBounds (trackHeader.removeFromTop (24));
+    trackMetaLabel.setBounds (trackHeader);
+    track.removeFromTop (3);
+    soundWorkflowLabel.setBounds (track.removeFromTop (20));
+    track.removeFromTop (3);
+    auto soundControls = track.removeFromTop (30);
+    soundNameEditor.setBounds (soundControls.removeFromLeft (180));
+    soundControls.removeFromLeft (7);
+    captureSoundButton.setBounds (soundControls.removeFromLeft (88));
+    soundControls.removeFromLeft (7);
+    auditionProjectSoundButton.setBounds (soundControls.removeFromLeft (84));
+    soundControls.removeFromLeft (7);
+    auditionCandidateButton.setBounds (soundControls.removeFromLeft (84));
+    soundControls.removeFromLeft (7);
+    applySoundButton.setBounds (soundControls.removeFromLeft (72));
+    soundControls.removeFromLeft (7);
+    rejectSoundButton.setBounds (soundControls.removeFromLeft (76));
 
     auto loop = loopCardBounds.reduced (12);
     loop.removeFromTop (21);

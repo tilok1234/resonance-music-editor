@@ -154,6 +154,54 @@ void testEditableSequence (TestContext& context)
     context.expect (empty.isEmpty(), "An empty edited sequence must schedule no MIDI events");
 }
 
+void testExactDeviceBlockBoundaries (TestContext& context)
+{
+    constexpr double bpm = 120.0;
+    constexpr double sampleRate = 44100.0;
+    constexpr int blockSize = 441;
+    constexpr int blocksPerLoop = 400;
+    const auto beatsPerBlock = bpm * static_cast<double> (blockSize) / (60.0 * sampleRate);
+    double startBeat = 0.0;
+    int noteOns = 0;
+    int noteOffs = 0;
+    int firstNoteOffBlock = -1;
+    int secondNoteOnBlock = -1;
+
+    for (int block = 0; block < blocksPerLoop; ++block)
+    {
+        juce::MidiBuffer midi;
+        resonance::LoopScheduler::addBlock (midi, startBeat, bpm, sampleRate, blockSize);
+
+        for (const auto metadata : midi)
+        {
+            const auto message = metadata.getMessage();
+            noteOns += message.isNoteOn() ? 1 : 0;
+            noteOffs += message.isNoteOff() ? 1 : 0;
+
+            if (message.isNoteOff() && message.getNoteNumber() == 48)
+            {
+                firstNoteOffBlock = block;
+                context.expect (metadata.samplePosition == 0,
+                                "The beat-0.82 note-off must move to sample zero of the next device block");
+            }
+
+            if (message.isNoteOn() && message.getNoteNumber() == 55)
+            {
+                secondNoteOnBlock = block;
+                context.expect (metadata.samplePosition == 0,
+                                "The beat-one note-on must move to sample zero of the next device block");
+            }
+        }
+
+        startBeat += beatsPerBlock;
+    }
+
+    context.expect (noteOns == 8 && noteOffs == 8,
+                    "The exact 44.1 kHz / 441-sample loop must not drop boundary note events");
+    context.expect (firstNoteOffBlock == 41 && secondNoteOnBlock == 50,
+                    "Boundary events must be owned by the expected following device blocks");
+}
+
 juce::String getArgumentValue (const juce::StringArray& args, const juce::String& flag)
 {
     const auto index = args.indexOf (flag);
@@ -181,6 +229,7 @@ int main (int argc, char* argv[])
         testTempoMapping (context);
         testFourLoopBalance (context);
         testEditableSequence (context);
+        testExactDeviceBlockBoundaries (context);
 
         reportObject->setProperty ("assertions", context.assertions);
         reportObject->setProperty ("loopLengthBeats", resonance::loopLengthBeats);

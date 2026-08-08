@@ -1,14 +1,30 @@
 # Resonance Music Editor
 
-Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. The project now has its first editable song slice: a native Windows editor with real-time WASAPI output, a piano roll, lossless song projects, and one inventory-approved Surge XT instrument track.
+Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. The project now has its first editable song and sound-design slice: a native Windows editor with real-time WASAPI output, a piano roll, lossless song projects, one inventory-approved Surge XT instrument track, and a host-owned A/B sound workflow.
 
-The current scope is deliberately one instrument track and one looping clip. Notes, tempo, loop length, grid snap, velocity, and Surge state are editable and saveable; arrangement tracks, automation, AI commands, and game-state music tools come next.
+The current scope is deliberately one instrument track and one looping clip. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. Factory-preset indexing, arrangement tracks, automation, AI commands, and game-state music tools remain later work.
 
 ![First playable Resonance Music Editor UI](artifacts/realtime-ui-snapshot.png)
 
 The native Surge window also has a Resonance audition strip, so sound design can be heard without returning to the main window:
 
 ![Surge XT with Resonance audition controls](artifacts/surge-audition-ui.png)
+
+## Documentation
+
+Start with the [documentation index](docs/README.md). It separates current behavior, planned design, and dated acceptance evidence so historical checkpoints are not mistaken for the live implementation.
+
+- [Product vision](docs/PRODUCT_VISION.md) - the game-music focus, manual and AI editing principles, and explicit non-goals.
+- [Architecture](docs/ARCHITECTURE.md) - processes, threads, data flow, real-time invariants, and extension seams.
+- [Development guide](docs/DEVELOPMENT.md) - Windows setup, local dependencies, build, run, test, and troubleshooting.
+- [Project format](docs/PROJECT_FORMAT.md) - the versioned `.resonance.json` contract and migration rules.
+- [VST3 hosting](docs/VST3_HOSTING.md) - scanning, quarantine, identity, loading, state, and native-editor behavior.
+- [AI editing design](docs/AI_EDITING_DESIGN.md) - the proposed reversible command model shared with manual editing.
+- [Testing and release](docs/TESTING_AND_RELEASE.md) - automated gates, listening gates, artifacts, and release checklist.
+- [Roadmap](docs/ROADMAP.md) - completed foundations and the ordered route to a game-music production editor.
+- [Current handoff](HANDOFF.md) - exact live status, known limitations, and a ready-to-paste fresh-task prompt.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before changing code, schemas, or real-time behavior.
 
 ## Run the playable editor
 
@@ -29,9 +45,31 @@ Keep the master level low for the first listen. It defaults to `-12 dB`, and tra
 - Use **Undo/Redo** or `Ctrl+Z` / `Ctrl+Y` while playback continues.
 - Use **Save** to create a `.resonance.json` song. **Open** restores the notes, tempo, loop, snap, and exact versioned Surge state.
 
-Unsaved changes are marked with `*`. New, Open, and window close ask before discarding edits.
+Unsaved project changes are marked with `*`. New, Open, and window close ask before discarding project edits, an unapplied B, or live Surge state that matches neither known live-equivalent snapshot.
+
+## Compare and apply a Surge sound
+
+1. Press **Open Surge XT** and choose or design a sound in Surge's native window.
+2. Give the candidate a name and press **Capture B** in Resonance.
+3. Use **Audition A** and **Audition B** to compare the accepted project sound with the captured candidate through the same Surge instance.
+4. Press **Apply B** to make the candidate one dirty, undoable project transaction, or **Reject B** to restore A without changing the song.
+
+Save writes only the accepted project sound. An unapplied B remains preview state and is not silently substituted into the project. Undo/Redo restores the corresponding live Surge state as well as the saved model. The exact saved SHA-256 protects project bytes; the UI separately tracks the live-equivalent hash returned by Surge after restore because one sound can have lifecycle-dependent opaque encodings. The current snapshot-first workflow intentionally does not parse or index Surge's vendor-specific `.fxp` library; see `docs/ADR-0004-host-owned-sound-snapshots.md`.
 
 ## Proven checkpoints
+
+### Accepted host-owned sound workflow
+
+The M4 host-owned sound workflow was accepted on 2026-08-08:
+
+- added a named opaque sound record while preserving schema-version-1 compatibility;
+- captured B without mutating the song and separated audition from Apply;
+- applied name, state, and SHA-256 as one Undo transaction;
+- restored the accepted live Surge state on Undo/Redo;
+- saved only the accepted project state rather than an unapplied preview;
+- passed 63 project-model assertions, 83 scheduler assertions including the exact 44.1 kHz / 441-sample first-play boundary regression, exact real-Surge state/name round trip, the silent packaged test, UI snapshot, and idle gate.
+
+The first listening pass exposed a dropped MIDI event at exact device-block boundaries. That scheduler defect is fixed and regression-tested, and the user confirmed that the corrected packaged build plays separate notes. The user then captured B, preferred it because it was less annoying, applied it, verified A/B Undo and Redo, saved, closed, and reopened it. The final recapture exposed lifecycle-dependent Surge encodings for the same restored sound. The corrected packaged native workflow normalizes the post-processing live identity: reopening and playing the exact saved B, recapturing unchanged B, rejecting it, and closing all pass without dirtying the project or showing a false warning. The user explicitly accepted M4 at 2026-08-08 23:54 +02:00, and the completed milestone is versioned as `0.3.0`. See `docs/FIRST_PLAY_MIDI_BOUNDARY_FIX_2026-08-08.md`, `docs/M4_SURGE_STATE_EQUIVALENCE_FIX_2026-08-08.md`, and `docs/M4_SOUND_WORKFLOW_CHECKPOINT_2026-08-08.md`.
 
 ### Editable song project
 
@@ -138,9 +176,8 @@ The build copies four production executables to `bin`:
 
 ## Next implementation slice
 
-1. Add Surge preset browsing, parameter discovery, automation, and track mixing.
-2. Add arrangement sections and multiple instrument tracks without weakening the real-time boundary.
-3. Add structured, previewable, reversible AI edit commands over the same model used by manual editing.
-4. Add game-music exports, stems, loops, and transition tools after ordinary arrangement editing is dependable.
+1. Preserve the accepted M4 `0.3.0` sound-workflow contract and its exact saved-B evidence.
+2. Begin M5's unified validated edit-command layer as a separate implementation scope.
+3. Do not combine M5 with factory-preset parsing, multi-track expansion, arrangement, or model-service integration.
 
-Architecture and evidence are recorded in `docs/ADR-0001-vst3-host-foundation.md`, `docs/ADR-0002-crash-isolated-plugin-scanning.md`, `docs/ADR-0003-realtime-audio-engine.md`, and the dated checkpoint files under `docs/`.
+Architecture and evidence are recorded in `docs/ADR-0001-vst3-host-foundation.md`, `docs/ADR-0002-crash-isolated-plugin-scanning.md`, `docs/ADR-0003-realtime-audio-engine.md`, `docs/ADR-0004-host-owned-sound-snapshots.md`, and the dated checkpoint files under `docs/`.

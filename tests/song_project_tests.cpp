@@ -98,6 +98,49 @@ void testRelocatedPluginIdentity (TestContext& context)
                     "A non-VST3 identity must not pass VST3 relocation matching");
 }
 
+void testSoundSnapshotAndUndo (TestContext& context)
+{
+    resonance::SongProject project;
+    const std::array<juce::uint8, 8> stateABytes { 1, 3, 5, 7, 9, 11, 13, 15 };
+    const std::array<juce::uint8, 8> stateBBytes { 2, 4, 6, 8, 10, 12, 14, 16 };
+    const juce::MemoryBlock stateA (stateABytes.data(), stateABytes.size());
+    const juce::MemoryBlock stateB (stateBBytes.data(), stateBBytes.size());
+
+    project.setPluginState (stateA);
+    project.markClean();
+    const auto stateAHash = project.getPluginStateSha256();
+    context.expect (! project.isDirty(), "The accepted A snapshot can be marked clean");
+
+    const auto apply = project.applyPluginSound ("Bright pluck", stateB);
+    context.expect (apply.wasOk(), "A non-empty named sound B must apply successfully");
+    context.expect (project.isDirty(), "Applying sound B must mark the song dirty");
+    context.expect (project.getPluginSoundName() == "Bright pluck", "The applied sound name must enter the model");
+    context.expect (project.getPluginStateSha256() != stateAHash, "Sound B must carry its own state hash");
+
+    resonance::PluginSoundSnapshot applied;
+    context.expect (project.getPluginSoundSnapshot (applied).wasOk(),
+                    "The applied sound snapshot must pass its integrity check");
+    context.expect (applied.name == "Bright pluck" && applied.state == stateB,
+                    "The host-owned sound snapshot must return its exact name and bytes");
+
+    context.expect (project.undo(), "Applying sound B must be one undoable transaction");
+    resonance::PluginSoundSnapshot undone;
+    context.expect (project.getPluginSoundSnapshot (undone).wasOk(), "Undo must leave a valid sound snapshot");
+    context.expect (undone.state == stateA && undone.stateSha256 == stateAHash,
+                    "Undo must restore the exact accepted A state");
+
+    context.expect (project.redo(), "The sound transaction must be redoable");
+    resonance::PluginSoundSnapshot redone;
+    context.expect (project.getPluginSoundSnapshot (redone).wasOk(), "Redo must leave a valid sound snapshot");
+    context.expect (redone.name == "Bright pluck" && redone.state == stateB,
+                    "Redo must restore the exact named B state");
+
+    context.expect (project.applyPluginSound (juce::String {}, stateB).failed(),
+                    "An unnamed sound must be rejected");
+    context.expect (project.applyPluginSound ("Empty", juce::MemoryBlock {}).failed(),
+                    "An empty sound state must be rejected");
+}
+
 void testRoundTrip (TestContext& context, int& savedBytes, juce::String& stateSha)
 {
     resonance::SongProject project;
@@ -113,7 +156,8 @@ void testRoundTrip (TestContext& context, int& savedBytes, juce::String& stateSh
 
     const std::array<juce::uint8, 12> stateBytes { 0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144 };
     juce::MemoryBlock state (stateBytes.data(), stateBytes.size());
-    project.setPluginState (state);
+    context.expect (project.applyPluginSound ("Round Trip Pluck", state).wasOk(),
+                    "A named sound must be accepted before round trip");
     stateSha = project.getPluginStateSha256();
 
     const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
@@ -134,6 +178,8 @@ void testRoundTrip (TestContext& context, int& savedBytes, juce::String& stateSh
     context.expect (loaded.getSampleRate() == 44100, "Sample rate must survive save and reopen");
     context.expect (loaded.getPluginIdentifier() == "VST3-Surge XT-bf38ca69-190e4fbd",
                     "The saved plugin identifier must survive save and reopen");
+    context.expect (loaded.getPluginSoundName() == "Round Trip Pluck",
+                    "The host-owned sound name must survive save and reopen");
     context.expect (loaded.getNotes().size() == project.getNotes().size(),
                     "All notes must survive save and reopen");
 
@@ -142,6 +188,28 @@ void testRoundTrip (TestContext& context, int& savedBytes, juce::String& stateSh
     context.expect (stateResult.wasOk(), "Reopened plugin state must pass its integrity check");
     context.expect (restoredState == state, "Reopened plugin state must be byte-exact");
     context.expect (loaded.getPluginStateSha256() == stateSha, "Saved state hash must round-trip exactly");
+
+    auto legacyJson = juce::JSON::parse (file.loadFileAsString());
+    auto* legacyRoot = legacyJson.getDynamicObject();
+    auto* legacyTracks = legacyRoot != nullptr ? legacyRoot->getProperty ("tracks").getArray() : nullptr;
+    auto* legacyTrack = legacyTracks != nullptr && ! legacyTracks->isEmpty()
+                            ? legacyTracks->getReference (0).getDynamicObject()
+                            : nullptr;
+    auto* legacyInstrument = legacyTrack != nullptr
+                                 ? legacyTrack->getProperty ("instrument").getDynamicObject()
+                                 : nullptr;
+    context.expect (legacyInstrument != nullptr, "The round-trip fixture must expose an instrument object");
+    legacyInstrument->removeProperty ("soundName");
+    const auto legacyFile = file.getSiblingFile (file.getFileNameWithoutExtension()
+                                                  + "-legacy.resonance.json");
+    context.expect (legacyFile.replaceWithText (juce::JSON::toString (legacyJson, true)),
+                    "A legacy version-1 fixture without soundName must be writable");
+    resonance::SongProject legacyLoaded;
+    context.expect (legacyLoaded.loadFromFile (legacyFile).wasOk(),
+                    "An older version-1 project without soundName must still load");
+    context.expect (legacyLoaded.getPluginSoundName() == "Project sound",
+                    "An older project must receive the documented fallback sound name");
+    context.expect (legacyFile.deleteFile(), "The temporary legacy project must be removable");
     context.expect (file.deleteFile(), "The temporary round-trip project must be removable");
 }
 } // namespace
@@ -165,6 +233,7 @@ int main (int argc, char* argv[])
         testEditingAndUndo (context);
         testSequenceSnapshot (context);
         testRelocatedPluginIdentity (context);
+        testSoundSnapshotAndUndo (context);
         testRoundTrip (context, savedBytes, stateSha);
         reportObject->setProperty ("assertions", context.assertions);
         reportObject->setProperty ("roundTripBytes", savedBytes);

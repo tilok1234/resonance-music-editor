@@ -141,16 +141,23 @@ private:
         if (eventBeatInLoop < 0.0)
             eventBeatInLoop += loopBeats;
 
-        auto cycle = std::floor (absoluteStartBeat / loopBeats);
+        // Assign each event to the block containing its nearest sample centre.
+        // Without the half-sample window, an event at the exact block end can
+        // round to numSamples, be rejected, and then look infinitesimally late
+        // in the next block after accumulated floating-point transport drift.
+        const auto halfSampleBeats = beatsPerSample * 0.5;
+        const auto schedulingStartBeat = absoluteStartBeat - halfSampleBeats;
+        const auto schedulingEndBeat = absoluteEndBeat - halfSampleBeats;
+        auto cycle = std::floor (schedulingStartBeat / loopBeats);
         auto occurrence = cycle * loopBeats + eventBeatInLoop;
 
-        if (occurrence < absoluteStartBeat)
+        if (occurrence < schedulingStartBeat)
             occurrence += loopBeats;
 
-        while (occurrence < absoluteEndBeat)
+        while (occurrence < schedulingEndBeat)
         {
-            const auto sampleOffset = static_cast<int> (std::llround (
-                (occurrence - absoluteStartBeat) / beatsPerSample));
+            const auto sampleOffset = static_cast<int> (std::floor (
+                (occurrence - absoluteStartBeat) / beatsPerSample + 0.5));
 
             if (sampleOffset >= 0 && sampleOffset < numSamples)
                 destination.addEvent (message, sampleOffset);

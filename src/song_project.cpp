@@ -100,6 +100,7 @@ void SongProject::resetToStarter()
     instrument.setProperty ("name", "Surge XT", nullptr);
     instrument.setProperty ("vendor", "Surge Synth Team", nullptr);
     instrument.setProperty ("version", "unknown", nullptr);
+    instrument.setProperty ("soundName", "Initial Surge state", nullptr);
     instrument.setProperty ("stateEncoding", "base64", nullptr);
     instrument.setProperty ("state", juce::String {}, nullptr);
     instrument.setProperty ("stateSha256", stateHash (juce::MemoryBlock {}), nullptr);
@@ -298,11 +299,30 @@ juce::String SongProject::getPluginName() const
     return getInstrumentTree().getProperty ("name").toString();
 }
 
+juce::String SongProject::getPluginSoundName() const
+{
+    const auto name = getInstrumentTree().getProperty ("soundName").toString().trim();
+    return name.isNotEmpty() ? name : juce::String { "Project sound" };
+}
+
 void SongProject::setPluginState (const juce::MemoryBlock& state)
 {
-    auto instrument = getInstrumentTree();
-    instrument.setProperty ("state", state.toBase64Encoding(), nullptr);
-    instrument.setProperty ("stateSha256", stateHash (state), nullptr);
+    const auto result = writePluginSoundSnapshot (getPluginSoundName(), state, nullptr);
+    jassert (result.wasOk());
+    juce::ignoreUnused (result);
+}
+
+juce::Result SongProject::applyPluginSound (const juce::String& soundName,
+                                            const juce::MemoryBlock& state)
+{
+    const auto trimmed = soundName.trim().substring (0, 80);
+    if (trimmed.isEmpty())
+        return juce::Result::fail ("A sound snapshot name is required");
+    if (state.getSize() == 0)
+        return juce::Result::fail ("A sound snapshot cannot contain empty VST3 state");
+
+    beginUndoTransaction ("Apply sound: " + trimmed);
+    return writePluginSoundSnapshot (trimmed, state, &undoManager);
 }
 
 juce::Result SongProject::getPluginState (juce::MemoryBlock& state) const
@@ -324,6 +344,22 @@ juce::Result SongProject::getPluginState (juce::MemoryBlock& state) const
 juce::String SongProject::getPluginStateSha256() const
 {
     return getInstrumentTree().getProperty ("stateSha256").toString();
+}
+
+juce::Result SongProject::getPluginSoundSnapshot (PluginSoundSnapshot& snapshot) const
+{
+    juce::MemoryBlock state;
+    const auto result = getPluginState (state);
+    if (result.failed())
+        return result;
+
+    if (state.getSize() == 0)
+        return juce::Result::fail ("The project contains an empty Surge XT sound snapshot");
+
+    snapshot.name = getPluginSoundName();
+    snapshot.state = std::move (state);
+    snapshot.stateSha256 = getPluginStateSha256().toLowerCase();
+    return juce::Result::ok();
 }
 
 SequenceSnapshot SongProject::createSequenceSnapshot() const
@@ -470,6 +506,7 @@ juce::var SongProject::toJsonValue() const
     instrumentObject->setProperty ("pluginName", getPluginName());
     instrumentObject->setProperty ("vendor", instrument.getProperty ("vendor"));
     instrumentObject->setProperty ("version", instrument.getProperty ("version"));
+    instrumentObject->setProperty ("soundName", getPluginSoundName());
     instrumentObject->setProperty ("stateEncoding", "base64");
     instrumentObject->setProperty ("state", instrument.getProperty ("state"));
     instrumentObject->setProperty ("stateSha256", getPluginStateSha256());
@@ -555,6 +592,11 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
         return juce::Result::fail ("Track instrument must be a VST3 object");
     const auto pluginIdentifier = requireString (*instrumentObject, "pluginIdentifier");
     const auto pluginName = requireString (*instrumentObject, "pluginName");
+    auto soundName = requireString (*instrumentObject, "soundName").trim();
+    if (soundName.isEmpty())
+        soundName = "Project sound";
+    if (soundName.length() > 80)
+        return juce::Result::fail ("Project soundName must contain at most 80 characters");
     const auto encodedState = requireString (*instrumentObject, "state");
     const auto savedHash = requireString (*instrumentObject, "stateSha256");
     if (pluginIdentifier.isEmpty() || pluginName.isEmpty() || encodedState.isEmpty() || savedHash.isEmpty())
@@ -595,6 +637,7 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
     loadedInstrument.setProperty ("name", pluginName, nullptr);
     loadedInstrument.setProperty ("vendor", requireString (*instrumentObject, "vendor"), nullptr);
     loadedInstrument.setProperty ("version", requireString (*instrumentObject, "version"), nullptr);
+    loadedInstrument.setProperty ("soundName", soundName, nullptr);
     loadedInstrument.setProperty ("stateEncoding", "base64", nullptr);
     loadedInstrument.setProperty ("state", encodedState, nullptr);
     loadedInstrument.setProperty ("stateSha256", savedHash.toLowerCase(), nullptr);
@@ -636,6 +679,26 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
     loadedRoot.addChild (loadedNotes, -1, nullptr);
 
     destination = loadedRoot;
+    return juce::Result::ok();
+}
+
+juce::Result SongProject::writePluginSoundSnapshot (const juce::String& soundName,
+                                                     const juce::MemoryBlock& state,
+                                                     juce::UndoManager* undo)
+{
+    const auto trimmed = soundName.trim().substring (0, 80);
+    if (trimmed.isEmpty())
+        return juce::Result::fail ("A sound snapshot name is required");
+    if (state.getSize() == 0)
+        return juce::Result::fail ("A sound snapshot cannot contain empty VST3 state");
+
+    auto instrument = getInstrumentTree();
+    if (! instrument.isValid())
+        return juce::Result::fail ("The project instrument record is missing");
+
+    instrument.setProperty ("soundName", trimmed, undo);
+    instrument.setProperty ("state", state.toBase64Encoding(), undo);
+    instrument.setProperty ("stateSha256", stateHash (state), undo);
     return juce::Result::ok();
 }
 

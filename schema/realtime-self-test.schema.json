@@ -88,22 +88,26 @@
         "fileBytes",
         "stateBytes",
         "stateSha256",
+        "soundName",
         "noteCount",
         "tempoBpm",
         "loopLengthBeats",
         "savedPayloadExact",
-        "pluginRestoreExact"
+        "pluginRestoreExact",
+        "soundNameRoundTrip"
       ],
       "properties": {
         "schemaVersion": { "const": 1 },
         "fileBytes": { "type": "integer", "minimum": 1000 },
         "stateBytes": { "type": "integer", "minimum": 1 },
         "stateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "soundName": { "const": "Self-test Surge state" },
         "noteCount": { "type": "integer", "const": 9 },
         "tempoBpm": { "type": "number", "const": 137 },
         "loopLengthBeats": { "type": "number", "const": 16 },
         "savedPayloadExact": { "const": true },
-        "pluginRestoreExact": { "const": true }
+        "pluginRestoreExact": { "const": true },
+        "soundNameRoundTrip": { "const": true }
       }
     },
     "parameterCountMatchesInventory": { "type": "boolean" },

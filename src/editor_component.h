@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 
 namespace resonance
 {
@@ -26,6 +27,7 @@ public:
     void resized() override;
     bool keyPressed (const juce::KeyPress& key) override;
     void requestClose (std::function<void()> closeAction);
+    juce::var runM4WorkflowSelfTest (const juce::File& projectFile);
 
 private:
     class PluginEditorWindow;
@@ -35,6 +37,19 @@ private:
     void initialiseAudioAndPlugin();
     void configureControls();
     void openPluginEditor();
+    void captureSoundCandidate();
+    void auditionProjectSound();
+    void auditionSoundCandidate();
+    void applySoundCandidate();
+    void rejectSoundCandidate();
+    void performUndoRedo (bool redo);
+    bool restoreSoundSnapshot (const PluginSoundSnapshot& snapshot,
+                               const juce::String& actionLabel,
+                               juce::String* liveStateSha256 = nullptr);
+    bool restoreProjectSound (const juce::String& actionLabel);
+    bool hasUncapturedLiveSoundState();
+    void clearSoundCandidate();
+    void refreshSoundControls();
     void updateStatus();
     void saveSettings();
     void drawCard (juce::Graphics&, juce::Rectangle<int>) const;
@@ -71,6 +86,10 @@ private:
     std::unique_ptr<PluginEditorWindow> pluginEditorWindow;
     std::unique_ptr<juce::FileChooser> activeFileChooser;
     juce::MemoryBlock initialPluginState;
+    std::optional<PluginSoundSnapshot> soundCandidate;
+    juce::String acceptedLiveSoundSha256;
+    juce::String candidateLiveSoundSha256;
+    juce::String auditionedSoundSha256;
     juce::File currentProjectFile;
 
     juce::Label titleLabel;
@@ -79,6 +98,7 @@ private:
     juce::Label statusLabel;
     juce::Label trackNameLabel;
     juce::Label trackMetaLabel;
+    juce::Label soundWorkflowLabel;
     juce::Label transportPositionLabel;
     juce::Label deviceSummaryLabel;
     juce::Label diagnosticLabel;
@@ -91,6 +111,12 @@ private:
     juce::TextButton stopButton { "Stop" };
     juce::TextButton panicButton { "Panic" };
     juce::TextButton pluginEditorButton { "Open Surge XT" };
+    juce::TextButton auditionProjectSoundButton { "Audition A" };
+    juce::TextButton captureSoundButton { "Capture B" };
+    juce::TextButton auditionCandidateButton { "Audition B" };
+    juce::TextButton applySoundButton { "Apply B" };
+    juce::TextButton rejectSoundButton { "Reject B" };
+    juce::TextEditor soundNameEditor;
     juce::Slider bpmSlider;
     juce::Slider gainSlider;
     juce::Slider velocitySlider;

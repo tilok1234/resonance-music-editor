@@ -87,6 +87,7 @@
               "pluginName": { "type": "string", "minLength": 1 },
               "vendor": { "type": "string" },
               "version": { "type": "string" },
+              "soundName": { "type": "string", "minLength": 1, "maxLength": 80 },
               "stateEncoding": { "const": "base64" },
               "state": { "type": "string", "minLength": 1 },
               "stateSha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" }

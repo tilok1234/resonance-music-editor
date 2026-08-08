@@ -138,7 +138,9 @@ int runSelfTest (const juce::StringArray& args)
                                 record.description.name,
                                 record.description.manufacturerName,
                                 record.description.version);
-        song.setPluginState (livePluginState);
+        const auto soundApplyResult = song.applyPluginSound ("Self-test Surge state", livePluginState);
+        if (soundApplyResult.failed())
+            throw std::runtime_error (soundApplyResult.getErrorMessage().toStdString());
         song.beginUndoTransaction ("Self-test note");
         song.addNote (10.5, 0.75, 67, 109);
 
@@ -159,6 +161,7 @@ int runSelfTest (const juce::StringArray& args)
             throw std::runtime_error (reopenedStateResult.getErrorMessage().toStdString());
 
         const auto savedPayloadExact = reopenedPluginState == livePluginState;
+        const auto soundNameRoundTrip = reopenedSong.getPluginSoundName() == "Self-test Surge state";
         plugin->setStateInformation (reopenedPluginState.getData(),
                                      static_cast<int> (reopenedPluginState.getSize()));
         juce::MemoryBlock recapturedPluginState;
@@ -171,11 +174,13 @@ int runSelfTest (const juce::StringArray& args)
         songObject->setProperty ("fileBytes", songProjectFile.getSize());
         songObject->setProperty ("stateBytes", static_cast<juce::int64> (livePluginState.getSize()));
         songObject->setProperty ("stateSha256", song.getPluginStateSha256());
+        songObject->setProperty ("soundName", reopenedSong.getPluginSoundName());
         songObject->setProperty ("noteCount", static_cast<int> (reopenedSong.getNotes().size()));
         songObject->setProperty ("tempoBpm", reopenedSong.getTempoBpm());
         songObject->setProperty ("loopLengthBeats", reopenedSong.getLoopLengthBeats());
         songObject->setProperty ("savedPayloadExact", savedPayloadExact);
         songObject->setProperty ("pluginRestoreExact", pluginRestoreExact);
+        songObject->setProperty ("soundNameRoundTrip", soundNameRoundTrip);
         reportObject->setProperty ("songProject", songReport);
 
         auto* pluginObject = new juce::DynamicObject();
@@ -200,7 +205,8 @@ int runSelfTest (const juce::StringArray& args)
         reportObject->setProperty ("stereoMainOutput", stereoOutput);
         reportObject->setProperty ("passed",
                                    parameterCountMatches && stereoOutput
-                                       && savedPayloadExact && pluginRestoreExact);
+                                       && savedPayloadExact && pluginRestoreExact
+                                       && soundNameRoundTrip);
     }
     catch (const std::exception& error)
     {
@@ -243,6 +249,11 @@ public:
             editor->requestClose ([] { juce::JUCEApplication::getInstance()->systemRequestedQuit(); });
     }
 
+    juce::var runM4WorkflowSelfTest (const juce::File& projectFile)
+    {
+        return editor != nullptr ? editor->runM4WorkflowSelfTest (projectFile) : juce::var {};
+    }
+
 private:
     MainEditorComponent* editor = nullptr;
 };
@@ -280,10 +291,11 @@ public:
         const auto quarantine = resolvePathArgument (args, "--quarantine", "plugin-quarantine.json");
         const auto snapshotMode = args.contains ("--ui-snapshot");
         const auto idleTestMode = args.contains ("--ui-idle-test");
+        const auto m4WorkflowTestMode = args.contains ("--m4-workflow-test");
         window = std::make_unique<MainWindow> (inventory,
                                                quarantine,
                                                properties.getUserSettings(),
-                                               ! snapshotMode && ! idleTestMode);
+                                               ! snapshotMode && ! idleTestMode && ! m4WorkflowTestMode);
 
         if (snapshotMode)
         {
@@ -315,6 +327,27 @@ public:
             juce::Timer::callAfterDelay (4000, [this]
             {
                 setApplicationReturnValue (0);
+                quit();
+            });
+        }
+        else if (m4WorkflowTestMode)
+        {
+            const auto projectFile = resolvePathArgument (args,
+                                                          "--project",
+                                                          "realtime-song-project.resonance.json");
+            const auto reportFile = resolvePathArgument (args,
+                                                         "--report",
+                                                         "m4-workflow-self-test.json");
+            juce::Timer::callAfterDelay (750, [this, projectFile, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runM4WorkflowSelfTest (projectFile)
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 5);
                 quit();
             });
         }

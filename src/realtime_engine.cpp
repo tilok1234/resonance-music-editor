@@ -131,19 +131,41 @@ juce::Result RealtimeEngine::capturePluginState (juce::MemoryBlock& destination)
                : juce::Result::fail ("Surge XT returned an empty state block");
 }
 
-juce::Result RealtimeEngine::restorePluginState (const juce::MemoryBlock& state)
+juce::Result RealtimeEngine::restorePluginState (const juce::MemoryBlock& state,
+                                                 juce::MemoryBlock* liveStateAfterRestore)
 {
     if (state.getSize() == 0)
         return juce::Result::fail ("The project contains an empty Surge XT state block");
 
     panicRequested.store (true);
-    const juce::ScopedLock lock (pluginAccess);
-    if (plugin == nullptr)
-        return juce::Result::fail ("Surge XT is not loaded");
+    juce::uint64 processedAtRestore = 0;
+    {
+        const juce::ScopedLock lock (pluginAccess);
+        if (plugin == nullptr)
+            return juce::Result::fail ("Surge XT is not loaded");
 
-    plugin->setStateInformation (state.getData(), static_cast<int> (state.getSize()));
-    if (prepared.load())
-        plugin->reset();
+        plugin->setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+        if (prepared.load())
+            plugin->reset();
+
+        processedAtRestore = processedBlockCount.load (std::memory_order_acquire);
+    }
+
+    if (liveStateAfterRestore != nullptr)
+    {
+        if (prepared.load())
+        {
+            const auto deadline = juce::Time::getMillisecondCounterHiRes() + 250.0;
+            while (processedBlockCount.load (std::memory_order_acquire) < processedAtRestore + 2
+                   && juce::Time::getMillisecondCounterHiRes() < deadline)
+                juce::Thread::sleep (1);
+        }
+
+        const auto capture = capturePluginState (*liveStateAfterRestore);
+        if (capture.failed())
+            return capture;
+    }
+
     return juce::Result::ok();
 }
 
@@ -257,6 +279,7 @@ void RealtimeEngine::audioDeviceIOCallbackWithContext (const float* const* input
         {
             const juce::ScopedNoDenormals noDenormals;
             plugin->processBlock (processingBlock, blockMidi);
+            processedBlockCount.fetch_add (1, std::memory_order_release);
         }
         catch (...)
         {
