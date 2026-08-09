@@ -48,7 +48,9 @@ The indexed state API captures and restores one selected slot under the same non
 
 - Slice 1 implements schema-version-2 migration, stable identities, persisted mixer/MIDI state, and the pure eight-lane snapshot contract.
 - Slice 2 replaces the one-instance engine shape with the eight stable runtime slots and proves two distinct real Surge instances through the production render/mix path.
-- The visible project still contains exactly one track and publishes it to slot zero. The second slot is exercised by deterministic native tests and the silent packaged M6 runtime gate, not by normal authoring UI.
+- Slice 3 implements editor 0.5.0 and schema version 3. It reads versions 1, 2, and 3; writes one or two ordered tracks; preserves version-2 mixer/MIDI and exact state without source rewrite; and rejects duplicate project IDs, different per-track loop lengths, and a third track.
+- Normal authoring preloads two distinct instances of the same accepted inventory record before the device callback is prepared. Persisted order maps to runtime slots zero and one. Track selection, duplicate, remove, reorder, gain, pan, mute, solo, active-track meters, Save/Open, and topology Undo/Redo are exposed in the editor.
+- Active selection and pending A/B candidates remain session-only. Sound and note proposals are bound to the selected track, and track context cannot change while a candidate or uncaptured live Surge edit could cross that boundary.
 
 ## Consequences
 
@@ -56,8 +58,11 @@ The indexed state API captures and restores one selected slot under the same non
 - Stable track and clip identities can survive future add, remove, reorder, command, and recovery operations.
 - Per-track settings have a persistence home before controls or processing depend on them.
 - The fixed eight-track ceiling makes memory, CPU, and failure tests bounded for the first ensemble implementation.
-- Schema version 2 is honest about current production behavior by retaining exactly one track until the runtime and UI can safely support more.
-- Mixer and MIDI output settings now affect the visible track's slot-zero render path, but controls are not exposed in the UI and no new listening approval is implied.
+- At Slice 1, schema version 2 honestly retained exactly one track until the runtime and UI could safely support more.
+- Mixer and MIDI output settings affect both visible runtime slots. Gain, pan, mute, solo, and active-track meters are exposed, while MIDI routing remains persisted but has no dedicated control in this slice.
+- Schema version 3 deliberately caps normal authoring at two tracks even though the audio contract retains eight lanes; widening persistence remains a separate bounded change.
+- Both visible tracks currently instantiate the same accepted Surge inventory record. Different plug-in assignment and user-facing missing-plug-in recovery remain follow-up work.
+- The slice-3 automated gate is technical evidence only; it does not approve the doubled loop, sound choices, balance, or stereo mix by ear.
 
 ## Rejected alternatives
 
@@ -69,4 +74,4 @@ The indexed state API captures and restores one selected slot under the same non
 
 ## Follow-up gate
 
-Define a bounded multi-track project-schema revision, migrate version 2 without rewriting its source, and expose a minimal second accepted instrument through the proven runtime slots. Prove track-topology Undo, Save/Open, user-facing missing-plug-in recovery, mixer controls/meters, and an explicit listening pass before declaring M6 complete.
+Run the explicit two-track listening and interaction pass on the packaged editor, then add user-facing missing-plug-in recovery before declaring M6 complete. Different instrument products, more than two persisted tracks, buses, arrangement, and automation remain later bounded changes.

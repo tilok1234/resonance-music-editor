@@ -594,6 +594,11 @@ public:
         return editor != nullptr ? editor->runM5WorkflowSelfTest() : juce::var {};
     }
 
+    juce::var runM6AuthoringSelfTest (const juce::File& projectFile)
+    {
+        return editor != nullptr ? editor->runM6AuthoringSelfTest (projectFile) : juce::var {};
+    }
+
     void prepareM5PreviewForSnapshot()
     {
         if (editor != nullptr)
@@ -646,11 +651,13 @@ public:
         const auto idleTestMode = args.contains ("--ui-idle-test");
         const auto m4WorkflowTestMode = args.contains ("--m4-workflow-test");
         const auto m5WorkflowTestMode = args.contains ("--m5-workflow-test");
+        const auto m6AuthoringTestMode = args.contains ("--m6-authoring-test");
         window = std::make_unique<MainWindow> (inventory,
                                                quarantine,
                                                properties.getUserSettings(),
                                                ! snapshotMode && ! idleTestMode
-                                                   && ! m4WorkflowTestMode && ! m5WorkflowTestMode);
+                                                   && ! m4WorkflowTestMode && ! m5WorkflowTestMode
+                                                   && ! m6AuthoringTestMode);
 
         if (snapshotMode)
         {
@@ -722,6 +729,25 @@ public:
                                     && static_cast<bool> (object->getProperty ("passed"));
                 const auto reportWritten = writeReport (reportFile, report);
                 setApplicationReturnValue (passed && reportWritten ? 0 : 6);
+                quit();
+            });
+        }
+        else if (m6AuthoringTestMode)
+        {
+            const auto projectFile = resolvePathArgument (
+                args, "--project", "m6-two-track-authoring.resonance.json");
+            const auto reportFile = resolvePathArgument (
+                args, "--report", "m6-authoring-test-report.json");
+            juce::Timer::callAfterDelay (750, [this, projectFile, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runM6AuthoringSelfTest (projectFile)
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 7);
                 quit();
             });
         }

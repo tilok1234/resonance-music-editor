@@ -106,7 +106,7 @@
         "soundNameRoundTrip"
       ],
       "properties": {
-        "schemaVersion": { "const": 2 },
+        "schemaVersion": { "const": 3 },
         "trackId": { "const": "track-1" },
         "clipId": { "const": "loop-1" },
         "mixerGainDb": { "const": 0 },

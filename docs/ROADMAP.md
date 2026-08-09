@@ -110,7 +110,7 @@ Manual UI actions do not all need to serialize as external JSON immediately, but
 
 ## M6: Multi-track and mixer
 
-Status: in progress. The schema/identity foundation and the first two-instance runtime slice were implemented and technically verified on 2026-08-09 as editor 0.4.0.
+Status: in progress. Schema/identity, two-instance runtime, and bounded two-track authoring were technically verified on 2026-08-09; editor 0.5.0 still needs listening approval and missing-plug-in recovery.
 
 ### Goal
 
@@ -149,11 +149,23 @@ See [ADR-0005](ADR-0005-multitrack-project-and-mixer-ownership.md) and the [M6 f
 - the packaged hidden gate loads two distinct accepted Surge XT instances, renders 100 in-memory blocks plus eight state-settle blocks, applies the accepted M4 B only to slot two, restores both current baseline states, and emits no device audio;
 - Release verification passes 124 engine/runtime assertions, 162 project/migration/command assertions, the full packaged M4/M5 regressions, and 16 schema validations.
 
-The production schema and UI remain exactly one track, and the silent runtime gate is not a listening approval. See the [M6 two-track runtime checkpoint](M6_TWO_TRACK_RUNTIME_CHECKPOINT_2026-08-09.md).
+At that checkpoint the production schema and UI still contained exactly one track, and the silent runtime gate was not a listening approval. See the [M6 two-track runtime checkpoint](M6_TWO_TRACK_RUNTIME_CHECKPOINT_2026-08-09.md).
 
-### Next slice
+### Slice 3 delivered
 
-Define the next bounded song-schema revision and migrate version 2 without source rewrite, then expose a minimal second instrument track using the proven slots. Add track selection, gain/pan/mute/solo, meters, add/remove/reorder Undo, and user-facing missing-plug-in recovery. Prove Save/Open and identity/state preservation, then run an explicit two-track listening pass before calling M6 complete.
+- editor 0.5.0 and schema version 3 persist one or two ordered instrument tracks and migrate both prior schemas without rewriting their sources;
+- project-wide track, clip, and note identity plus one shared loop length are validated, and a third track fails closed;
+- normal startup preloads two distinct accepted Surge instances and maps persisted order to stable slots zero and one;
+- the editor exposes selection, duplicate, remove, reorder, gain, pan, mute, solo, active-track meters, selected-track piano-roll editing, and selected-track sound/note A/B;
+- topology edits and their Undo/Redo remap exact accepted state without changing prepared plug-in topology;
+- the packaged no-audio authoring test proves independent state, notes, mixer values, reorder, remove, Undo, schema-v3 Save/Open, and zero runtime faults;
+- Release verification passes 124 engine/runtime assertions, 209 project/migration/command assertions, the full packaged M4/M5 regressions, and 19 schema validations.
+
+See the [M6 bounded two-track authoring checkpoint](M6_TWO_TRACK_AUTHORING_CHECKPOINT_2026-08-09.md).
+
+### Remaining M6 gate
+
+Run an explicit packaged two-track listening and interaction pass, then add user-facing missing-plug-in preservation/recovery before calling M6 complete. Different plug-in products and more than two persisted tracks remain outside this bounded milestone.
 
 ## M7: Arrangement, automation, and effects
 

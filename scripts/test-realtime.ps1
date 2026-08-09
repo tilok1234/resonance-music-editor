@@ -12,11 +12,14 @@ $engineReport = Join-Path $artifacts "realtime-engine-test-report.json"
 $projectReport = Join-Path $artifacts "song-project-test-report.json"
 $selfTestReport = Join-Path $artifacts "realtime-self-test.json"
 $m6RuntimeReport = Join-Path $artifacts "m6-runtime-test-report.json"
+$m6AuthoringReport = Join-Path $artifacts "m6-authoring-test-report.json"
 $m5WorkflowReport = Join-Path $artifacts "m5-workflow-test-report.json"
 $songProjectArtifact = Join-Path $artifacts "realtime-song-project.resonance.json"
+$m6AuthoringProject = Join-Path $artifacts "m6-two-track-authoring.resonance.json"
 $uiSnapshot = Join-Path $artifacts "realtime-ui-snapshot.png"
 $editCommandFixture = Join-Path $projectRoot "tests\fixtures\edit-command-note-patch-v1.json"
 $legacyProjectFixture = Join-Path $projectRoot "tests\fixtures\song-project-v1-migration.resonance.json"
+$previousProjectFixture = Join-Path $projectRoot "tests\fixtures\song-project-v2-migration.resonance.json"
 $m4AcceptedFixture = Join-Path $artifacts "m4-accepted-candidate-b.resonance.json"
 $expectedM4AcceptedFixtureSha256 = "B0265238EF823D660B198C6730066CAACE09E001EAE3B3D3410521938FE74172"
 
@@ -41,7 +44,7 @@ if (-not (Test-Path -LiteralPath $editor)) {
 }
 
 New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
-Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m5WorkflowReport,$songProjectArtifact,$uiSnapshot -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m6AuthoringReport,$m5WorkflowReport,$songProjectArtifact,$m6AuthoringProject,$uiSnapshot -Force -ErrorAction SilentlyContinue
 
 if (-not (Test-Path -LiteralPath $m4AcceptedFixture) -or
     (Get-FileHash -Algorithm SHA256 -LiteralPath $m4AcceptedFixture).Hash -ne
@@ -63,22 +66,27 @@ if (-not $engineResult.passed -or $engineResult.assertions -lt 124 -or
 }
 
 & $projectTests --report $projectReport --edit-command-fixture $editCommandFixture `
-    --legacy-project-fixture $legacyProjectFixture
+    --legacy-project-fixture $legacyProjectFixture `
+    --previous-project-fixture $previousProjectFixture
 if ($LASTEXITCODE -ne 0) {
     throw "Song project tests failed with exit code $LASTEXITCODE"
 }
 
 $projectResult = Get-Content -LiteralPath $projectReport -Raw | ConvertFrom-Json
-if (-not $projectResult.passed -or $projectResult.assertions -lt 50) {
+if (-not $projectResult.passed -or $projectResult.assertions -lt 209) {
     throw "Song project report did not pass its assertion gate"
 }
 
-if ($projectResult.projectSchemaVersion -ne 2 -or
+if ($projectResult.projectSchemaVersion -ne 3 -or
     $projectResult.legacySchemaVersion -ne 1 -or
+    $projectResult.previousSchemaVersion -ne 2 -or
     -not $projectResult.legacyMigrationPassed -or
+    -not $projectResult.previousMigrationPassed -or
+    $projectResult.maxProjectTracks -ne 2 -or
+    -not $projectResult.twoTrackTopologyPassed -or
     $projectResult.stableTrackId -ne "track-migrated" -or
     $projectResult.stableClipId -ne "clip-migrated") {
-    throw "The version-1 to version-2 project migration gate did not pass"
+    throw "The version-1/version-2 to version-3 project and topology gate did not pass"
 }
 
 if ($projectResult.seededVelocitySeed -ne 18421 -or
@@ -126,7 +134,7 @@ if (-not $result.songProject.soundNameRoundTrip -or $result.songProject.soundNam
     throw "The host-owned sound name did not round-trip with the real Surge state"
 }
 
-if ($result.songProject.schemaVersion -ne 2 -or
+if ($result.songProject.schemaVersion -ne 3 -or
     $result.songProject.trackId -ne "track-1" -or
     $result.songProject.clipId -ne "loop-1" -or
     $result.songProject.mixerGainDb -ne 0 -or
@@ -134,7 +142,7 @@ if ($result.songProject.schemaVersion -ne 2 -or
     $result.songProject.mixerMuted -or $result.songProject.mixerSolo -or
     $result.songProject.midiInputChannel -ne 0 -or
     $result.songProject.midiOutputChannel -ne 1) {
-    throw "The packaged editor did not preserve the version-2 identity, mixer, and MIDI defaults"
+    throw "The packaged editor did not preserve the schema-v3 identity, mixer, and MIDI defaults"
 }
 
 if ($result.songProject.noteCount -ne 9 -or $result.songProject.loopLengthBeats -ne 16 -or
@@ -192,6 +200,53 @@ if ($m6Result.runtime.installedInstances -ne 2 -or
 
 if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     throw "The M6 runtime test left an editor process running"
+}
+
+$m6AuthoringTest = Start-Process -FilePath $editor -ArgumentList `
+    "--m6-authoring-test","--project",$m6AuthoringProject,"--report",$m6AuthoringReport `
+    -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($m6AuthoringTest.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $m6AuthoringReport) {
+        Get-Content -LiteralPath $m6AuthoringReport
+    }
+    throw "M6 two-track authoring test failed with exit code $($m6AuthoringTest.ExitCode)"
+}
+
+$m6AuthoringResult = Get-Content -LiteralPath $m6AuthoringReport -Raw | ConvertFrom-Json
+if (-not $m6AuthoringResult.passed -or $m6AuthoringResult.audioEmitted -or
+    $m6AuthoringResult.preloadedPluginCount -ne 2 -or
+    -not $m6AuthoringResult.distinctRuntimeInstances -or
+    -not $m6AuthoringResult.addTrackSucceeded -or
+    -not $m6AuthoringResult.stableDistinctIds -or
+    -not $m6AuthoringResult.duplicatedStateExact -or
+    -not $m6AuthoringResult.runtimeStateAlignedAfterAdd -or
+    -not $m6AuthoringResult.independentNotes -or
+    -not $m6AuthoringResult.independentMixerSettings) {
+    throw "The M6 visible add-track, independent state, note, or mixer authoring gate failed"
+}
+
+if (-not $m6AuthoringResult.reorderSucceeded -or
+    -not $m6AuthoringResult.runtimeStateAlignedAfterReorder -or
+    -not $m6AuthoringResult.undoReorderRestored -or
+    -not $m6AuthoringResult.removeSucceeded -or
+    -not $m6AuthoringResult.undoRemoveRestored) {
+    throw "The M6 track reorder/remove runtime remap or Undo gate failed"
+}
+
+if (-not $m6AuthoringResult.saveSucceeded -or
+    $m6AuthoringResult.reopenedSchemaVersion -ne 3 -or
+    $m6AuthoringResult.reopenedTrackCount -ne 2 -or
+    -not $m6AuthoringResult.reopenedOrderPreserved -or
+    -not $m6AuthoringResult.reopenedMixerPreserved -or
+    -not $m6AuthoringResult.reopenedIndependentNotes -or
+    $m6AuthoringResult.invalidSampleCount -ne 0 -or
+    $m6AuthoringResult.processorExceptionCount -ne 0) {
+    throw "The M6 two-track Save/Open or runtime-safety authoring gate failed"
+}
+
+if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
+    throw "The M6 authoring test left an editor process running"
 }
 
 $m5WorkflowTest = Start-Process -FilePath $editor -ArgumentList "--m5-workflow-test","--report",$m5WorkflowReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
@@ -323,8 +378,11 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     ProjectAssertions = $projectResult.assertions
     ProjectSchemaVersion = $projectResult.projectSchemaVersion
     LegacySchemaVersion = $projectResult.legacySchemaVersion
+    PreviousSchemaVersion = $projectResult.previousSchemaVersion
     LegacyMigrationPassed = $projectResult.legacyMigrationPassed
     LegacyMigrationSourceSha256 = $projectResult.legacySourceSha256
+    PreviousMigrationPassed = $projectResult.previousMigrationPassed
+    PreviousMigrationSourceSha256 = $projectResult.previousSourceSha256
     MigratedTrackId = $projectResult.stableTrackId
     MigratedClipId = $projectResult.stableClipId
     ProjectRoundTripBytes = $projectResult.roundTripBytes
@@ -371,6 +429,13 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     M6RuntimeTrackTwoPeak = $m6Result.runtime.maximumTrackTwoPeak
     M6RuntimeStateRoundTrip = $m6Result.plugin.completeStateRoundTrip
     M6RuntimeMissingPluginPreserved = $m6Result.runtime.missingPluginPreserved
+    M6AuthoringPreloadedInstances = $m6AuthoringResult.preloadedPluginCount
+    M6AuthoringAddTrack = $m6AuthoringResult.addTrackSucceeded
+    M6AuthoringIndependentNotes = $m6AuthoringResult.independentNotes
+    M6AuthoringIndependentMixer = $m6AuthoringResult.independentMixerSettings
+    M6AuthoringReorderRemapped = $m6AuthoringResult.runtimeStateAlignedAfterReorder
+    M6AuthoringSaveOpen = $m6AuthoringResult.reopenedOrderPreserved
+    M6AuthoringRemoveUndo = $m6AuthoringResult.undoRemoveRestored
     NoRescanPerformed = $result.noRescanPerformed
     AudioEmitted = $result.audioEmitted
     UiSnapshotBytes = $snapshotBytes

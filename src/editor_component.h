@@ -8,6 +8,7 @@
 #include "realtime_engine.h"
 #include "song_project.h"
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -30,6 +31,7 @@ public:
     void requestClose (std::function<void()> closeAction);
     juce::var runM4WorkflowSelfTest (const juce::File& projectFile);
     juce::var runM5WorkflowSelfTest();
+    juce::var runM6AuthoringSelfTest (const juce::File& projectFile);
     void prepareM5PreviewForSnapshot();
 
 private:
@@ -39,6 +41,18 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void initialiseAudioAndPlugin();
     void configureControls();
+    juce::AudioPluginInstance* getActivePlugin() const noexcept;
+    bool canChangeTrackContext();
+    void selectTrack (int trackIndex);
+    void addInstrumentTrack();
+    void removeActiveTrack();
+    void moveActiveTrack (int offset);
+    juce::Result synchronisePluginSlotsFromProject (bool forceRestore = false);
+    juce::Result restoreRuntimeSlotsFromProject (
+        const SongProject& source,
+        std::array<juce::String, SongProject::maxProjectTracks>& liveStateHashes);
+    void publishProjectMixerSnapshot (const SequenceSnapshot* activeTrackOverride = nullptr);
+    void updateActiveSoundTracking();
     void openPluginEditor();
     void captureSoundCandidate();
     void auditionProjectSound();
@@ -99,12 +113,19 @@ private:
     std::unique_ptr<juce::MidiKeyboardComponent> keyboard;
     std::unique_ptr<PluginEditorWindow> pluginEditorWindow;
     std::unique_ptr<juce::FileChooser> activeFileChooser;
-    juce::MemoryBlock initialPluginState;
+    std::array<juce::MemoryBlock, SongProject::maxProjectTracks> initialPluginStates;
+    std::array<juce::String, SongProject::maxProjectTracks> slotProjectStateSha256;
+    std::array<juce::String, SongProject::maxProjectTracks> slotAcceptedLiveSoundSha256;
     std::optional<PluginSoundSnapshot> soundCandidate;
     std::optional<EditCommandPreview> editPreview;
     juce::String acceptedLiveSoundSha256;
     juce::String candidateLiveSoundSha256;
     juce::String auditionedSoundSha256;
+    juce::String activeSoundTrackId;
+    juce::String soundCandidateTrackId;
+    juce::String pluginEditorTrackId;
+    juce::String runtimeProjectSyncError;
+    int pluginEditorTrackIndex = -1;
     juce::File currentProjectFile;
 
     juce::Label titleLabel;
@@ -142,13 +163,22 @@ private:
     juce::TextButton auditionEditCandidateButton { "Audition B" };
     juce::TextButton applyEditButton { "Apply" };
     juce::TextButton rejectEditButton { "Reject" };
+    juce::TextButton addTrackButton { "+ Track" };
+    juce::TextButton removeTrackButton { "- Track" };
+    juce::TextButton moveTrackLeftButton { "<" };
+    juce::TextButton moveTrackRightButton { ">" };
+    juce::ToggleButton trackMuteButton { "Mute" };
+    juce::ToggleButton trackSoloButton { "Solo" };
     juce::TextEditor soundNameEditor;
+    juce::ComboBox trackSelector;
     juce::ComboBox dynamicsScopeCombo;
     juce::TextEditor dynamicsStrengthEditor;
     juce::TextEditor dynamicsSeedEditor;
     juce::Slider bpmSlider;
     juce::Slider gainSlider;
     juce::Slider velocitySlider;
+    juce::Slider trackGainSlider;
+    juce::Slider trackPanSlider;
     juce::ComboBox snapCombo;
     juce::ComboBox loopLengthCombo;
     juce::Label bpmLabel;
@@ -156,6 +186,8 @@ private:
     juce::Label snapLabel;
     juce::Label loopLengthLabel;
     juce::Label velocityLabel;
+    juce::Label trackGainLabel;
+    juce::Label trackPanLabel;
 
     juce::Rectangle<int> headerBounds;
     juce::Rectangle<int> transportCardBounds;
@@ -174,8 +206,11 @@ private:
     bool refreshingProjectControls = false;
     bool bpmGestureActive = false;
     bool velocityGestureActive = false;
+    bool trackGainGestureActive = false;
+    bool trackPanGestureActive = false;
     bool auditioningEditCandidate = false;
     bool applyingEditPreview = false;
+    bool suppressProjectChanges = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainEditorComponent)
 };

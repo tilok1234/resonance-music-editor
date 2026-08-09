@@ -20,6 +20,7 @@ VALIDATION_GROUPS = (
         PROJECT_ROOT / "schema" / "song-project.schema.json",
         (
             PROJECT_ROOT / "artifacts" / "realtime-song-project.resonance.json",
+            PROJECT_ROOT / "artifacts" / "m6-two-track-authoring.resonance.json",
         ),
     ),
     (
@@ -31,6 +32,15 @@ VALIDATION_GROUPS = (
             / "song-project-v1-migration.resonance.json",
             PROJECT_ROOT / "artifacts" / "ui-save-open-roundtrip.resonance.json",
             PROJECT_ROOT / "artifacts" / "m4-accepted-candidate-b.resonance.json",
+        ),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "song-project-v2.schema.json",
+        (
+            PROJECT_ROOT
+            / "tests"
+            / "fixtures"
+            / "song-project-v2-migration.resonance.json",
         ),
     ),
     (
@@ -60,6 +70,10 @@ VALIDATION_GROUPS = (
     (
         PROJECT_ROOT / "schema" / "m6-runtime-test.schema.json",
         (PROJECT_ROOT / "artifacts" / "m6-runtime-test-report.json",),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "m6-authoring-test.schema.json",
+        (PROJECT_ROOT / "artifacts" / "m6-authoring-test-report.json",),
     ),
     (
         PROJECT_ROOT / "schema" / "song-project-test.schema.json",

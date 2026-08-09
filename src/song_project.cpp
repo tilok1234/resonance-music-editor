@@ -9,6 +9,7 @@ namespace resonance
 namespace
 {
 constexpr auto rootType = "songProject";
+constexpr auto trackType = "track";
 constexpr auto notesType = "notes";
 constexpr auto noteType = "note";
 constexpr auto instrumentType = "instrument";
@@ -106,15 +107,16 @@ void SongProject::resetToStarter()
     newRoot.setProperty ("tempoBpm", 120.0, nullptr);
     newRoot.setProperty ("loopLengthBeats", loopLengthBeats, nullptr);
     newRoot.setProperty ("snapBeats", 0.25, nullptr);
-    newRoot.setProperty ("trackId", "track-1", nullptr);
-    newRoot.setProperty ("trackName", "Surge XT", nullptr);
-    newRoot.setProperty ("clipId", "loop-1", nullptr);
-    newRoot.setProperty ("trackGainDecibels", 0.0, nullptr);
-    newRoot.setProperty ("trackPan", 0.0, nullptr);
-    newRoot.setProperty ("trackMuted", false, nullptr);
-    newRoot.setProperty ("trackSolo", false, nullptr);
-    newRoot.setProperty ("midiInputChannel", 0, nullptr);
-    newRoot.setProperty ("midiOutputChannel", 1, nullptr);
+    juce::ValueTree track (trackType);
+    track.setProperty ("id", "track-1", nullptr);
+    track.setProperty ("name", "Surge XT", nullptr);
+    track.setProperty ("clipId", "loop-1", nullptr);
+    track.setProperty ("gainDecibels", 0.0, nullptr);
+    track.setProperty ("pan", 0.0, nullptr);
+    track.setProperty ("muted", false, nullptr);
+    track.setProperty ("solo", false, nullptr);
+    track.setProperty ("midiInputChannel", 0, nullptr);
+    track.setProperty ("midiOutputChannel", 1, nullptr);
 
     juce::ValueTree instrument (instrumentType);
     instrument.setProperty ("format", "VST3", nullptr);
@@ -126,7 +128,7 @@ void SongProject::resetToStarter()
     instrument.setProperty ("stateEncoding", "base64", nullptr);
     instrument.setProperty ("state", juce::String {}, nullptr);
     instrument.setProperty ("stateSha256", stateHash (juce::MemoryBlock {}), nullptr);
-    newRoot.addChild (instrument, -1, nullptr);
+    track.addChild (instrument, -1, nullptr);
 
     juce::ValueTree notes (notesType);
     int index = 0;
@@ -140,14 +142,15 @@ void SongProject::resetToStarter()
         note.setProperty ("velocity", juce::jlimit (1, 127, juce::roundToInt (starter.velocity * 127.0f)), nullptr);
         notes.addChild (note, -1, nullptr);
     }
-    newRoot.addChild (notes, -1, nullptr);
+    track.addChild (notes, -1, nullptr);
+    newRoot.addChild (track, -1, nullptr);
 
-    installRoot (newRoot, true);
+    installRoot (newRoot, true, "track-1");
 }
 
 void SongProject::replaceWith (const SongProject& other)
 {
-    installRoot (other.root.createCopy(), false);
+    installRoot (other.root.createCopy(), false, other.getTrackId());
 }
 
 juce::String SongProject::getTitle() const
@@ -182,17 +185,20 @@ void SongProject::setLoopLengthBeats (double beats)
     const auto safeLength = juce::jlimit (4.0, 32.0, beats);
     root.setProperty ("loopLengthBeats", safeLength, &undoManager);
 
-    auto notes = getNotesTree();
     const auto minimumLength = getSnapBeats();
-    for (int index = 0; index < notes.getNumChildren(); ++index)
+    for (int trackIndex = 0; trackIndex < getTrackCount(); ++trackIndex)
     {
-        auto note = notes.getChild (index);
-        auto beat = static_cast<double> (note.getProperty ("beat"));
-        auto length = static_cast<double> (note.getProperty ("lengthBeats"));
-        beat = juce::jlimit (0.0, juce::jmax (0.0, safeLength - minimumLength), beat);
-        length = juce::jlimit (minimumLength, safeLength - beat, length);
-        note.setProperty ("beat", beat, &undoManager);
-        note.setProperty ("lengthBeats", length, &undoManager);
+        auto notes = getNotesTree (trackIndex);
+        for (int noteIndex = 0; noteIndex < notes.getNumChildren(); ++noteIndex)
+        {
+            auto note = notes.getChild (noteIndex);
+            auto beat = static_cast<double> (note.getProperty ("beat"));
+            auto length = static_cast<double> (note.getProperty ("lengthBeats"));
+            beat = juce::jlimit (0.0, juce::jmax (0.0, safeLength - minimumLength), beat);
+            length = juce::jlimit (minimumLength, safeLength - beat, length);
+            note.setProperty ("beat", beat, &undoManager);
+            note.setProperty ("lengthBeats", length, &undoManager);
+        }
     }
 }
 
@@ -223,58 +229,212 @@ int SongProject::getSchemaVersion() const
     return static_cast<int> (root.getProperty ("schemaVersion", currentSchemaVersion));
 }
 
+int SongProject::getTrackCount() const noexcept
+{
+    return root.getNumChildren();
+}
+
+int SongProject::getActiveTrackIndex() const noexcept
+{
+    for (int index = 0; index < getTrackCount(); ++index)
+        if (getTrackId (index) == activeTrackId)
+            return index;
+
+    return getTrackCount() > 0 ? 0 : -1;
+}
+
+bool SongProject::setActiveTrackIndex (int trackIndex)
+{
+    const auto track = getTrackTree (trackIndex);
+    if (! track.isValid())
+        return false;
+
+    const auto selectedId = track.getProperty ("id").toString();
+    if (selectedId == activeTrackId)
+        return true;
+
+    activeTrackId = selectedId;
+    if (changeCallback)
+        changeCallback();
+    return true;
+}
+
 juce::String SongProject::getTrackId() const
 {
-    return root.getProperty ("trackId").toString();
+    return getTrackId (getActiveTrackIndex());
+}
+
+juce::String SongProject::getTrackId (int trackIndex) const
+{
+    return getTrackTree (trackIndex).getProperty ("id").toString();
 }
 
 juce::String SongProject::getTrackName() const
 {
-    const auto name = root.getProperty ("trackName").toString().trim();
-    return name.isNotEmpty() ? name : getPluginName();
+    return getTrackName (getActiveTrackIndex());
+}
+
+juce::String SongProject::getTrackName (int trackIndex) const
+{
+    const auto name = getTrackTree (trackIndex).getProperty ("name").toString().trim();
+    return name.isNotEmpty() ? name : getPluginName (trackIndex);
 }
 
 juce::String SongProject::getClipId() const
 {
-    return root.getProperty ("clipId").toString();
+    return getClipId (getActiveTrackIndex());
+}
+
+juce::String SongProject::getClipId (int trackIndex) const
+{
+    return getTrackTree (trackIndex).getProperty ("clipId").toString();
 }
 
 TrackMixerSettings SongProject::getTrackMixerSettings() const
 {
-    return { static_cast<double> (root.getProperty ("trackGainDecibels", 0.0)),
-             static_cast<double> (root.getProperty ("trackPan", 0.0)),
-             static_cast<bool> (root.getProperty ("trackMuted", false)),
-             static_cast<bool> (root.getProperty ("trackSolo", false)) };
+    return getTrackMixerSettings (getActiveTrackIndex());
+}
+
+TrackMixerSettings SongProject::getTrackMixerSettings (int trackIndex) const
+{
+    const auto track = getTrackTree (trackIndex);
+    return { static_cast<double> (track.getProperty ("gainDecibels", 0.0)),
+             static_cast<double> (track.getProperty ("pan", 0.0)),
+             static_cast<bool> (track.getProperty ("muted", false)),
+             static_cast<bool> (track.getProperty ("solo", false)) };
 }
 
 juce::Result SongProject::setTrackMixerSettings (const TrackMixerSettings& settings)
+{
+    return setTrackMixerSettingsForTrack (getActiveTrackIndex(), settings);
+}
+
+juce::Result SongProject::setTrackMixerSettingsForTrack (
+    int trackIndex,
+    const TrackMixerSettings& settings)
 {
     if (! std::isfinite (settings.gainDecibels)
         || settings.gainDecibels < -60.0 || settings.gainDecibels > 12.0
         || ! std::isfinite (settings.pan) || settings.pan < -1.0 || settings.pan > 1.0)
         return juce::Result::fail ("Track mixer gain or pan is outside the supported range");
 
-    root.setProperty ("trackGainDecibels", settings.gainDecibels, &undoManager);
-    root.setProperty ("trackPan", settings.pan, &undoManager);
-    root.setProperty ("trackMuted", settings.muted, &undoManager);
-    root.setProperty ("trackSolo", settings.solo, &undoManager);
+    auto track = getTrackTree (trackIndex);
+    if (! track.isValid())
+        return juce::Result::fail ("The selected track does not exist");
+
+    track.setProperty ("gainDecibels", settings.gainDecibels, &undoManager);
+    track.setProperty ("pan", settings.pan, &undoManager);
+    track.setProperty ("muted", settings.muted, &undoManager);
+    track.setProperty ("solo", settings.solo, &undoManager);
     return juce::Result::ok();
 }
 
 TrackMidiRouting SongProject::getTrackMidiRouting() const
 {
-    return { static_cast<int> (root.getProperty ("midiInputChannel", 0)),
-             static_cast<int> (root.getProperty ("midiOutputChannel", 1)) };
+    return getTrackMidiRouting (getActiveTrackIndex());
+}
+
+TrackMidiRouting SongProject::getTrackMidiRouting (int trackIndex) const
+{
+    const auto track = getTrackTree (trackIndex);
+    return { static_cast<int> (track.getProperty ("midiInputChannel", 0)),
+             static_cast<int> (track.getProperty ("midiOutputChannel", 1)) };
 }
 
 juce::Result SongProject::setTrackMidiRouting (const TrackMidiRouting& routing)
+{
+    return setTrackMidiRoutingForTrack (getActiveTrackIndex(), routing);
+}
+
+juce::Result SongProject::setTrackMidiRoutingForTrack (int trackIndex,
+                                                       const TrackMidiRouting& routing)
 {
     if (routing.inputChannel < 0 || routing.inputChannel > 16
         || routing.outputChannel < 1 || routing.outputChannel > 16)
         return juce::Result::fail ("Track MIDI routing is outside the supported channel range");
 
-    root.setProperty ("midiInputChannel", routing.inputChannel, &undoManager);
-    root.setProperty ("midiOutputChannel", routing.outputChannel, &undoManager);
+    auto track = getTrackTree (trackIndex);
+    if (! track.isValid())
+        return juce::Result::fail ("The selected track does not exist");
+
+    track.setProperty ("midiInputChannel", routing.inputChannel, &undoManager);
+    track.setProperty ("midiOutputChannel", routing.outputChannel, &undoManager);
+    return juce::Result::ok();
+}
+
+juce::Result SongProject::duplicateActiveTrack (juce::String* createdTrackId)
+{
+    if (getTrackCount() >= maxProjectTracks)
+        return juce::Result::fail ("The current project supports at most two instrument tracks");
+
+    const auto source = getActiveTrackTree();
+    if (! source.isValid())
+        return juce::Result::fail ("The active track does not exist");
+
+    auto copy = source.createCopy();
+    const auto newTrackId = "track-" + juce::Uuid().toString();
+    copy.setProperty ("id", newTrackId, nullptr);
+    copy.setProperty ("name", getTrackName() + " 2", nullptr);
+    copy.setProperty ("clipId", "clip-" + juce::Uuid().toString(), nullptr);
+    copy.setProperty ("midiOutputChannel", juce::jlimit (1, 16, getTrackCount() + 1), nullptr);
+
+    auto notes = copy.getChildWithName (notesType);
+    for (int index = 0; index < notes.getNumChildren(); ++index)
+        notes.getChild (index).setProperty ("id", "note-" + juce::Uuid().toString(), nullptr);
+
+    beginUndoTransaction ("Add instrument track");
+    root.addChild (copy, -1, &undoManager);
+    activeTrackId = newTrackId;
+    if (createdTrackId != nullptr)
+        *createdTrackId = newTrackId;
+    if (changeCallback)
+        changeCallback();
+    return juce::Result::ok();
+}
+
+juce::Result SongProject::removeTrack (const juce::String& trackId)
+{
+    if (getTrackCount() <= 1)
+        return juce::Result::fail ("A song must retain at least one instrument track");
+
+    const auto target = findTrackTree (trackId);
+    if (! target.isValid())
+        return juce::Result::fail ("The track to remove does not exist");
+
+    juce::String replacementId = activeTrackId;
+    if (trackId == activeTrackId)
+    {
+        for (int index = 0; index < getTrackCount(); ++index)
+            if (getTrackId (index) != trackId)
+            {
+                replacementId = getTrackId (index);
+                break;
+            }
+    }
+
+    beginUndoTransaction ("Remove instrument track");
+    root.removeChild (target, &undoManager);
+    activeTrackId = replacementId;
+    ensureActiveTrack();
+    if (changeCallback)
+        changeCallback();
+    return juce::Result::ok();
+}
+
+juce::Result SongProject::moveTrack (const juce::String& trackId, int newIndex)
+{
+    const auto track = findTrackTree (trackId);
+    if (! track.isValid())
+        return juce::Result::fail ("The track to move does not exist");
+    if (newIndex < 0 || newIndex >= getTrackCount())
+        return juce::Result::fail ("The requested track position is outside the project");
+
+    const auto currentIndex = root.indexOf (track);
+    if (currentIndex == newIndex)
+        return juce::Result::ok();
+
+    beginUndoTransaction ("Reorder instrument track");
+    root.moveChild (currentIndex, newIndex, &undoManager);
     return juce::Result::ok();
 }
 
@@ -409,7 +569,19 @@ void SongProject::setPluginMetadata (const juce::String& identifier,
                                      const juce::String& vendor,
                                      const juce::String& version)
 {
-    auto instrument = getInstrumentTree();
+    setPluginMetadataForTrack (getActiveTrackIndex(), identifier, name, vendor, version);
+}
+
+void SongProject::setPluginMetadataForTrack (int trackIndex,
+                                             const juce::String& identifier,
+                                             const juce::String& name,
+                                             const juce::String& vendor,
+                                             const juce::String& version)
+{
+    auto instrument = getInstrumentTree (trackIndex);
+    if (! instrument.isValid())
+        return;
+
     instrument.setProperty ("identifier", identifier, nullptr);
     instrument.setProperty ("name", name, nullptr);
     instrument.setProperty ("vendor", vendor, nullptr);
@@ -418,17 +590,32 @@ void SongProject::setPluginMetadata (const juce::String& identifier,
 
 juce::String SongProject::getPluginIdentifier() const
 {
-    return getInstrumentTree().getProperty ("identifier").toString();
+    return getPluginIdentifier (getActiveTrackIndex());
+}
+
+juce::String SongProject::getPluginIdentifier (int trackIndex) const
+{
+    return getInstrumentTree (trackIndex).getProperty ("identifier").toString();
 }
 
 juce::String SongProject::getPluginName() const
 {
-    return getInstrumentTree().getProperty ("name").toString();
+    return getPluginName (getActiveTrackIndex());
+}
+
+juce::String SongProject::getPluginName (int trackIndex) const
+{
+    return getInstrumentTree (trackIndex).getProperty ("name").toString();
 }
 
 juce::String SongProject::getPluginSoundName() const
 {
-    const auto name = getInstrumentTree().getProperty ("soundName").toString().trim();
+    return getPluginSoundName (getActiveTrackIndex());
+}
+
+juce::String SongProject::getPluginSoundName (int trackIndex) const
+{
+    const auto name = getInstrumentTree (trackIndex).getProperty ("soundName").toString().trim();
     return name.isNotEmpty() ? name : juce::String { "Project sound" };
 }
 
@@ -454,7 +641,16 @@ juce::Result SongProject::applyPluginSound (const juce::String& soundName,
 
 juce::Result SongProject::getPluginState (juce::MemoryBlock& state) const
 {
-    const auto instrument = getInstrumentTree();
+    return getPluginStateForTrack (getActiveTrackIndex(), state);
+}
+
+juce::Result SongProject::getPluginStateForTrack (int trackIndex,
+                                                  juce::MemoryBlock& state) const
+{
+    const auto instrument = getInstrumentTree (trackIndex);
+    if (! instrument.isValid())
+        return juce::Result::fail ("The selected track instrument is missing");
+
     const auto encoded = instrument.getProperty ("state").toString();
     juce::MemoryBlock decoded;
     if (! decoded.fromBase64Encoding (encoded))
@@ -470,38 +666,59 @@ juce::Result SongProject::getPluginState (juce::MemoryBlock& state) const
 
 juce::String SongProject::getPluginStateSha256() const
 {
-    return getInstrumentTree().getProperty ("stateSha256").toString();
+    return getPluginStateSha256 (getActiveTrackIndex());
+}
+
+juce::String SongProject::getPluginStateSha256 (int trackIndex) const
+{
+    return getInstrumentTree (trackIndex).getProperty ("stateSha256").toString();
 }
 
 juce::Result SongProject::getPluginSoundSnapshot (PluginSoundSnapshot& snapshot) const
 {
+    return getPluginSoundSnapshotForTrack (getActiveTrackIndex(), snapshot);
+}
+
+juce::Result SongProject::getPluginSoundSnapshotForTrack (
+    int trackIndex,
+    PluginSoundSnapshot& snapshot) const
+{
     juce::MemoryBlock state;
-    const auto result = getPluginState (state);
+    const auto result = getPluginStateForTrack (trackIndex, state);
     if (result.failed())
         return result;
 
     if (state.getSize() == 0)
         return juce::Result::fail ("The project contains an empty Surge XT sound snapshot");
 
-    snapshot.name = getPluginSoundName();
+    snapshot.name = getPluginSoundName (trackIndex);
     snapshot.state = std::move (state);
-    snapshot.stateSha256 = getPluginStateSha256().toLowerCase();
+    snapshot.stateSha256 = getPluginStateSha256 (trackIndex).toLowerCase();
     return juce::Result::ok();
 }
 
 SequenceSnapshot SongProject::createSequenceSnapshot() const
 {
+    return createSequenceSnapshotForTrack (getActiveTrackIndex());
+}
+
+SequenceSnapshot SongProject::createSequenceSnapshotForTrack (int trackIndex) const
+{
     SequenceSnapshot snapshot;
     snapshot.loopBeats = getLoopLengthBeats();
 
-    const auto notes = getNotes();
-    snapshot.noteCount = juce::jmin (notes.size(), maxSequenceNotes);
+    const auto notesTree = getNotesTree (trackIndex);
+    snapshot.noteCount = juce::jmin (static_cast<std::size_t> (notesTree.getNumChildren()),
+                                    maxSequenceNotes);
     for (std::size_t index = 0; index < snapshot.noteCount; ++index)
     {
-        snapshot.notes[index] = { notes[index].beat,
-                                  notes[index].lengthBeats,
-                                  notes[index].midiNote,
-                                  static_cast<float> (notes[index].velocity) / 127.0f };
+        const auto note = notesTree.getChild (static_cast<int> (index));
+        snapshot.notes[index] = {
+            static_cast<double> (note.getProperty ("beat")),
+            static_cast<double> (note.getProperty ("lengthBeats")),
+            static_cast<int> (note.getProperty ("midiNote")),
+            static_cast<float> (static_cast<int> (note.getProperty ("velocity"))) / 127.0f
+        };
     }
 
     return snapshot;
@@ -515,6 +732,8 @@ void SongProject::beginUndoTransaction (const juce::String& name)
 bool SongProject::undo()
 {
     const auto changed = undoManager.undo();
+    if (changed)
+        ensureActiveTrack();
     if (changed && changeCallback)
         changeCallback();
     return changed;
@@ -523,6 +742,8 @@ bool SongProject::undo()
 bool SongProject::redo()
 {
     const auto changed = undoManager.redo();
+    if (changed)
+        ensureActiveTrack();
     if (changed && changeCallback)
         changeCallback();
     return changed;
@@ -567,14 +788,48 @@ juce::Result SongProject::loadFromFile (const juce::File& file)
     return juce::Result::ok();
 }
 
+juce::ValueTree SongProject::getTrackTree (int trackIndex) const
+{
+    if (trackIndex < 0 || trackIndex >= getTrackCount())
+        return {};
+    return root.getChild (trackIndex);
+}
+
+juce::ValueTree SongProject::findTrackTree (const juce::String& trackId) const
+{
+    for (int index = 0; index < getTrackCount(); ++index)
+    {
+        const auto track = getTrackTree (index);
+        if (track.getProperty ("id").toString() == trackId)
+            return track;
+    }
+    return {};
+}
+
+juce::ValueTree SongProject::getActiveTrackTree() const
+{
+    const auto selected = findTrackTree (activeTrackId);
+    return selected.isValid() ? selected : getTrackTree (0);
+}
+
 juce::ValueTree SongProject::getNotesTree() const
 {
-    return root.getChildWithName (notesType);
+    return getActiveTrackTree().getChildWithName (notesType);
+}
+
+juce::ValueTree SongProject::getNotesTree (int trackIndex) const
+{
+    return getTrackTree (trackIndex).getChildWithName (notesType);
 }
 
 juce::ValueTree SongProject::getInstrumentTree() const
 {
-    return root.getChildWithName (instrumentType);
+    return getActiveTrackTree().getChildWithName (instrumentType);
+}
+
+juce::ValueTree SongProject::getInstrumentTree (int trackIndex) const
+{
+    return getTrackTree (trackIndex).getChildWithName (instrumentType);
 }
 
 juce::ValueTree SongProject::findNoteTree (const juce::String& id) const
@@ -619,67 +874,77 @@ juce::var SongProject::toJsonValue() const
     editor.getDynamicObject()->setProperty ("snapBeats", getSnapBeats());
     object->setProperty ("editor", editor);
 
-    auto track = makeObject();
-    auto* trackObject = track.getDynamicObject();
-    trackObject->setProperty ("id", getTrackId());
-    trackObject->setProperty ("name", getTrackName());
-    trackObject->setProperty ("role", "instrument");
-
-    const auto mixerSettings = getTrackMixerSettings();
-    auto mixer = makeObject();
-    mixer.getDynamicObject()->setProperty ("gainDb", mixerSettings.gainDecibels);
-    mixer.getDynamicObject()->setProperty ("pan", mixerSettings.pan);
-    mixer.getDynamicObject()->setProperty ("mute", mixerSettings.muted);
-    mixer.getDynamicObject()->setProperty ("solo", mixerSettings.solo);
-    trackObject->setProperty ("mixer", mixer);
-
-    const auto midiRouting = getTrackMidiRouting();
-    auto midi = makeObject();
-    midi.getDynamicObject()->setProperty ("inputChannel", midiRouting.inputChannel);
-    midi.getDynamicObject()->setProperty ("outputChannel", midiRouting.outputChannel);
-    trackObject->setProperty ("midi", midi);
-
-    auto instrumentJson = makeObject();
-    auto* instrumentObject = instrumentJson.getDynamicObject();
-    const auto instrument = getInstrumentTree();
-    instrumentObject->setProperty ("format", "VST3");
-    instrumentObject->setProperty ("pluginIdentifier", getPluginIdentifier());
-    instrumentObject->setProperty ("pluginName", getPluginName());
-    instrumentObject->setProperty ("vendor", instrument.getProperty ("vendor"));
-    instrumentObject->setProperty ("version", instrument.getProperty ("version"));
-    instrumentObject->setProperty ("soundName", getPluginSoundName());
-    instrumentObject->setProperty ("stateEncoding", "base64");
-    instrumentObject->setProperty ("state", instrument.getProperty ("state"));
-    instrumentObject->setProperty ("stateSha256", getPluginStateSha256());
-    trackObject->setProperty ("instrument", instrumentJson);
-
-    auto clip = makeObject();
-    auto* clipObject = clip.getDynamicObject();
-    clipObject->setProperty ("id", getClipId());
-    clipObject->setProperty ("startTick", 0);
-    clipObject->setProperty ("lengthTicks", juce::roundToInt (getLoopLengthBeats() * projectPpq));
-    clipObject->setProperty ("loopEnabled", true);
-
-    juce::Array<juce::var> notesJson;
-    for (const auto& note : getNotes())
-    {
-        auto noteJson = makeObject();
-        auto* noteObject = noteJson.getDynamicObject();
-        noteObject->setProperty ("id", note.id);
-        noteObject->setProperty ("startTick", juce::roundToInt (note.beat * projectPpq));
-        noteObject->setProperty ("lengthTicks", juce::roundToInt (note.lengthBeats * projectPpq));
-        noteObject->setProperty ("midiNote", note.midiNote);
-        noteObject->setProperty ("velocity", note.velocity);
-        notesJson.add (noteJson);
-    }
-    clipObject->setProperty ("notes", notesJson);
-
-    juce::Array<juce::var> clips;
-    clips.add (clip);
-    trackObject->setProperty ("clips", clips);
-
     juce::Array<juce::var> tracks;
-    tracks.add (track);
+    for (int trackIndex = 0; trackIndex < getTrackCount(); ++trackIndex)
+    {
+        auto track = makeObject();
+        auto* trackObject = track.getDynamicObject();
+        trackObject->setProperty ("id", getTrackId (trackIndex));
+        trackObject->setProperty ("name", getTrackName (trackIndex));
+        trackObject->setProperty ("role", "instrument");
+
+        const auto mixerSettings = getTrackMixerSettings (trackIndex);
+        auto mixer = makeObject();
+        mixer.getDynamicObject()->setProperty ("gainDb", mixerSettings.gainDecibels);
+        mixer.getDynamicObject()->setProperty ("pan", mixerSettings.pan);
+        mixer.getDynamicObject()->setProperty ("mute", mixerSettings.muted);
+        mixer.getDynamicObject()->setProperty ("solo", mixerSettings.solo);
+        trackObject->setProperty ("mixer", mixer);
+
+        const auto midiRouting = getTrackMidiRouting (trackIndex);
+        auto midi = makeObject();
+        midi.getDynamicObject()->setProperty ("inputChannel", midiRouting.inputChannel);
+        midi.getDynamicObject()->setProperty ("outputChannel", midiRouting.outputChannel);
+        trackObject->setProperty ("midi", midi);
+
+        auto instrumentJson = makeObject();
+        auto* instrumentObject = instrumentJson.getDynamicObject();
+        const auto instrument = getInstrumentTree (trackIndex);
+        instrumentObject->setProperty ("format", "VST3");
+        instrumentObject->setProperty ("pluginIdentifier", getPluginIdentifier (trackIndex));
+        instrumentObject->setProperty ("pluginName", getPluginName (trackIndex));
+        instrumentObject->setProperty ("vendor", instrument.getProperty ("vendor"));
+        instrumentObject->setProperty ("version", instrument.getProperty ("version"));
+        instrumentObject->setProperty ("soundName", getPluginSoundName (trackIndex));
+        instrumentObject->setProperty ("stateEncoding", "base64");
+        instrumentObject->setProperty ("state", instrument.getProperty ("state"));
+        instrumentObject->setProperty ("stateSha256", getPluginStateSha256 (trackIndex));
+        trackObject->setProperty ("instrument", instrumentJson);
+
+        auto clip = makeObject();
+        auto* clipObject = clip.getDynamicObject();
+        clipObject->setProperty ("id", getClipId (trackIndex));
+        clipObject->setProperty ("startTick", 0);
+        clipObject->setProperty ("lengthTicks",
+                                 juce::roundToInt (getLoopLengthBeats() * projectPpq));
+        clipObject->setProperty ("loopEnabled", true);
+
+        juce::Array<juce::var> notesJson;
+        const auto notes = getNotesTree (trackIndex);
+        for (int noteIndex = 0; noteIndex < notes.getNumChildren(); ++noteIndex)
+        {
+            const auto note = notes.getChild (noteIndex);
+            auto noteJson = makeObject();
+            auto* noteObject = noteJson.getDynamicObject();
+            noteObject->setProperty ("id", note.getProperty ("id"));
+            noteObject->setProperty (
+                "startTick",
+                juce::roundToInt (static_cast<double> (note.getProperty ("beat")) * projectPpq));
+            noteObject->setProperty (
+                "lengthTicks",
+                juce::roundToInt (static_cast<double> (note.getProperty ("lengthBeats"))
+                                  * projectPpq));
+            noteObject->setProperty ("midiNote", note.getProperty ("midiNote"));
+            noteObject->setProperty ("velocity", note.getProperty ("velocity"));
+            notesJson.add (noteJson);
+        }
+        clipObject->setProperty ("notes", notesJson);
+
+        juce::Array<juce::var> clips;
+        clips.add (clip);
+        trackObject->setProperty ("clips", clips);
+        tracks.add (track);
+    }
     object->setProperty ("tracks", tracks);
     return result;
 }
@@ -694,8 +959,10 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
     int sampleRate = 0;
     int ppq = 0;
     if (! readInt (*rootObject, "schemaVersion", schemaVersion)
-        || (schemaVersion != legacySchemaVersion && schemaVersion != currentSchemaVersion))
-        return juce::Result::fail ("Only song-project schema versions 1 and 2 are supported");
+        || (schemaVersion != legacySchemaVersion
+            && schemaVersion != previousSchemaVersion
+            && schemaVersion != currentSchemaVersion))
+        return juce::Result::fail ("Only song-project schema versions 1, 2, and 3 are supported");
     if (! readInt (*rootObject, "sampleRate", sampleRate) || ! isSupportedSampleRate (sampleRate))
         return juce::Result::fail ("Project sampleRate is unsupported");
     if (! readInt (*rootObject, "ppq", ppq) || ppq != projectPpq)
@@ -722,8 +989,67 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
 
     const auto tracksValue = rootObject->getProperty ("tracks");
     const auto* tracks = tracksValue.getArray();
+    if (schemaVersion == currentSchemaVersion && tracks != nullptr && tracks->size() == 2)
+    {
+        auto parseSingleTrack = [&json] (int trackIndex, juce::ValueTree& parsedRoot)
+        {
+            juce::var copy;
+            const auto copyResult = juce::JSON::parse (juce::JSON::toString (json, false), copy);
+            if (copyResult.failed())
+                return copyResult;
+
+            auto* copyRoot = requireObject (copy);
+            auto* copyTracks = copyRoot != nullptr
+                                   ? copyRoot->getProperty ("tracks").getArray()
+                                   : nullptr;
+            if (copyTracks == nullptr || copyTracks->size() != 2)
+                return juce::Result::fail ("The two-track project could not be isolated for validation");
+
+            const auto selectedTrack = copyTracks->getReference (trackIndex);
+            juce::Array<juce::var> isolatedTracks;
+            isolatedTracks.add (selectedTrack);
+            copyRoot->setProperty ("tracks", isolatedTracks);
+            return SongProject::valueTreeFromJson (copy, parsedRoot);
+        };
+
+        juce::ValueTree firstRoot;
+        juce::ValueTree secondRoot;
+        const auto firstResult = parseSingleTrack (0, firstRoot);
+        if (firstResult.failed())
+            return firstResult;
+        const auto secondResult = parseSingleTrack (1, secondRoot);
+        if (secondResult.failed())
+            return secondResult;
+
+        const auto firstTrack = firstRoot.getChild (0);
+        const auto secondTrack = secondRoot.getChild (0);
+        if (firstTrack.getProperty ("id") == secondTrack.getProperty ("id"))
+            return juce::Result::fail ("Track ids must be unique within the project");
+        if (firstTrack.getProperty ("clipId") == secondTrack.getProperty ("clipId"))
+            return juce::Result::fail ("Clip ids must be unique within the project");
+        if (std::abs (static_cast<double> (firstRoot.getProperty ("loopLengthBeats"))
+                      - static_cast<double> (secondRoot.getProperty ("loopLengthBeats"))) > 1.0e-9)
+            return juce::Result::fail ("Both tracks must share the same loop length");
+
+        std::set<juce::String> noteIds;
+        for (const auto& parsedTrack : { firstTrack, secondTrack })
+        {
+            const auto parsedNotes = parsedTrack.getChildWithName (notesType);
+            for (int noteIndex = 0; noteIndex < parsedNotes.getNumChildren(); ++noteIndex)
+            {
+                const auto id = parsedNotes.getChild (noteIndex).getProperty ("id").toString();
+                if (! noteIds.insert (id).second)
+                    return juce::Result::fail ("Note ids must be unique across project tracks");
+            }
+        }
+
+        firstRoot.addChild (secondTrack.createCopy(), -1, nullptr);
+        destination = firstRoot;
+        return juce::Result::ok();
+    }
+
     if (tracks == nullptr || tracks->size() != 1)
-        return juce::Result::fail ("This editor version requires exactly one instrument track");
+        return juce::Result::fail ("This editor version requires one or two instrument tracks");
     auto* trackObject = requireObject (tracks->getReference (0));
     if (trackObject == nullptr)
         return juce::Result::fail ("Track must be a JSON object");
@@ -736,7 +1062,7 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
 
     TrackMixerSettings mixerSettings;
     TrackMidiRouting midiRouting;
-    if (schemaVersion == currentSchemaVersion)
+    if (schemaVersion >= previousSchemaVersion)
     {
         auto* mixerObject = requireObject (trackObject->getProperty ("mixer"));
         if (mixerObject == nullptr
@@ -808,15 +1134,17 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
     loadedRoot.setProperty ("tempoBpm", tempo, nullptr);
     loadedRoot.setProperty ("loopLengthBeats", static_cast<double> (loopTicks) / projectPpq, nullptr);
     loadedRoot.setProperty ("snapBeats", snap, nullptr);
-    loadedRoot.setProperty ("trackId", trackId, nullptr);
-    loadedRoot.setProperty ("trackName", trackName, nullptr);
-    loadedRoot.setProperty ("clipId", clipId, nullptr);
-    loadedRoot.setProperty ("trackGainDecibels", mixerSettings.gainDecibels, nullptr);
-    loadedRoot.setProperty ("trackPan", mixerSettings.pan, nullptr);
-    loadedRoot.setProperty ("trackMuted", mixerSettings.muted, nullptr);
-    loadedRoot.setProperty ("trackSolo", mixerSettings.solo, nullptr);
-    loadedRoot.setProperty ("midiInputChannel", midiRouting.inputChannel, nullptr);
-    loadedRoot.setProperty ("midiOutputChannel", midiRouting.outputChannel, nullptr);
+
+    juce::ValueTree loadedTrack (trackType);
+    loadedTrack.setProperty ("id", trackId, nullptr);
+    loadedTrack.setProperty ("name", trackName, nullptr);
+    loadedTrack.setProperty ("clipId", clipId, nullptr);
+    loadedTrack.setProperty ("gainDecibels", mixerSettings.gainDecibels, nullptr);
+    loadedTrack.setProperty ("pan", mixerSettings.pan, nullptr);
+    loadedTrack.setProperty ("muted", mixerSettings.muted, nullptr);
+    loadedTrack.setProperty ("solo", mixerSettings.solo, nullptr);
+    loadedTrack.setProperty ("midiInputChannel", midiRouting.inputChannel, nullptr);
+    loadedTrack.setProperty ("midiOutputChannel", midiRouting.outputChannel, nullptr);
 
     juce::ValueTree loadedInstrument (instrumentType);
     loadedInstrument.setProperty ("format", "VST3", nullptr);
@@ -828,7 +1156,7 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
     loadedInstrument.setProperty ("stateEncoding", "base64", nullptr);
     loadedInstrument.setProperty ("state", encodedState, nullptr);
     loadedInstrument.setProperty ("stateSha256", savedHash.toLowerCase(), nullptr);
-    loadedRoot.addChild (loadedInstrument, -1, nullptr);
+    loadedTrack.addChild (loadedInstrument, -1, nullptr);
 
     juce::ValueTree loadedNotes (notesType);
     std::set<juce::String> ids;
@@ -863,7 +1191,8 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
         loadedNote.setProperty ("velocity", velocity, nullptr);
         loadedNotes.addChild (loadedNote, -1, nullptr);
     }
-    loadedRoot.addChild (loadedNotes, -1, nullptr);
+    loadedTrack.addChild (loadedNotes, -1, nullptr);
+    loadedRoot.addChild (loadedTrack, -1, nullptr);
 
     destination = loadedRoot;
     return juce::Result::ok();
@@ -889,18 +1218,30 @@ juce::Result SongProject::writePluginSoundSnapshot (const juce::String& soundNam
     return juce::Result::ok();
 }
 
-void SongProject::installRoot (juce::ValueTree newRoot, bool shouldBeDirty)
+void SongProject::installRoot (juce::ValueTree newRoot,
+                               bool shouldBeDirty,
+                               const juce::String& preferredActiveTrackId)
 {
     suppressChanges = true;
     root.removeListener (this);
     root = std::move (newRoot);
     root.addListener (this);
     undoManager.clearUndoHistory();
+    activeTrackId = preferredActiveTrackId;
+    ensureActiveTrack();
     suppressChanges = false;
     dirty = shouldBeDirty;
 
     if (changeCallback)
         changeCallback();
+}
+
+void SongProject::ensureActiveTrack()
+{
+    if (findTrackTree (activeTrackId).isValid())
+        return;
+
+    activeTrackId = getTrackCount() > 0 ? getTrackId (0) : juce::String {};
 }
 
 void SongProject::projectChanged()

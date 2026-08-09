@@ -44,7 +44,9 @@ class SongProject final : private juce::ValueTree::Listener
 {
 public:
     static constexpr int legacySchemaVersion = 1;
-    static constexpr int currentSchemaVersion = 2;
+    static constexpr int previousSchemaVersion = 2;
+    static constexpr int currentSchemaVersion = 3;
+    static constexpr int maxProjectTracks = 2;
 
     SongProject();
     ~SongProject() override;
@@ -64,13 +66,28 @@ public:
     void setSampleRate (int sampleRate);
 
     int getSchemaVersion() const;
+    int getTrackCount() const noexcept;
+    int getActiveTrackIndex() const noexcept;
+    bool setActiveTrackIndex (int trackIndex);
     juce::String getTrackId() const;
+    juce::String getTrackId (int trackIndex) const;
     juce::String getTrackName() const;
+    juce::String getTrackName (int trackIndex) const;
     juce::String getClipId() const;
+    juce::String getClipId (int trackIndex) const;
     TrackMixerSettings getTrackMixerSettings() const;
+    TrackMixerSettings getTrackMixerSettings (int trackIndex) const;
     juce::Result setTrackMixerSettings (const TrackMixerSettings& settings);
+    juce::Result setTrackMixerSettingsForTrack (int trackIndex,
+                                                const TrackMixerSettings& settings);
     TrackMidiRouting getTrackMidiRouting() const;
+    TrackMidiRouting getTrackMidiRouting (int trackIndex) const;
     juce::Result setTrackMidiRouting (const TrackMidiRouting& routing);
+    juce::Result setTrackMidiRoutingForTrack (int trackIndex,
+                                              const TrackMidiRouting& routing);
+    juce::Result duplicateActiveTrack (juce::String* createdTrackId = nullptr);
+    juce::Result removeTrack (const juce::String& trackId);
+    juce::Result moveTrack (const juce::String& trackId, int newIndex);
 
     std::vector<SongNote> getNotes() const;
     std::optional<SongNote> findNote (const juce::String& id) const;
@@ -85,17 +102,30 @@ public:
                             const juce::String& name,
                             const juce::String& vendor,
                             const juce::String& version);
+    void setPluginMetadataForTrack (int trackIndex,
+                                    const juce::String& identifier,
+                                    const juce::String& name,
+                                    const juce::String& vendor,
+                                    const juce::String& version);
     juce::String getPluginIdentifier() const;
+    juce::String getPluginIdentifier (int trackIndex) const;
     juce::String getPluginName() const;
+    juce::String getPluginName (int trackIndex) const;
     juce::String getPluginSoundName() const;
+    juce::String getPluginSoundName (int trackIndex) const;
     void setPluginState (const juce::MemoryBlock& state);
     juce::Result applyPluginSound (const juce::String& soundName,
                                    const juce::MemoryBlock& state);
     juce::Result getPluginState (juce::MemoryBlock& state) const;
+    juce::Result getPluginStateForTrack (int trackIndex, juce::MemoryBlock& state) const;
     juce::Result getPluginSoundSnapshot (PluginSoundSnapshot& snapshot) const;
+    juce::Result getPluginSoundSnapshotForTrack (int trackIndex,
+                                                 PluginSoundSnapshot& snapshot) const;
     juce::String getPluginStateSha256() const;
+    juce::String getPluginStateSha256 (int trackIndex) const;
 
     SequenceSnapshot createSequenceSnapshot() const;
+    SequenceSnapshot createSequenceSnapshotForTrack (int trackIndex) const;
 
     void beginUndoTransaction (const juce::String& name);
     bool undo();
@@ -115,15 +145,23 @@ public:
 private:
     static constexpr int projectPpq = 960;
 
+    juce::ValueTree getTrackTree (int trackIndex) const;
+    juce::ValueTree findTrackTree (const juce::String& trackId) const;
+    juce::ValueTree getActiveTrackTree() const;
     juce::ValueTree getNotesTree() const;
+    juce::ValueTree getNotesTree (int trackIndex) const;
     juce::ValueTree getInstrumentTree() const;
+    juce::ValueTree getInstrumentTree (int trackIndex) const;
     juce::ValueTree findNoteTree (const juce::String& id) const;
     juce::var toJsonValue() const;
     static juce::Result valueTreeFromJson (const juce::var& json, juce::ValueTree& destination);
     juce::Result writePluginSoundSnapshot (const juce::String& soundName,
                                            const juce::MemoryBlock& state,
                                            juce::UndoManager* undo);
-    void installRoot (juce::ValueTree newRoot, bool shouldBeDirty);
+    void installRoot (juce::ValueTree newRoot,
+                      bool shouldBeDirty,
+                      const juce::String& preferredActiveTrackId = {});
+    void ensureActiveTrack();
     void projectChanged();
 
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override;
@@ -135,6 +173,7 @@ private:
     juce::ValueTree root;
     juce::UndoManager undoManager { 2000, 16 * 1024 * 1024 };
     std::function<void()> changeCallback;
+    juce::String activeTrackId;
     bool dirty = false;
     bool suppressChanges = false;
 

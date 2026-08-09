@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://resonance.local/schema/song-project-v3.json",
-  "title": "Resonance Song Project v3",
+  "$id": "https://resonance.local/schema/song-project-v2.json",
+  "title": "Resonance Song Project v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,7 +16,7 @@
     "tracks"
   ],
   "properties": {
-    "schemaVersion": { "const": 3 },
+    "schemaVersion": { "const": 2 },
     "editorVersion": { "type": "string", "minLength": 1 },
     "title": { "type": "string", "minLength": 1 },
     "sampleRate": { "type": "integer", "enum": [44100, 48000, 88200, 96000] },
@@ -59,7 +59,7 @@
     "tracks": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 2,
+      "maxItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
