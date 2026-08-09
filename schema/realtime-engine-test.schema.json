@@ -11,6 +11,8 @@
     "assertions",
     "loopLengthBeats",
     "noteCount",
+    "maxMixerTracks",
+    "mixerContractPassed",
     "passed"
   ],
   "properties": {
@@ -20,6 +22,8 @@
     "assertions": { "type": "integer", "minimum": 1 },
     "loopLengthBeats": { "type": "number", "exclusiveMinimum": 0 },
     "noteCount": { "type": "integer", "minimum": 1 },
-    "passed": { "type": "boolean" }
+    "maxMixerTracks": { "const": 8 },
+    "mixerContractPassed": { "const": true },
+    "passed": { "const": true }
   }
 }

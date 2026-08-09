@@ -1,6 +1,7 @@
 #include <JuceHeader.h>
 
 #include "../src/loop_scheduler.h"
+#include "../src/mixer_snapshot.h"
 
 #include <cmath>
 #include <iostream>
@@ -202,6 +203,65 @@ void testExactDeviceBlockBoundaries (TestContext& context)
                     "Boundary events must be owned by the expected following device blocks");
 }
 
+void testFixedCapacityMixerContract (TestContext& context)
+{
+    static_assert (resonance::maxMixerTracks == 8);
+
+    resonance::MixerSnapshot snapshot;
+    snapshot.trackCount = 3;
+    snapshot.tracks[0].enabled = true;
+    snapshot.tracks[1].enabled = true;
+    snapshot.tracks[2].enabled = true;
+
+    const auto centre = resonance::resolveStereoTrackGain (snapshot, 0);
+    context.expect (centre.left == 1.0f && centre.right == 1.0f,
+                    "A centred unity-gain track must feed both stereo channels equally");
+
+    snapshot.tracks[0].pan = -1.0f;
+    const auto hardLeft = resonance::resolveStereoTrackGain (snapshot, 0);
+    context.expect (hardLeft.left == 1.0f && hardLeft.right == 0.0f,
+                    "Hard-left balance must silence only the right channel");
+
+    snapshot.tracks[0].pan = 1.0f;
+    snapshot.tracks[0].gainLinear = 0.25f;
+    const auto hardRight = resonance::resolveStereoTrackGain (snapshot, 0);
+    context.expect (hardRight.left == 0.0f && hardRight.right == 0.25f,
+                    "Hard-right balance must preserve the bounded track gain");
+
+    snapshot.tracks[0].muted = true;
+    const auto muted = resonance::resolveStereoTrackGain (snapshot, 0);
+    context.expect (muted.left == 0.0f && muted.right == 0.0f,
+                    "Mute must gate a track before it reaches the mix bus");
+
+    snapshot.tracks[0].muted = false;
+    snapshot.tracks[0].pan = 0.0f;
+    snapshot.tracks[1].solo = true;
+    const auto nonSoloed = resonance::resolveStereoTrackGain (snapshot, 0);
+    const auto soloed = resonance::resolveStereoTrackGain (snapshot, 1);
+    context.expect (nonSoloed.left == 0.0f && nonSoloed.right == 0.0f
+                        && soloed.left == 1.0f && soloed.right == 1.0f,
+                    "An active solo must gate every enabled non-solo track");
+
+    snapshot.tracks[1].enabled = false;
+    const auto inactiveSoloIgnored = resonance::resolveStereoTrackGain (snapshot, 0);
+    context.expect (inactiveSoloIgnored.left == 0.25f && inactiveSoloIgnored.right == 0.25f,
+                    "A disabled track must not activate the global solo gate");
+
+    snapshot.tracks[2].gainLinear = -4.0f;
+    const auto negativeGain = resonance::resolveStereoTrackGain (snapshot, 2);
+    context.expect (negativeGain.left == 0.0f && negativeGain.right == 0.0f,
+                    "The render contract must clamp an invalid negative linear gain to silence");
+
+    snapshot.trackCount = resonance::maxMixerTracks + 4;
+    const auto pastCapacity = resonance::resolveStereoTrackGain (snapshot,
+                                                                 resonance::maxMixerTracks);
+    context.expect (pastCapacity.left == 0.0f && pastCapacity.right == 0.0f,
+                    "The audio-side mixer must never read beyond its fixed track capacity");
+
+    context.expect (std::is_trivially_copyable_v<resonance::MixerSnapshot>,
+                    "Mixer snapshots must remain allocation-free trivially copyable values");
+}
+
 juce::String getArgumentValue (const juce::StringArray& args, const juce::String& flag)
 {
     const auto index = args.indexOf (flag);
@@ -230,10 +290,13 @@ int main (int argc, char* argv[])
         testFourLoopBalance (context);
         testEditableSequence (context);
         testExactDeviceBlockBoundaries (context);
+        testFixedCapacityMixerContract (context);
 
         reportObject->setProperty ("assertions", context.assertions);
         reportObject->setProperty ("loopLengthBeats", resonance::loopLengthBeats);
         reportObject->setProperty ("noteCount", static_cast<int> (resonance::starterLoopNotes.size()));
+        reportObject->setProperty ("maxMixerTracks", static_cast<int> (resonance::maxMixerTracks));
+        reportObject->setProperty ("mixerContractPassed", true);
         reportObject->setProperty ("passed", true);
     }
     catch (const std::exception& error)

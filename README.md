@@ -2,7 +2,7 @@
 
 Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. The project now has its first editable song, sound-design, and reversible note-proposal slices: a native Windows editor with real-time WASAPI output, a piano roll, lossless song projects, one inventory-approved Surge XT instrument track, host-owned A/B sound, and an editor-owned A/B note preview.
 
-The current scope is deliberately one instrument track and one looping clip. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. A version-1 command builds a validated non-mutating note candidate; the editor shows its before/after diff, auditions project A or candidate B through the normal immutable sequence path, and applies it as one Undo transaction or rejects it unchanged. The first deterministic transform varies either the whole loop or one selected note using an explicit maximum velocity change and seed, then resolves those inputs to ordinary concrete note updates before preview. Additional transform families and any natural-language model integration remain later work alongside factory-preset indexing, arrangement, automation, and game-state music tools.
+The current scope is deliberately one instrument track and one looping clip. Editor 0.4.0 writes song-project schema version 2, migrates version-1 songs without rewriting their source, and persists stable track/clip identity plus bounded mixer and MIDI-routing settings. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. A version-1 edit command builds a validated non-mutating note candidate; command versioning is independent of the song schema. The fixed eight-lane mixer publication contract is proven, but the production engine still renders one instrument. Multiple runtime tracks, broader transform families, and natural-language model integration remain later work alongside factory-preset indexing, arrangement, automation, and game-state music tools.
 
 ![First playable Resonance Music Editor UI](artifacts/realtime-ui-snapshot.png)
 
@@ -67,6 +67,20 @@ Orange marks the accepted before-note and blue marks the proposed after-note. Sa
 Save writes only the accepted project sound. An unapplied B remains preview state and is not silently substituted into the project. Undo/Redo restores the corresponding live Surge state as well as the saved model. The exact saved SHA-256 protects project bytes; the UI separately tracks the live-equivalent hash returned by Surge after restore because one sound can have lifecycle-dependent opaque encodings. The current snapshot-first workflow intentionally does not parse or index Surge's vendor-specific `.fxp` library; see `docs/ADR-0004-host-owned-sound-snapshots.md`.
 
 ## Proven checkpoints
+
+### M6 schema, identity, and mixer-ownership foundation
+
+The first M6 slice was technically verified on 2026-08-09 as editor 0.4.0:
+
+- added the strict canonical song-project schema version 2 while retaining the archived version-1 validator;
+- migrated valid version-1 songs in memory without rewriting the original file;
+- preserved non-default track/clip IDs, notes, timing, accepted sound name, and exact opaque VST3 state/hash;
+- added required per-track gain, pan, mute, solo, and MIDI input/output settings with neutral migration defaults;
+- removed hard-coded track/clip targets from command producers and validation;
+- added a trivially copyable, fixed-capacity eight-lane mixer snapshot with tested gain, stereo balance, mute, solo, disabled-lane, and capacity semantics;
+- passed 92 engine/mixer assertions, 162 project/migration/command assertions, every packaged M4/M5 regression, and 14 artifact-schema validations.
+
+This is a technical foundation rather than completed multi-track playback: the production editor still hosts one Surge instance, and no new listening approval was required. See `docs/ADR-0005-multitrack-project-and-mixer-ownership.md` and `docs/M6_MULTITRACK_FOUNDATION_CHECKPOINT_2026-08-09.md`.
 
 ### M5 edit-command and note-proposal workflow
 
@@ -207,9 +221,9 @@ The build copies four production executables to `bin`:
 
 ## Next implementation gate
 
-1. Preserve the accepted M4 `0.3.0` sound workflow and accepted M5 proposal lifecycle.
-2. Define M6's versioned project migration, stable track/clip IDs, and preallocated mixer ownership before changing production code.
-3. Prove version-1 projects migrate losslessly to the new in-memory shape before adding a second plug-in instance or mixer UI.
-4. Keep arrangement, automation, broad effects, factory-preset parsing, and model-service integration outside the first M6 slice.
+1. Preserve the accepted M4 sound workflow, accepted M5 proposal lifecycle, and proven version-1-to-version-2 migration.
+2. Add the first two-instrument runtime behind stable message-thread-owned plug-in slots and the fixed eight-lane publication boundary.
+3. Prove per-track scheduling, gain, pan, mute, solo, meters, CPU/clipping bounds, shutdown, missing-plug-in preservation, and exact state round trips before widening the production schema or adding broad mixer UI.
+4. Keep arrangement, automation, broad effects, factory-preset parsing, and model-service integration outside this M6 runtime slice.
 
-Architecture and evidence are recorded in `docs/ADR-0001-vst3-host-foundation.md`, `docs/ADR-0002-crash-isolated-plugin-scanning.md`, `docs/ADR-0003-realtime-audio-engine.md`, `docs/ADR-0004-host-owned-sound-snapshots.md`, and the dated checkpoint files under `docs/`.
+Architecture and evidence are recorded in `docs/ADR-0001-vst3-host-foundation.md`, `docs/ADR-0002-crash-isolated-plugin-scanning.md`, `docs/ADR-0003-realtime-audio-engine.md`, `docs/ADR-0004-host-owned-sound-snapshots.md`, `docs/ADR-0005-multitrack-project-and-mixer-ownership.md`, and the dated checkpoint files under `docs/`.

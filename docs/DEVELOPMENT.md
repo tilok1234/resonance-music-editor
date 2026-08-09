@@ -126,6 +126,8 @@ The order matters: later scripts consume binaries and inventory artifacts create
 
 The realtime script also runs the M5 command-core cases using the portable `tests/fixtures/edit-command-note-patch-v1.json` fixture. The test replaces its schema-valid placeholder content hash in memory with the exact active-project hash; do not hard-code a machine report or mutable local path into the fixture. The same native suite resolves the seeded whole-loop velocity transform twice from reordered target IDs and records canonical command and candidate SHA-256 evidence.
 
+M6 migration coverage uses `tests/fixtures/song-project-v1-migration.resonance.json`. Keep its non-default `track-migrated` and `clip-migrated` identities, exact four-byte state/hash pair, and version-1 shape intact: the test proves the source remains byte-identical, migration defaults are deterministic, commands use stored IDs, and a later explicit save writes schema version 2. `scripts/validate-artifacts.py` checks this fixture and the historical UI round-trip file against the archived version-1 schema while validating the current real-Surge project against version 2.
+
 ## Non-interactive editor modes
 
 The packaged editor has five test modes used by the Release gates:

@@ -972,6 +972,8 @@ void MainEditorComponent::previewSelectedNoteEdit()
 
     EditCommand command;
     command.projectContentSha256 = project.getContentSha256();
+    command.trackId = project.getTrackId();
+    command.clipId = project.getClipId();
     command.summary = "Transpose " + selected->id + " up one semitone";
     command.changes.push_back ({ NoteEditAction::update, selected->id, after });
 

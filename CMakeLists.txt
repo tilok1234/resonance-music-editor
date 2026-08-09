@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(ResonanceMusicEditor VERSION 0.3.0 LANGUAGES C CXX)
+project(ResonanceMusicEditor VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -118,6 +118,7 @@ target_sources(ResonanceMusicEditor PRIVATE
     src/known_plugin.cpp
     src/known_plugin.h
     src/loop_scheduler.h
+    src/mixer_snapshot.h
     src/piano_roll.cpp
     src/piano_roll.h
     src/plugin_bundle_identity.h
@@ -159,6 +160,7 @@ juce_generate_juce_header(RealtimeEngineTests)
 
 target_sources(RealtimeEngineTests PRIVATE
     src/loop_scheduler.h
+    src/mixer_snapshot.h
     tests/realtime_engine_tests.cpp)
 
 target_compile_definitions(RealtimeEngineTests PRIVATE

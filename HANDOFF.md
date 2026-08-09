@@ -12,9 +12,11 @@ The accepted M4 snapshot-first sound workflow is frozen at commit `7af6573` on `
 
 M5 is accepted on `codex/m5-edit-command-foundation`, based directly on the accepted M4 commit. The command foundation implements schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, an independent candidate `SongProject`, explicit before/after note diffs, and consume-once Apply/Reject. Source checkpoint `3d3a91b` connects that core to an editor-owned note-proposal card. Checkpoint `2351cb6` adds the first deterministic multi-note resolver. Checkpoint `ef9710d` completes the bounded host input slice: **Whole loop** or **Selected note**, maximum velocity delta `1` through `32`, and seed `0` through `2147483647` resolve into concrete velocity-only B; invalid input is blocked and inputs freeze while B is pending. The selected-note `+1` producer remains available. The packaged user pass covered both target scopes, two strengths, A/B, Reject, frozen controls, and one-note targeting; a fresh hidden workflow rerun then passed Apply, Undo, deterministic repeat, invalid-input, schema, and cleanup checks. The user explicitly accepted M5 at 2026-08-09 11:02 +02:00. The accepted Surge sound responded only subtly to velocity, so acceptance covers the command/proposal lifecycle without claiming that candidate B sounded musically better. No natural-language translator or model service has been added.
 
-The accepted M4 publication baseline is `7af6573` (`Accept M4 host-owned sound workflow`) on `codex/m4-accepted-0.3.0`, available as draft PR #1. The accepted M5 branch is stacked as draft PR #2; its command foundation is `290fdfb`, proposal implementation is `3d3a91b`, deterministic UI-evidence follow-up is `c6f62f2`, final one-note evidence is `4a660ef`, seeded loop-dynamics implementation is `2351cb6`, parameterized controls implementation is `ef9710d`, and pre-acceptance documentation checkpoint is `2ee6521`. The acceptance is recorded in `docs/M5_ACCEPTANCE_2026-08-09.md` and the commit containing that file. Always verify live `HEAD`, upstream state, and the working tree before relying on those values or assuming either stacked milestone has landed on `main`.
+M6 is in progress on `codex/m6-multitrack-foundation`, based on accepted M5 commit `9d94780`. Its first contract-first slice bumps the editor to 0.4.0 and the canonical song writer to schema version 2. Version-1 files migrate in memory without source rewrite; track/clip IDs become authoritative model data; each persisted track gains bounded undoable gain, pan, mute, solo, and MIDI-routing state; and edit commands target the active stored IDs. `MixerSnapshot` defines eight fixed, trivially copyable lanes with tested capacity, balance, gain, mute, and solo semantics. The Release gate passed 92 engine/mixer assertions, 162 project/migration/command assertions, the full packaged M4/M5 regressions, and 14 schema validations. The runtime still owns one Surge instance, so M6 is not complete and no new listening acceptance is implied.
 
-Project version: `0.3.0` (accepted M4 release baseline; M5 milestone accepted without an executable or song-schema version bump)
+The accepted M4 publication baseline is `7af6573` (`Accept M4 host-owned sound workflow`) on `codex/m4-accepted-0.3.0`, available as draft PR #1. The accepted M5 branch is stacked as draft PR #2; its final acceptance commit is `9d94780`. The M6 foundation branch starts from that commit. The M5 acceptance is recorded in `docs/M5_ACCEPTANCE_2026-08-09.md`; the first M6 evidence is `docs/M6_MULTITRACK_FOUNDATION_CHECKPOINT_2026-08-09.md`. Always verify live `HEAD`, upstream state, and the working tree before relying on those values or assuming a stacked milestone has landed on `main`.
+
+Project version: `0.4.0` (M6 technical foundation; M4 and M5 remain the accepted interaction/listening baselines, while M6 is still in progress)
 
 ## Product direction
 
@@ -36,7 +38,9 @@ Read [the product vision](docs/PRODUCT_VISION.md) before changing product scope.
 - Native Surge window with Resonance audition transport and keyboard.
 - One editable piano-roll clip with add, move, resize, delete, velocity, snap, and loop length.
 - Gesture-level Undo/Redo for project edits.
-- Versioned `.resonance.json` project with 960 PPQ and stable note IDs.
+- Versioned `.resonance.json` project with 960 PPQ and stable track, clip, and note IDs.
+- Canonical song-project schema version 2 with lossless, non-rewriting version-1 migration.
+- Persisted per-track gain, pan, mute, solo, and MIDI-routing state with strict bounds and neutral migration defaults.
 - Base64 VST3 state plus SHA-256 integrity.
 - Candidate-then-replace project opening and exact state restore.
 - Host-owned named A/project and ephemeral B/candidate sound snapshots.
@@ -58,6 +62,7 @@ Read [the product vision](docs/PRODUCT_VISION.md) before changing product scope.
 - Mutually exclusive sound and note candidate lanes plus pending-preview discard warnings.
 - Separate exact saved-state integrity from the live-equivalent hash observed after Surge restore.
 - Silent packaged self-test, M4 and M5 native workflow modes, UI snapshot mode, and idle CPU regression mode.
+- Fixed-capacity eight-lane `MixerSnapshot` contract with native-tested gain, balance, mute, solo, and capacity semantics.
 
 ## Current verified local baseline
 
@@ -65,16 +70,19 @@ The latest machine-local reports available when this handoff was prepared showed
 
 | Gate | Result |
 | --- | --- |
-| Scheduler assertions | 83 passed |
-| Project/round-trip/command assertions | 122 passed |
-| Schema-validated artifacts and fixtures | 13 passed |
-| Edit-command candidate SHA-256 | `27a69dbc6331f951a7d06a16bbf02970b77f9cc0af52a1365b095654867babea` |
-| Seeded velocity command SHA-256 | `57bb6c6fbd803b92f552b0ff07a6dec961721e32fed28b3666242f4493bf6970` |
-| Seeded velocity unit candidate SHA-256 | `18c6b17dacad9e2fd44c7705892d58115e43c1ec2e8ef6893d114bb3274e6f85` |
-| M5 proposal A SHA-256 | `7833b2e817743f6079612c685f2a0659e154d769d530077d5da1f34544a117ff` |
-| M5 proposal B SHA-256 | `90fdd1363b5e1855c985983fd47917c39c58b4f6e977f1fc507447e2cf5d2f88` |
-| Packaged seeded velocity B SHA-256 | `3a41dece2c8ba4e6ee149c8122f088ac57f306d64a567d50631599593c706a9c` |
-| Parameterized selected-note B SHA-256 | `896eb3db48ebac34cb888a01a8ec2566805aa7e6f376e74f2f3dc17f1bd9b882` from seed `90210`, maximum delta `3` |
+| Scheduler/mixer assertions | 92 passed |
+| Project/migration/round-trip/command assertions | 162 passed |
+| Schema-validated artifacts and fixtures | 14 passed |
+| Song project schemas | canonical writer `2`; accepted legacy input `1` |
+| Version-1 migration fixture | passed; source SHA-256 `4725dd74075981ceb6ecd605db270954deafb7743b98190d090eb42dd677c0f7`; `track-migrated` / `clip-migrated` preserved |
+| Fixed mixer contract | 8 lanes; trivially copyable; gain/pan/mute/solo/capacity cases passed |
+| Edit-command candidate SHA-256 | `effc3fa6f6a8801cf5d984364a38a6182893b146c22108de56f2c9bc606cb305` |
+| Seeded velocity command SHA-256 | `eaed800fde0ed0a377b2dd85880fd9c8f938a485f16b0582484f308a4f87483e` |
+| Seeded velocity unit candidate SHA-256 | `42ab4cca2fe478e300c49508879fe34f17270f8f036db079e6a91d0db8a29589` |
+| M5 proposal A SHA-256 | `00de28ee0860a8c6d00a2898f4d46f2231a7b984cde1f17091d4b8c636fd93a3` |
+| M5 proposal B SHA-256 | `4894a2a10474312a679f33af13f1cc0fa7484d620a7055c83eb3d764e8609aca` |
+| Packaged seeded velocity B SHA-256 | `a8cde7d15c2ecbfe2012f1c9f0bac40275a2f4f27f1da93410c3045835c33293` |
+| Parameterized selected-note B SHA-256 | `2b3f3fa963d1ee5599b0c9c93fc92d7d238afb45aee858cdc4025292d8f850fb` from seed `90210`, maximum delta `3` |
 | Packaged M5 workflow | passed; prior lifecycles plus parameter control consumption, deterministic repeat, invalid-input block, A/B, Reject, Apply, and one-Undo restore |
 | Fresh M5 acceptance rerun | passed; byte-identical report SHA-256 `f40ad41ce8964129d416e6f77593ab0e0b2f8c9669fe9b393c6bc9fce473385f`; 13 schema validations; zero leftover editor processes |
 | M5 user listening | accepted 2026-08-09 11:02 +02:00; A was slightly preferred but hard to distinguish at maximum delta `8`; delta `24` and selected-note delta `32` sounded about the same |
@@ -88,9 +96,9 @@ The latest machine-local reports available when this handoff was prepared showed
 | Host-owned real-Surge sound name | `Self-test Surge state`; exact round trip |
 | Latest captured real Surge state | 67,345 bytes; SHA-256 `a771b28878606e1b830c9c5f02a46686328cc690e03153d2bd141cf0eee8ea40` |
 | Exact saved-B packaged workflow | passed; A/B `91ED214E`, clean Reject and Close |
-| Packaged UI snapshot | 92,959 bytes; SHA-256 `749f82b847006ae62a4910eb69cae8e7941aa84dddfbe12fb076cdbf82ec4435`; visually inspected and reproduced byte-identically twice |
-| UI idle gate | 1,359.4 ms process CPU over 5,836 ms |
-| Packaged editor SHA-256 | `8f33cc8ffc114fbde6b5857cf53fc43aee2f2ac4e060fe00bc29736ce03b0730` |
+| Packaged UI snapshot | 92,810 bytes; SHA-256 `cfe19c3b7051f28dcc20acc162782397ebfca8be353c6ac2c104f9aabbc35c57` |
+| UI idle gate | 1,140.6 ms process CPU over 6,057 ms |
+| Packaged editor SHA-256 | `88ba46e16061df4439a8d7a2d641127f47d78ec04f692fb0f00234896556a919` |
 
 Device name, sample rate, block size, latency, full path-derived identifier, and bundle fingerprint are machine observations. Regenerate rather than copying them to another machine.
 
@@ -100,10 +108,11 @@ Device name, sample rate, block size, latency, full path-derived identifier, and
 2. Unknown discovery runs outside the editor: [ADR-0002](docs/ADR-0002-crash-isolated-plugin-scanning.md).
 3. The first real-time path is one explicit WASAPI instrument: [ADR-0003](docs/ADR-0003-realtime-audio-engine.md).
 4. The first sound workflow uses named host-owned opaque snapshots, not direct `.fxp` indexing: [ADR-0004](docs/ADR-0004-host-owned-sound-snapshots.md).
-5. The mutable `SongProject` never crosses into the audio callback; it publishes fixed-capacity immutable snapshots.
-6. Saved project state is versioned symbolic data plus opaque VST3 state, never bundled plug-in code.
-7. Project open is fail-closed and transactional at the active-model boundary.
-8. Technical acceptance and user listening approval are separate gates.
+5. Project migration precedes multi-instance rendering, and the first mixer is fixed at eight message-thread-owned lanes: [ADR-0005](docs/ADR-0005-multitrack-project-and-mixer-ownership.md).
+6. The mutable `SongProject` never crosses into the audio callback; it publishes fixed-capacity immutable snapshots.
+7. Saved project state is versioned symbolic data plus opaque VST3 state, never bundled plug-in code.
+8. Project open is fail-closed and transactional at the active-model boundary.
+9. Technical acceptance and user listening approval are separate gates.
 
 Read [Architecture](docs/ARCHITECTURE.md) and [VST3 hosting](docs/VST3_HOSTING.md) before implementation.
 
@@ -125,10 +134,10 @@ Both paths are now covered by packaged acceptance modes.
 - No factory-preset file browser or semantic parameter browser; the first host-owned workflow selects named captured snapshots only.
 - Arbitrary native Surge edits remain preview state until explicit Capture B and Apply B; they do not mark the project dirty immediately. New, Open, and Close perform a one-time comparison and warn if live state matches neither A nor B.
 - Only the accepted A snapshot is persisted. The ephemeral B candidate is intentionally not stored across application restarts.
-- No multiple tracks, mixer, pan, mute, solo, buses, or effects chain.
+- No multiple runtime tracks, audible per-track mixer, meter UI, buses, or effects chain. Schema version 2 persists one track's gain, pan, mute, solo, and MIDI routing, but the one-instance engine does not consume them yet.
 - No arrangement timeline, sections, tempo changes, or automation lanes.
 - The command/proposal core and first parameterized seeded velocity transform exist, but target scope is limited to whole loop or one selected note; additional transforms, natural-language translation, and a connected AI service do not.
-- Dynamics target, strength, and seed are session-only proposal inputs; pending B and its controls are intentionally not persisted in song-project schema version 1.
+- Dynamics target, strength, and seed are session-only proposal inputs; pending B and its controls are intentionally not persisted in song-project schema version 2.
 - No game-state transitions, stem management, offline final-song export, or engine adapter.
 - Scanner isolation does not contain a failure from a VST3 already processing in the editor.
 - The build script currently assumes the Visual Studio 18 Community installation and generator.
@@ -136,7 +145,7 @@ Both paths are now covered by packaged acceptance modes.
 
 ## Recommended next gate
 
-Begin [Roadmap M6: Multi-track and mixer](docs/ROADMAP.md#m6-multi-track-and-mixer) with a contract-first slice. Define the project-schema migration, stable track/clip identity, and preallocated mixer ownership before adding multiple plug-in instances or broad UI. Preserve the accepted M4 sound and M5 command/proposal contracts, including version-1 project loading, exact state retention, immutable realtime publication, and one-transaction Undo. Keep arrangement, automation, effects expansion, factory `.fxp` indexing, and model-service integration outside the first M6 slice.
+Continue [Roadmap M6: Multi-track and mixer](docs/ROADMAP.md#m6-multi-track-and-mixer) with the first two-instrument runtime slice. Use stable message-thread-owned prepared plug-in slots and the fixed eight-lane publication contract; do not widen the production song schema or add broad mixer UI until two-track scheduling, gain/pan/mute/solo, meters, exact state preservation, missing-plug-in behavior, CPU/clipping limits, and clean shutdown pass together. Preserve version-1 migration plus the accepted M4 sound and M5 command/proposal contracts. Keep arrangement, automation, effects expansion, factory `.fxp` indexing, and model-service integration outside this slice.
 
 ## First takeover actions
 
@@ -154,7 +163,7 @@ Then:
 2. inspect ignored local dependency, build, inventory, and quarantine state without adding it to Git;
 3. run the full Release sequence before modifying a risky boundary, or record why a narrower gate is proportionate;
 4. preserve unrelated local edits;
-5. inspect ADR-0004 and the accepted M4 diff before changing the sound-workflow contract.
+5. inspect ADR-0004 before changing the sound workflow and ADR-0005 before changing project topology or realtime mixer ownership.
 
 The full commands and prerequisites are in [Development](docs/DEVELOPMENT.md) and [Testing and release](docs/TESTING_AND_RELEASE.md).
 
@@ -177,7 +186,7 @@ First read HANDOFF.md and docs/README.md completely, then inspect git status, th
 
 The product is a music-only editor aimed mainly at video-game music. Manual and future AI edits must share one versioned project model, and technical tests must remain separate from listening approval.
 
-M4 is accepted as version 0.3.0 and published at commit 7af6573 on draft PR #1. M5 is accepted on codex/m5-edit-command-foundation and draft PR #2. Its command foundation and visual proposal workflow provide immutable A/B audition, Save-A isolation, explicit Apply/Reject, one Undo/Redo, stale invalidation, and deterministic Whole loop/Selected note velocity requests. The user explicitly accepted M5 at 2026-08-09 11:02 +02:00 after the packaged listening pass; the accepted Surge sound was only subtly velocity-sensitive, so do not misstate B as musically preferred. A fresh packaged workflow rerun and all 13 artifact schemas passed. Next define the narrow M6 schema-migration, stable-ID, and mixer-ownership contract before implementation. Do not add arrangement, broad effects, a live AI service, or factory .fxp indexing in that slice.
+M4 is accepted as version 0.3.0 at commit 7af6573 on draft PR #1. M5 is accepted at commit 9d94780 on codex/m5-edit-command-foundation and draft PR #2; its sound was only subtly velocity-sensitive, so do not misstate candidate B as musically preferred. M6 is in progress on codex/m6-multitrack-foundation as editor 0.4.0. Its first slice writes schema version 2, migrates version 1 without rewriting the source, preserves stable track/clip IDs and exact state, stores bounded undoable mixer/MIDI settings, and defines a tested fixed eight-lane mixer snapshot. The full gate passed 92 engine/mixer assertions, 162 project/migration/command assertions, all packaged M4/M5 regressions, and 14 schema validations. The runtime still owns one Surge instance. Next implement the first two-instrument runtime behind stable prepared slots; do not widen the project track count or add broad UI until scheduling, mix controls, meters, state, failure, CPU/clipping, and shutdown gates pass. Do not add arrangement, broad effects, a live AI service, or factory .fxp indexing in that slice.
 ```
 
 ## Handoff maintenance

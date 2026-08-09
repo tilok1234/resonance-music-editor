@@ -33,6 +33,38 @@ juce::String argumentValue (const juce::StringArray& args, const juce::String& f
 void testEditingAndUndo (TestContext& context)
 {
     resonance::SongProject project;
+    context.expect (project.getSchemaVersion() == resonance::SongProject::currentSchemaVersion,
+                    "A new song must use the current production schema");
+    context.expect (project.getTrackId() == "track-1" && project.getClipId() == "loop-1",
+                    "A new song must expose stable starter track and clip identities");
+    const auto starterMixer = project.getTrackMixerSettings();
+    const auto starterMidi = project.getTrackMidiRouting();
+    context.expect (starterMixer.gainDecibels == 0.0 && starterMixer.pan == 0.0
+                        && ! starterMixer.muted && ! starterMixer.solo,
+                    "A new track must start at unity, centre, unmuted, and unsoloed");
+    context.expect (starterMidi.inputChannel == 0 && starterMidi.outputChannel == 1,
+                    "A new track must start with omni input and MIDI output channel one");
+
+    project.beginUndoTransaction ("Change track mix and MIDI routing");
+    context.expect (project.setTrackMixerSettings ({ -7.5, -0.25, true, true }).wasOk()
+                        && project.setTrackMidiRouting ({ 4, 12 }).wasOk(),
+                    "Bounded track mixer and MIDI settings must be editable");
+    const auto editedMixer = project.getTrackMixerSettings();
+    const auto editedMidi = project.getTrackMidiRouting();
+    context.expect (editedMixer.gainDecibels == -7.5 && editedMixer.pan == -0.25
+                        && editedMixer.muted && editedMixer.solo
+                        && editedMidi.inputChannel == 4 && editedMidi.outputChannel == 12,
+                    "Edited track settings must enter the authoritative model");
+    context.expect (project.undo(), "One Undo must restore a grouped track-settings edit");
+    const auto restoredMixer = project.getTrackMixerSettings();
+    const auto restoredMidi = project.getTrackMidiRouting();
+    context.expect (restoredMixer.gainDecibels == 0.0 && restoredMixer.pan == 0.0
+                        && ! restoredMixer.muted && ! restoredMixer.solo
+                        && restoredMidi.inputChannel == 0 && restoredMidi.outputChannel == 1,
+                    "Track-settings Undo must restore every mixer and MIDI field");
+    context.expect (project.setTrackMixerSettings ({ 13.0, 0.0, false, false }).failed()
+                        && project.setTrackMidiRouting ({ 0, 0 }).failed(),
+                    "Out-of-range track mixer and MIDI edits must fail closed");
     context.expect (project.getNotes().size() == 8, "A new song must contain the eight starter notes");
     context.expect (project.getLoopLengthBeats() == 8.0, "A new song must be two bars long");
     context.expect (project.getTempoBpm() == 120.0, "A new song must start at 120 BPM");
@@ -67,6 +99,166 @@ void testEditingAndUndo (TestContext& context)
     context.expect (! project.findNote (id).has_value(), "Deleted note must leave the model");
     context.expect (project.undo(), "Delete must be undoable");
     context.expect (project.findNote (id).has_value(), "Undo must restore a deleted note");
+}
+
+void testLegacyProjectMigration (TestContext& context,
+                                 const juce::File& fixtureFile,
+                                 int& migratedBytes,
+                                 juce::String& sourceSha256,
+                                 juce::String& stableTrackId,
+                                 juce::String& stableClipId)
+{
+    context.expect (fixtureFile.existsAsFile(), "The version-1 migration fixture must exist");
+
+    juce::MemoryBlock sourceBytes;
+    context.expect (fixtureFile.loadFileAsData (sourceBytes),
+                    "The version-1 fixture bytes must be readable");
+    sourceSha256 = juce::SHA256 (sourceBytes).toHexString();
+
+    resonance::SongProject migrated;
+    const auto migrationResult = migrated.loadFromFile (fixtureFile);
+    context.expect (migrationResult.wasOk(),
+                    "A valid version-1 project must migrate in memory: "
+                        + migrationResult.getErrorMessage());
+    context.expect (migrated.getSchemaVersion() == resonance::SongProject::currentSchemaVersion,
+                    "A migrated project must use the current in-memory schema");
+    stableTrackId = migrated.getTrackId();
+    stableClipId = migrated.getClipId();
+    context.expect (stableTrackId == "track-migrated" && stableClipId == "clip-migrated",
+                    "Migration must preserve stable track and clip identities");
+    context.expect (migrated.getTrackName() == "Legacy Lead",
+                    "Migration must preserve the user-facing track name");
+
+    const auto defaultMixer = migrated.getTrackMixerSettings();
+    const auto defaultMidi = migrated.getTrackMidiRouting();
+    context.expect (defaultMixer.gainDecibels == 0.0 && defaultMixer.pan == 0.0
+                        && ! defaultMixer.muted && ! defaultMixer.solo,
+                    "Version-1 tracks must receive the documented neutral mixer defaults");
+    context.expect (defaultMidi.inputChannel == 0 && defaultMidi.outputChannel == 1,
+                    "Version-1 tracks must receive omni-in/channel-one MIDI defaults");
+    context.expect (migrated.getTitle() == "Legacy Migration Fixture"
+                        && migrated.getTempoBpm() == 132.0
+                        && migrated.findNote ("note-migrated").has_value(),
+                    "Migration must preserve project, tempo, and note data");
+
+    juce::MemoryBlock migratedState;
+    context.expect (migrated.getPluginState (migratedState).wasOk()
+                        && migratedState.getSize() == 4
+                        && migrated.getPluginStateSha256()
+                               == "054edec1d0211f624fed0cbca9d4f9400b0e491c43742af2c5b0abebf0c990d8",
+                    "Migration must preserve the exact plug-in state payload and hash");
+
+    juce::MemoryBlock sourceBytesAfterLoad;
+    context.expect (fixtureFile.loadFileAsData (sourceBytesAfterLoad)
+                        && sourceBytesAfterLoad == sourceBytes,
+                    "Loading a version-1 project must not rewrite the source file");
+
+    resonance::SeededVelocityVariation variation;
+    variation.noteIds = { "note-migrated" };
+    variation.seed = 61002;
+    variation.maximumDelta = 4;
+    resonance::EditCommand command;
+    context.expect (resonance::resolveSeededVelocityVariation (migrated,
+                                                               variation,
+                                                               command).wasOk()
+                        && command.trackId == stableTrackId
+                        && command.clipId == stableClipId,
+                    "Resolved edit commands must target migrated stable identities");
+    resonance::EditCommandPreview preview;
+    context.expect (resonance::createEditCommandPreview (command, migrated, preview).wasOk(),
+                    "A command targeting migrated identities must preview successfully");
+    command.trackId = "track-1";
+    context.expect (resonance::createEditCommandPreview (command, migrated, preview).failed(),
+                    "A default-id command must not target a differently identified project");
+
+    const auto migratedFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getNonexistentChildFile ("resonance-v1-migrated",
+                                                            ".resonance.json",
+                                                            false);
+    context.expect (migrated.saveToFile (migratedFile).wasOk(),
+                    "A migrated project must save as the current schema");
+    migratedBytes = static_cast<int> (migratedFile.getSize());
+    const auto migratedJsonText = migratedFile.loadFileAsString();
+    auto migratedJson = juce::JSON::parse (migratedJsonText);
+    auto* migratedRoot = migratedJson.getDynamicObject();
+    auto* migratedTracks = migratedRoot != nullptr
+                               ? migratedRoot->getProperty ("tracks").getArray()
+                               : nullptr;
+    auto* migratedTrack = migratedTracks != nullptr && migratedTracks->size() == 1
+                              ? migratedTracks->getReference (0).getDynamicObject()
+                              : nullptr;
+    auto* migratedMixer = migratedTrack != nullptr
+                              ? migratedTrack->getProperty ("mixer").getDynamicObject()
+                              : nullptr;
+    auto* migratedMidi = migratedTrack != nullptr
+                             ? migratedTrack->getProperty ("midi").getDynamicObject()
+                             : nullptr;
+    context.expect (migratedRoot != nullptr
+                        && static_cast<int> (migratedRoot->getProperty ("schemaVersion"))
+                               == resonance::SongProject::currentSchemaVersion
+                        && migratedTrack != nullptr && migratedMixer != nullptr
+                        && migratedMidi != nullptr,
+                    "A migrated save must materialise the complete version-2 track contract");
+    context.expect (migratedTrack->getProperty ("id").toString() == stableTrackId,
+                    "A version-2 save must retain the migrated track id");
+
+    resonance::SongProject reopened;
+    context.expect (reopened.loadFromFile (migratedFile).wasOk()
+                        && reopened.getTrackId() == stableTrackId
+                        && reopened.getClipId() == stableClipId,
+                    "The migrated version-2 file must reopen with stable identities");
+
+    migratedMixer->setProperty ("gainDb", -6.0);
+    migratedMixer->setProperty ("pan", 0.25);
+    migratedMixer->setProperty ("mute", true);
+    migratedMixer->setProperty ("solo", true);
+    migratedMidi->setProperty ("inputChannel", 2);
+    migratedMidi->setProperty ("outputChannel", 10);
+    context.expect (migratedFile.replaceWithText (juce::JSON::toString (migratedJson, true)),
+                    "A valid non-default version-2 mixer fixture must be writable");
+    resonance::SongProject nonDefault;
+    context.expect (nonDefault.loadFromFile (migratedFile).wasOk(),
+                    "Bounded non-default mixer and MIDI values must load");
+    const auto nonDefaultMixer = nonDefault.getTrackMixerSettings();
+    const auto nonDefaultMidi = nonDefault.getTrackMidiRouting();
+    context.expect (nonDefaultMixer.gainDecibels == -6.0 && nonDefaultMixer.pan == 0.25
+                        && nonDefaultMixer.muted && nonDefaultMixer.solo
+                        && nonDefaultMidi.inputChannel == 2
+                        && nonDefaultMidi.outputChannel == 10,
+                    "Version-2 mixer and MIDI values must round-trip exactly");
+
+    const auto invalidFile = migratedFile.getSiblingFile (
+        migratedFile.getFileNameWithoutExtension() + "-invalid.resonance.json");
+    auto writeInvalidAndReject = [&] (juce::var invalidJson,
+                                     const juce::String& message)
+    {
+        context.expect (invalidFile.replaceWithText (juce::JSON::toString (invalidJson, true)),
+                        "An invalid migration fixture must be writable for rejection testing");
+        resonance::SongProject rejected;
+        context.expect (rejected.loadFromFile (invalidFile).failed(), message);
+    };
+
+    auto futureVersion = juce::JSON::parse (migratedJsonText);
+    futureVersion.getDynamicObject()->setProperty ("schemaVersion", 3);
+    writeInvalidAndReject (futureVersion, "An unknown future project schema must be rejected");
+
+    auto missingMixer = juce::JSON::parse (migratedJsonText);
+    missingMixer.getDynamicObject()->getProperty ("tracks").getArray()->getReference (0)
+        .getDynamicObject()->removeProperty ("mixer");
+    writeInvalidAndReject (missingMixer, "A version-2 track without mixer state must be rejected");
+
+    auto invalidPan = juce::JSON::parse (migratedJsonText);
+    invalidPan.getDynamicObject()->getProperty ("tracks").getArray()->getReference (0)
+        .getDynamicObject()->getProperty ("mixer").getDynamicObject()->setProperty ("pan", 1.5);
+    writeInvalidAndReject (invalidPan, "An out-of-range version-2 pan value must be rejected");
+
+    auto invalidMidi = juce::JSON::parse (migratedJsonText);
+    invalidMidi.getDynamicObject()->getProperty ("tracks").getArray()->getReference (0)
+        .getDynamicObject()->getProperty ("midi").getDynamicObject()->setProperty ("outputChannel", 0);
+    writeInvalidAndReject (invalidMidi, "An invalid version-2 MIDI output channel must be rejected");
+
+    context.expect (invalidFile.deleteFile(), "The invalid migration fixture must be removable");
+    context.expect (migratedFile.deleteFile(), "The migrated version-2 fixture must be removable");
 }
 
 void testSequenceSnapshot (TestContext& context)
@@ -271,6 +463,8 @@ void testEditCommandFoundation (TestContext& context,
                     "The accepted starter loop must retain its legacy 0.82-beat articulation");
     resonance::EditCommand legacyTimingCommand;
     legacyTimingCommand.projectContentSha256 = legacyTimingProject.getContentSha256();
+    legacyTimingCommand.trackId = legacyTimingProject.getTrackId();
+    legacyTimingCommand.clipId = legacyTimingProject.getClipId();
     legacyTimingCommand.summary = "Transpose without changing legacy timing";
     ++legacyTimingNote->midiNote;
     legacyTimingCommand.changes.push_back ({ resonance::NoteEditAction::update,
@@ -502,27 +696,32 @@ void testRoundTrip (TestContext& context, int& savedBytes, juce::String& stateSh
     context.expect (restoredState == state, "Reopened plugin state must be byte-exact");
     context.expect (loaded.getPluginStateSha256() == stateSha, "Saved state hash must round-trip exactly");
 
-    auto legacyJson = juce::JSON::parse (file.loadFileAsString());
-    auto* legacyRoot = legacyJson.getDynamicObject();
-    auto* legacyTracks = legacyRoot != nullptr ? legacyRoot->getProperty ("tracks").getArray() : nullptr;
-    auto* legacyTrack = legacyTracks != nullptr && ! legacyTracks->isEmpty()
-                            ? legacyTracks->getReference (0).getDynamicObject()
+    auto compatibilityJson = juce::JSON::parse (file.loadFileAsString());
+    auto* compatibilityRoot = compatibilityJson.getDynamicObject();
+    auto* compatibilityTracks = compatibilityRoot != nullptr
+                                    ? compatibilityRoot->getProperty ("tracks").getArray()
+                                    : nullptr;
+    auto* compatibilityTrack = compatibilityTracks != nullptr && ! compatibilityTracks->isEmpty()
+                            ? compatibilityTracks->getReference (0).getDynamicObject()
                             : nullptr;
-    auto* legacyInstrument = legacyTrack != nullptr
-                                 ? legacyTrack->getProperty ("instrument").getDynamicObject()
+    auto* compatibilityInstrument = compatibilityTrack != nullptr
+                                 ? compatibilityTrack->getProperty ("instrument").getDynamicObject()
                                  : nullptr;
-    context.expect (legacyInstrument != nullptr, "The round-trip fixture must expose an instrument object");
-    legacyInstrument->removeProperty ("soundName");
-    const auto legacyFile = file.getSiblingFile (file.getFileNameWithoutExtension()
+    context.expect (compatibilityInstrument != nullptr,
+                    "The round-trip fixture must expose an instrument object");
+    compatibilityInstrument->removeProperty ("soundName");
+    const auto compatibilityFile = file.getSiblingFile (file.getFileNameWithoutExtension()
                                                   + "-legacy.resonance.json");
-    context.expect (legacyFile.replaceWithText (juce::JSON::toString (legacyJson, true)),
-                    "A legacy version-1 fixture without soundName must be writable");
-    resonance::SongProject legacyLoaded;
-    context.expect (legacyLoaded.loadFromFile (legacyFile).wasOk(),
-                    "An older version-1 project without soundName must still load");
-    context.expect (legacyLoaded.getPluginSoundName() == "Project sound",
-                    "An older project must receive the documented fallback sound name");
-    context.expect (legacyFile.deleteFile(), "The temporary legacy project must be removable");
+    context.expect (compatibilityFile.replaceWithText (
+                        juce::JSON::toString (compatibilityJson, true)),
+                    "A project without the optional soundName must be writable");
+    resonance::SongProject compatibilityLoaded;
+    context.expect (compatibilityLoaded.loadFromFile (compatibilityFile).wasOk(),
+                    "A project without soundName must still load");
+    context.expect (compatibilityLoaded.getPluginSoundName() == "Project sound",
+                    "A project without soundName must receive the documented fallback name");
+    context.expect (compatibilityFile.deleteFile(),
+                    "The temporary sound-name compatibility project must be removable");
     context.expect (file.deleteFile(), "The temporary round-trip project must be removable");
 }
 } // namespace
@@ -532,12 +731,18 @@ int main (int argc, char* argv[])
     juce::StringArray args (argv + 1, argc - 1);
     const auto reportPath = argumentValue (args, "--report");
     const auto editCommandFixturePath = argumentValue (args, "--edit-command-fixture");
+    const auto legacyProjectFixturePath = argumentValue (args, "--legacy-project-fixture");
     TestContext context;
     int savedBytes = 0;
     juce::String stateSha;
     juce::String editCommandCandidateSha;
     juce::String seededVelocityCommandSha;
     juce::String seededVelocityCandidateSha;
+    int migratedBytes = 0;
+    juce::String legacySourceSha;
+    juce::String stableTrackId;
+    juce::String stableClipId;
+    bool legacyMigrationPassed = false;
 
     auto* reportObject = new juce::DynamicObject();
     juce::var report (reportObject);
@@ -546,6 +751,10 @@ int main (int argc, char* argv[])
     reportObject->setProperty ("juceVersion", juce::SystemStats::getJUCEVersion());
     reportObject->setProperty ("editCommandVersion", resonance::EditCommand::supportedVersion);
     reportObject->setProperty ("editCommandFixture", juce::File (editCommandFixturePath).getFileName());
+    reportObject->setProperty ("projectSchemaVersion", resonance::SongProject::currentSchemaVersion);
+    reportObject->setProperty ("legacySchemaVersion", resonance::SongProject::legacySchemaVersion);
+    reportObject->setProperty ("legacyMigrationFixture",
+                               juce::File (legacyProjectFixturePath).getFileName());
 
     try
     {
@@ -553,6 +762,13 @@ int main (int argc, char* argv[])
         testSequenceSnapshot (context);
         testRelocatedPluginIdentity (context);
         testSoundSnapshotAndUndo (context);
+        testLegacyProjectMigration (context,
+                                    juce::File (legacyProjectFixturePath),
+                                    migratedBytes,
+                                    legacySourceSha,
+                                    stableTrackId,
+                                    stableClipId);
+        legacyMigrationPassed = true;
         testEditCommandFoundation (context,
                                    juce::File (editCommandFixturePath),
                                    editCommandCandidateSha);
@@ -568,6 +784,11 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("seededVelocityMaximumDelta", 8);
         reportObject->setProperty ("seededVelocityCommandSha256", seededVelocityCommandSha);
         reportObject->setProperty ("seededVelocityCandidateSha256", seededVelocityCandidateSha);
+        reportObject->setProperty ("legacyMigrationPassed", legacyMigrationPassed);
+        reportObject->setProperty ("legacySourceSha256", legacySourceSha);
+        reportObject->setProperty ("migratedRoundTripBytes", migratedBytes);
+        reportObject->setProperty ("stableTrackId", stableTrackId);
+        reportObject->setProperty ("stableClipId", stableClipId);
         reportObject->setProperty ("passed", true);
     }
     catch (const std::exception& error)
@@ -580,6 +801,11 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("seededVelocityMaximumDelta", 8);
         reportObject->setProperty ("seededVelocityCommandSha256", seededVelocityCommandSha);
         reportObject->setProperty ("seededVelocityCandidateSha256", seededVelocityCandidateSha);
+        reportObject->setProperty ("legacyMigrationPassed", legacyMigrationPassed);
+        reportObject->setProperty ("legacySourceSha256", legacySourceSha);
+        reportObject->setProperty ("migratedRoundTripBytes", migratedBytes);
+        reportObject->setProperty ("stableTrackId", stableTrackId);
+        reportObject->setProperty ("stableClipId", stableClipId);
         reportObject->setProperty ("passed", false);
         reportObject->setProperty ("error", error.what());
     }

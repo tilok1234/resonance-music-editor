@@ -15,6 +15,7 @@ $m5WorkflowReport = Join-Path $artifacts "m5-workflow-test-report.json"
 $songProjectArtifact = Join-Path $artifacts "realtime-song-project.resonance.json"
 $uiSnapshot = Join-Path $artifacts "realtime-ui-snapshot.png"
 $editCommandFixture = Join-Path $projectRoot "tests\fixtures\edit-command-note-patch-v1.json"
+$legacyProjectFixture = Join-Path $projectRoot "tests\fixtures\song-project-v1-migration.resonance.json"
 
 function Find-BuiltBinary([string]$Name) {
     $binary = Get-ChildItem -LiteralPath $buildDir -Recurse -Filter $Name |
@@ -45,11 +46,13 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $engineResult = Get-Content -LiteralPath $engineReport -Raw | ConvertFrom-Json
-if (-not $engineResult.passed -or $engineResult.assertions -lt 10) {
+if (-not $engineResult.passed -or $engineResult.assertions -lt 19 -or
+    $engineResult.maxMixerTracks -ne 8 -or -not $engineResult.mixerContractPassed) {
     throw "Realtime scheduler report did not pass its assertion gate"
 }
 
-& $projectTests --report $projectReport --edit-command-fixture $editCommandFixture
+& $projectTests --report $projectReport --edit-command-fixture $editCommandFixture `
+    --legacy-project-fixture $legacyProjectFixture
 if ($LASTEXITCODE -ne 0) {
     throw "Song project tests failed with exit code $LASTEXITCODE"
 }
@@ -57,6 +60,14 @@ if ($LASTEXITCODE -ne 0) {
 $projectResult = Get-Content -LiteralPath $projectReport -Raw | ConvertFrom-Json
 if (-not $projectResult.passed -or $projectResult.assertions -lt 50) {
     throw "Song project report did not pass its assertion gate"
+}
+
+if ($projectResult.projectSchemaVersion -ne 2 -or
+    $projectResult.legacySchemaVersion -ne 1 -or
+    -not $projectResult.legacyMigrationPassed -or
+    $projectResult.stableTrackId -ne "track-migrated" -or
+    $projectResult.stableClipId -ne "clip-migrated") {
+    throw "The version-1 to version-2 project migration gate did not pass"
 }
 
 if ($projectResult.seededVelocitySeed -ne 18421 -or
@@ -102,6 +113,17 @@ if (-not $result.songProject.savedPayloadExact -or -not $result.songProject.plug
 
 if (-not $result.songProject.soundNameRoundTrip -or $result.songProject.soundName -ne "Self-test Surge state") {
     throw "The host-owned sound name did not round-trip with the real Surge state"
+}
+
+if ($result.songProject.schemaVersion -ne 2 -or
+    $result.songProject.trackId -ne "track-1" -or
+    $result.songProject.clipId -ne "loop-1" -or
+    $result.songProject.mixerGainDb -ne 0 -or
+    $result.songProject.mixerPan -ne 0 -or
+    $result.songProject.mixerMuted -or $result.songProject.mixerSolo -or
+    $result.songProject.midiInputChannel -ne 0 -or
+    $result.songProject.midiOutputChannel -ne 1) {
+    throw "The packaged editor did not preserve the version-2 identity, mixer, and MIDI defaults"
 }
 
 if ($result.songProject.noteCount -ne 9 -or $result.songProject.loopLengthBeats -ne 16 -or
@@ -235,7 +257,15 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
 
 [pscustomobject]@{
     SchedulerAssertions = $engineResult.assertions
+    MaxMixerTracks = $engineResult.maxMixerTracks
+    MixerContractPassed = $engineResult.mixerContractPassed
     ProjectAssertions = $projectResult.assertions
+    ProjectSchemaVersion = $projectResult.projectSchemaVersion
+    LegacySchemaVersion = $projectResult.legacySchemaVersion
+    LegacyMigrationPassed = $projectResult.legacyMigrationPassed
+    LegacyMigrationSourceSha256 = $projectResult.legacySourceSha256
+    MigratedTrackId = $projectResult.stableTrackId
+    MigratedClipId = $projectResult.stableClipId
     ProjectRoundTripBytes = $projectResult.roundTripBytes
     ProjectStateSha256 = $projectResult.stateSha256
     EditCommandVersion = $projectResult.editCommandVersion

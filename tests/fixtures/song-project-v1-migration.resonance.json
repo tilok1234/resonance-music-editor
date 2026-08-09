@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "editorVersion": "0.3.0",
+  "title": "Legacy Migration Fixture",
+  "sampleRate": 48000,
+  "ppq": 960,
+  "tempoMap": [
+    {
+      "tick": 0,
+      "bpm": 132
+    }
+  ],
+  "meterMap": [
+    {
+      "tick": 0,
+      "numerator": 4,
+      "denominator": 4
+    }
+  ],
+  "editor": {
+    "snapBeats": 0.25
+  },
+  "tracks": [
+    {
+      "id": "track-migrated",
+      "name": "Legacy Lead",
+      "role": "instrument",
+      "instrument": {
+        "format": "VST3",
+        "pluginIdentifier": "VST3-Surge XT-bf38ca69-190e4fbd",
+        "pluginName": "Surge XT",
+        "vendor": "Surge Synth Team",
+        "version": "1.3.4",
+        "soundName": "Legacy Fixture Sound",
+        "stateEncoding": "base64",
+        "state": "4..Df.C.",
+        "stateSha256": "054edec1d0211f624fed0cbca9d4f9400b0e491c43742af2c5b0abebf0c990d8"
+      },
+      "clips": [
+        {
+          "id": "clip-migrated",
+          "startTick": 0,
+          "lengthTicks": 7680,
+          "loopEnabled": true,
+          "notes": [
+            {
+              "id": "note-migrated",
+              "startTick": 960,
+              "lengthTicks": 480,
+              "midiNote": 65,
+              "velocity": 91
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

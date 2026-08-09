@@ -165,6 +165,15 @@ int runSelfTest (const juce::StringArray& args)
         const auto savedPayloadExact = reopenedPluginState == livePluginState;
         const auto soundNameRoundTrip = reopenedSong.getPluginSoundName() == "Self-test Surge state";
         const auto fixtureNotePresent = reopenedSong.findNote ("note-self-test-1").has_value();
+        const auto mixerSettings = reopenedSong.getTrackMixerSettings();
+        const auto midiRouting = reopenedSong.getTrackMidiRouting();
+        const auto trackContractRoundTrip =
+            reopenedSong.getSchemaVersion() == SongProject::currentSchemaVersion
+            && reopenedSong.getTrackId() == "track-1"
+            && reopenedSong.getClipId() == "loop-1"
+            && mixerSettings.gainDecibels == 0.0 && mixerSettings.pan == 0.0
+            && ! mixerSettings.muted && ! mixerSettings.solo
+            && midiRouting.inputChannel == 0 && midiRouting.outputChannel == 1;
         plugin->setStateInformation (reopenedPluginState.getData(),
                                      static_cast<int> (reopenedPluginState.getSize()));
         juce::MemoryBlock recapturedPluginState;
@@ -173,7 +182,15 @@ int runSelfTest (const juce::StringArray& args)
 
         auto* songObject = new juce::DynamicObject();
         juce::var songReport (songObject);
-        songObject->setProperty ("schemaVersion", 1);
+        songObject->setProperty ("schemaVersion", reopenedSong.getSchemaVersion());
+        songObject->setProperty ("trackId", reopenedSong.getTrackId());
+        songObject->setProperty ("clipId", reopenedSong.getClipId());
+        songObject->setProperty ("mixerGainDb", mixerSettings.gainDecibels);
+        songObject->setProperty ("mixerPan", mixerSettings.pan);
+        songObject->setProperty ("mixerMuted", mixerSettings.muted);
+        songObject->setProperty ("mixerSolo", mixerSettings.solo);
+        songObject->setProperty ("midiInputChannel", midiRouting.inputChannel);
+        songObject->setProperty ("midiOutputChannel", midiRouting.outputChannel);
         songObject->setProperty ("fileBytes", songProjectFile.getSize());
         songObject->setProperty ("stateBytes", static_cast<juce::int64> (livePluginState.getSize()));
         songObject->setProperty ("stateSha256", song.getPluginStateSha256());
@@ -210,7 +227,8 @@ int runSelfTest (const juce::StringArray& args)
         reportObject->setProperty ("passed",
                                    parameterCountMatches && stereoOutput
                                        && savedPayloadExact && pluginRestoreExact
-                                       && soundNameRoundTrip && fixtureNotePresent);
+                                       && soundNameRoundTrip && fixtureNotePresent
+                                       && trackContractRoundTrip);
     }
     catch (const std::exception& error)
     {

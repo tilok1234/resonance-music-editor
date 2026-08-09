@@ -26,9 +26,26 @@ struct PluginSoundSnapshot
     juce::String stateSha256;
 };
 
+struct TrackMixerSettings
+{
+    double gainDecibels = 0.0;
+    double pan = 0.0;
+    bool muted = false;
+    bool solo = false;
+};
+
+struct TrackMidiRouting
+{
+    int inputChannel = 0;
+    int outputChannel = 1;
+};
+
 class SongProject final : private juce::ValueTree::Listener
 {
 public:
+    static constexpr int legacySchemaVersion = 1;
+    static constexpr int currentSchemaVersion = 2;
+
     SongProject();
     ~SongProject() override;
 
@@ -45,6 +62,15 @@ public:
     void setSnapBeats (double beats);
     int getSampleRate() const;
     void setSampleRate (int sampleRate);
+
+    int getSchemaVersion() const;
+    juce::String getTrackId() const;
+    juce::String getTrackName() const;
+    juce::String getClipId() const;
+    TrackMixerSettings getTrackMixerSettings() const;
+    juce::Result setTrackMixerSettings (const TrackMixerSettings& settings);
+    TrackMidiRouting getTrackMidiRouting() const;
+    juce::Result setTrackMidiRouting (const TrackMidiRouting& routing);
 
     std::vector<SongNote> getNotes() const;
     std::optional<SongNote> findNote (const juce::String& id) const;

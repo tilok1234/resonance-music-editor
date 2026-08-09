@@ -1,6 +1,6 @@
 # Architecture
 
-Status: current implementation reference for project version 0.3.0
+Status: current implementation reference for project version 0.4.0
 
 ## System at a glance
 
@@ -52,9 +52,10 @@ Solid lines are implemented host-side boundaries. Only the dotted AI translation
 | Application lifecycle | `src/realtime_main.cpp` | arguments, settings, window creation, self-tests, UI snapshot, idle test |
 | Main UI | `src/editor_component.*` | transport, device controls, file choosers, project actions, proposal ownership, native plug-in window |
 | Piano roll | `src/piano_roll.*` | note hit testing, selection, add, move, resize, delete, vertical scroll, proposal overlays |
-| Song model | `src/song_project.*` | ValueTree state, stable note IDs, Undo/Redo, JSON conversion, validation |
+| Song model | `src/song_project.*` | ValueTree state, schema migration, stable track/clip/note IDs, per-track settings, Undo/Redo, JSON conversion, validation |
 | Edit-command core | `src/edit_command.*` | strict version-1 parsing, content-hash preconditions, deterministic bounded transform resolution, candidate projects, note diffs, consume-once Apply/Reject |
 | Scheduling | `src/loop_scheduler.h` | sample-offset MIDI events, note wrap, fixed-capacity sequence contract |
+| Mixer publication contract | `src/mixer_snapshot.h` | fixed eight-lane render values, mute/solo and stereo-balance resolution, callback-safe capacity boundary |
 | Audio engine | `src/realtime_engine.*` | device callback, transport, MIDI merge, VST3 processing, gain, meters, guards |
 | Accepted plug-in load | `src/known_plugin.*` | inventory/quarantine parse, exact bundle revalidation, selected instrument record |
 | Plug-in identity | `src/plugin_identity.h` | relocation-compatible saved-project VST3 UID matching |
@@ -72,10 +73,10 @@ The component may also own one pending `EditCommandPreview`. That preview contai
 The current model contains:
 
 - one title, sample rate, tempo, meter, snap value, and loop length;
-- one instrument track;
+- one instrument track with a stable ID, accepted gain/pan/mute/solo state, and accepted MIDI routing;
 - one VST3 identity and opaque state blob;
 - one accepted sound name paired with that opaque state and SHA-256;
-- one loop clip;
+- one loop clip with a stable ID;
 - up to 512 notes with stable IDs, tick timing, pitch, and velocity.
 
 The plug-in instance belongs to the real-time engine. The native Surge window is a view over that same instance, not a second synth.
@@ -123,6 +124,12 @@ Changes to `RealtimeEngine`, `LoopScheduler`, or the model-to-engine boundary mu
 
 The message thread converts the project notes into a `SequenceSnapshot` with a fixed array of 512 entries. The engine maintains two sequence slots. A writer publishes into a slot that has no readers; the callback takes a non-blocking reader claim on the current slot, schedules it, and releases it. If an immediate publish is unavailable, the latest pending snapshot can be retried without making the callback wait.
 
+### M6 mixer publication contract
+
+`MixerSnapshot` establishes the next bounded publication shape without claiming that the current engine already renders multiple plug-ins. It contains at most eight trivially copyable lanes. Each lane owns one fixed-capacity sequence plus linear gain, pan, mute, solo, enabled state, and MIDI-routing values. Its pure resolver clamps count and pan, treats invalid negative gain as silence, ignores disabled solo flags, and gates non-solo lanes whenever an enabled solo is active.
+
+The future multi-instance runtime must keep mutable topology and plug-in lifetime on the message thread. Prepared plug-in slots and preallocated MIDI/audio scratch storage must become stable before the callback can reference them, and retired topology must outlive every reader. The callback may read and render an immutable published topology but may not create, destroy, resize, or wait for a slot. [ADR-0005](ADR-0005-multitrack-project-and-mixer-ownership.md) owns the full decision.
+
 ### Plug-in state operations
 
 State capture and restore use a separate plug-in-access critical section. The audio callback attempts that lock rather than waiting for it. A concurrent save or restore may therefore produce a silent callback block, but it cannot block the real-time thread indefinitely.
@@ -137,7 +144,7 @@ Opaque state bytes are not assumed to be a semantic sound fingerprint. `Realtime
 
 1. Require a valid accepted sound snapshot already owned by the project.
 2. Update current identity metadata and the supported live sample rate.
-3. Serialize the complete schema version 1 document in memory.
+3. Serialize the complete schema version 2 document in memory.
 4. Write it through JUCE's `replaceWithText` operation.
 5. Mark the project clean after a successful save.
 
@@ -146,11 +153,12 @@ An unapplied B or arbitrary native Surge edit is preview state. Save never repla
 ### Open
 
 1. Parse into a separate candidate `SongProject`.
-2. Validate schema, ranges, identities, note IDs, state encoding, and state hash.
-3. Check that the saved VST3 identifier is compatible with the currently accepted instrument.
-4. Restore the candidate plug-in state into the live instance.
-5. Replace the active project only after every preceding step succeeds.
-6. Publish the new sequence and mark it clean.
+2. Validate schema, ranges, stable identities, note IDs, mixer/MIDI state, state encoding, and state hash.
+3. Materialise a valid version-1 candidate with version-2 in-memory defaults without rewriting its source file.
+4. Check that the saved VST3 identifier is compatible with the currently accepted instrument.
+5. Restore the candidate plug-in state into the live instance.
+6. Replace the active project only after every preceding step succeeds.
+7. Publish the new sequence and mark it clean.
 
 This order prevents a malformed file or failed state restore from partially replacing the active song.
 
@@ -164,10 +172,10 @@ See [VST3 hosting](VST3_HOSTING.md) and [ADR-0002](ADR-0002-crash-isolated-plugi
 
 The current single-track shape is deliberate, but several seams are intended for growth:
 
-- `SongProject` can evolve from one track and clip into track and arrangement collections through an explicit schema migration.
+- schema version 2 gives track and clip identity plus per-track settings a durable model home, while intentionally retaining one production track until the runtime is widened safely;
 - structured edit commands and the proposal card sit above the same note operations, Undo manager, and immutable sequence publisher used by the piano roll;
-- `SequenceSnapshot` can become a per-track render snapshot without exposing the mutable ValueTree to audio code;
-- the engine can grow a graph or mixer while keeping device callback rules intact;
+- `MixerSnapshot` composes fixed-capacity per-track sequences and render values without exposing the mutable ValueTree to audio code;
+- the engine can grow stable prepared plug-in slots behind the eight-lane mixer boundary while keeping device callback rules intact;
 - automation can publish fixed-capacity curves or block-local parameter events;
 - offline rendering can reuse the validated song and plug-in state while remaining separate from the device callback;
 - game-transition metadata can reference arrangement sections after ordinary arrangement editing exists.
@@ -176,4 +184,4 @@ These are extension points, not permission to weaken current invariants. Multi-t
 
 ## Architectural evidence
 
-The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the M5 edit-command foundation, the M5 note-proposal workflow, the first seeded loop-dynamics transform, its explicit controls, and final M5 acceptance. See the [documentation index](README.md) for the full list.
+The durable decisions are recorded in the five ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the accepted M5 command/proposal slices, and the first M6 schema/identity/mixer-ownership foundation. See the [documentation index](README.md) for the full list.

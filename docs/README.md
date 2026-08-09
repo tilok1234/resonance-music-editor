@@ -1,6 +1,6 @@
 # Resonance Music Editor documentation
 
-This index is the entry point for product, architecture, development, and handoff information. Resonance is an early but working Windows-native game-music editor: version 0.3.0 edits one looping MIDI clip, drives one inventory-approved Surge XT VST3 instrument, plays through WASAPI, and preserves an explicitly accepted named plug-in state in a versioned project file. The M4 A/B sound workflow passed packaged interaction, state-lifecycle, and user listening gates and is accepted. M5 is also accepted: its version-1 command core, visual A/B proposal workflow, deterministic seeded velocity transform, and explicit target/strength/seed controls passed automated and packaged user gates. The current sound's subtle velocity response is recorded as a limitation rather than a false claim that B sounded better.
+This index is the entry point for product, architecture, development, and handoff information. Resonance is an early but working Windows-native game-music editor: version 0.4.0 edits one looping MIDI clip, drives one inventory-approved Surge XT VST3 instrument, plays through WASAPI, and preserves an explicitly accepted named plug-in state in a versioned project file. M4's sound A/B workflow and M5's version-1 command/proposal workflow are accepted, with the current sound's subtle velocity response recorded honestly. M6 is in progress: its first technical slice adds song-project schema version 2, lossless version-1 migration, stable track/clip identity, persisted mixer/MIDI settings, and a fixed eight-lane mixer ownership contract. The production engine still renders one instrument.
 
 ## Read this first
 
@@ -54,6 +54,7 @@ For example, a dated checkpoint can contain a path-derived JUCE identifier recor
 - [ADR-0002: Scan untrusted plug-ins outside the editor process](ADR-0002-crash-isolated-plugin-scanning.md)
 - [ADR-0003: Start with one explicit WASAPI instrument path](ADR-0003-realtime-audio-engine.md)
 - [ADR-0004: Use host-owned opaque snapshots for the first sound workflow](ADR-0004-host-owned-sound-snapshots.md)
+- [ADR-0005: Migrate projects before publishing a fixed-capacity mixer](ADR-0005-multitrack-project-and-mixer-ownership.md)
 
 An ADR records a durable decision and its consequences. Add a new ADR when a change alters a system boundary, persistence contract, plug-in safety policy, real-time rule, licensing assumption, or public extension point.
 
@@ -72,6 +73,7 @@ An ADR records a durable decision and its consequences. Add a new ADR when a cha
 - [M5 seeded loop-dynamics transform](M5_SEEDED_LOOP_DYNAMICS_CHECKPOINT_2026-08-09.md)
 - [M5 parameterized dynamics controls](M5_DYNAMICS_CONTROLS_CHECKPOINT_2026-08-09.md)
 - [Accepted M5 unified edit-command layer](M5_ACCEPTANCE_2026-08-09.md)
+- [M6 schema, identity, and mixer-ownership foundation](M6_MULTITRACK_FOUNDATION_CHECKPOINT_2026-08-09.md)
 
 The acceptance files distinguish implementation proof from musical approval. A passing scheduler, schema, or audio-device test does not mean that a preset, loop, mix, or composition has passed a listening review.
 

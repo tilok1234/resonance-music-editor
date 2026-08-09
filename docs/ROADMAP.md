@@ -18,7 +18,7 @@ The focus is game music. General sound-effect creation is not part of this roadm
 | F3 Editable single-track song | Complete | piano roll, Undo/Redo, exact state, and `.resonance.json` save/open |
 | M4 Sound and preset workflow | Complete | Accepted as version 0.3.0 after A/B, persistence, lifecycle, and listening gates passed |
 | M5 Unified edit-command layer | Complete | explicitly accepted after packaged command, A/B, deterministic controls, listening, Apply/Undo, and cleanup gates |
-| M6 Multi-track and mixer | Planned | several instruments play through a safe mixer and schema migration |
+| M6 Multi-track and mixer | In progress | schema-v2 migration, stable identities, and fixed-capacity mixer ownership are proven; multiple runtime instances remain |
 | M7 Arrangement, automation, and effects | Planned | full sections, curves, buses, and dependable song structure |
 | M8 AI music assistant | Planned | natural-language requests resolve to bounded command proposals |
 | M9 Game-music authoring and export | Planned | variants, transitions, loops, stems, renders, and engine-facing metadata |
@@ -110,6 +110,8 @@ Manual UI actions do not all need to serialize as external JSON immediately, but
 
 ## M6: Multi-track and mixer
 
+Status: in progress. The first contract-first slice was implemented and technically verified on 2026-08-09 as editor 0.4.0.
+
 ### Goal
 
 Move from one instrument loop to a small, reliable ensemble without breaking real-time behavior.
@@ -126,6 +128,21 @@ Move from one instrument loop to a small, reliable ensemble without breaking rea
 - CPU, clipping, shutdown, and state round-trip tests.
 
 Effects can begin with a limited bus or slot design, but should not be allowed to obscure the core multi-instrument acceptance gate.
+
+### Slice 1 delivered
+
+- schema version 2 stores authoritative track/clip IDs plus bounded gain, pan, mute, solo, and MIDI routing;
+- the loader accepts version 1 and 2, migrates version 1 in memory with neutral settings, preserves exact plug-in bytes and non-default IDs, and leaves the source file untouched;
+- version 2 remains honest at exactly one production track until multi-instance rendering is proven;
+- edit-command producers and validation use the active project's IDs rather than hard-coded defaults;
+- `MixerSnapshot` defines eight fixed, trivially copyable lanes and native-tested capacity, gain, balance, mute, and solo semantics;
+- Release verification passed 92 engine/mixer assertions, 162 project/migration/command assertions, the full M4/M5 regressions, and 14 schema validations.
+
+See [ADR-0005](ADR-0005-multitrack-project-and-mixer-ownership.md) and the [M6 foundation checkpoint](M6_MULTITRACK_FOUNDATION_CHECKPOINT_2026-08-09.md).
+
+### Next slice
+
+Build the first two-instrument runtime using stable message-thread-owned plug-in slots and preallocated callback scratch storage. Prove two-track scheduling, audible gain/pan/mute/solo, meters, CPU/clipping bounds, shutdown, missing-plug-in preservation, and complete state round trips before widening the production schema or adding broad mixer UI.
 
 ## M7: Arrangement, automation, and effects
 

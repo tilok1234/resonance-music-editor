@@ -374,6 +374,8 @@ juce::Result resolveSeededVelocityVariation (const SongProject& activeProject,
 
     EditCommand command;
     command.projectContentSha256 = activeProject.getContentSha256();
+    command.trackId = activeProject.getTrackId();
+    command.clipId = activeProject.getClipId();
     command.summary = "Vary " + juce::String (static_cast<int> (noteIds.size()))
                       + (noteIds.size() == 1 ? " note velocity by up to "
                                              : " note velocities by up to ")
@@ -416,7 +418,8 @@ juce::Result createEditCommandPreview (const EditCommand& command,
         return juce::Result::fail ("The edit command content-hash precondition is invalid");
     if (command.operation != "editNotes")
         return juce::Result::fail ("Only the editNotes operation is supported");
-    if (command.trackId != "track-1" || command.clipId != "loop-1")
+    if (command.trackId != activeProject.getTrackId()
+        || command.clipId != activeProject.getClipId())
         return juce::Result::fail ("The edit command targets an unknown track or clip");
     if (command.summary.trim().isEmpty() || command.summary.length() > 160)
         return juce::Result::fail ("The edit command summary is invalid");

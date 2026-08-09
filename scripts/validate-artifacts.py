@@ -20,6 +20,15 @@ VALIDATION_GROUPS = (
         PROJECT_ROOT / "schema" / "song-project.schema.json",
         (
             PROJECT_ROOT / "artifacts" / "realtime-song-project.resonance.json",
+        ),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "song-project-v1.schema.json",
+        (
+            PROJECT_ROOT
+            / "tests"
+            / "fixtures"
+            / "song-project-v1-migration.resonance.json",
             PROJECT_ROOT / "artifacts" / "ui-save-open-roundtrip.resonance.json",
         ),
     ),

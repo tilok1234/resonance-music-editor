@@ -73,10 +73,16 @@ The optional `--state-project <song.resonance.json>` probe input restores an exa
 
 | Suite | Current passed assertions |
 | --- | ---: |
-| Real-time loop scheduler | 83 |
-| Song project, round trip, and edit commands | 122 |
+| Real-time loop scheduler and mixer contract | 92 |
+| Song project, migration, round trip, and edit commands | 162 |
 
-The tests cover timing boundaries, the real 44.1 kHz / 441-sample exact-block case, loop wrap, note-off behavior, event balance, project defaults, edit constraints, stable IDs, note and sound Undo/Redo, named opaque sound integrity, backward-compatible `soundName` loading, JSON round trips, malformed data, state hashes, and relocation-compatible VST3 identity. The M5 cases additionally prove strict versioned command parsing and round trip, deterministic seed preservation, exact content-hash preconditions, non-mutating candidates, concrete note diffs, consume-once Apply/Reject, one-Undo Apply, stale preview and stale Apply rejection, unknown targets, invalid bounds, and duplicate-target rejection against the portable command fixture. The seeded velocity cases prove canonical target ordering, same-input command and candidate identity, changed-seed divergence, velocity-only deltas of 1 through the declared maximum, one-Undo restoration, and fail-closed seed, bound, duplicate, empty, and missing-target validation.
+The tests cover timing boundaries, the real 44.1 kHz / 441-sample exact-block case, loop wrap, note-off behavior, event balance, project defaults, edit constraints, stable IDs, note and sound Undo/Redo, named opaque sound integrity, backward-compatible `soundName` loading, JSON round trips, malformed data, state hashes, and relocation-compatible VST3 identity. M6 cases additionally prove lossless version-1-to-version-2 migration, source-file immutability, non-default track/clip ID preservation, neutral mixer/MIDI defaults, bounded non-default round trips, strict future/missing/out-of-range rejection, and command targeting against migrated IDs. Mixer-contract cases prove the eight-lane capacity, trivially copyable snapshot, stereo balance, gain, mute, solo, disabled-lane, negative-gain, and out-of-capacity semantics. The M5 and seeded velocity cases continue to prove their full command, candidate, deterministic resolver, Apply/Reject, stale, and one-Undo contracts.
+
+### M6 migration and mixer-contract gate
+
+`scripts/test-realtime.ps1` passes `tests/fixtures/song-project-v1-migration.resonance.json` to `SongProjectTests.exe`. The fixture uses `track-migrated` and `clip-migrated`, preventing hard-coded starter identities from satisfying the test. The report must declare song schema 2, legacy schema 1, `legacyMigrationPassed: true`, both stable IDs, and the exact source SHA-256. `RealtimeEngineTests.exe` must report capacity 8 and `mixerContractPassed: true`.
+
+The portable version-1 fixture and historical version-1 UI round-trip artifact validate against `schema/song-project-v1.schema.json`. The current real-Surge project validates against canonical `schema/song-project.schema.json`. This gate proves the data and ownership boundaries only; the production callback still renders one instrument.
 
 ### M5 edit-command core gate
 
@@ -90,6 +96,7 @@ The same script launches `bin\ResonanceMusicEditor.exe --self-test`. It must:
 - load the accepted current Surge record without scanning;
 - match the current plug-in identity and 2,855-parameter inventory count;
 - preserve exact state and song-project payloads through save/open;
+- write and reopen song-project schema version 2 with stable track/clip IDs and neutral mixer/MIDI defaults;
 - preserve the host-owned sound name with the exact real Surge state;
 - report `passed: true`;
 - report `noRescanPerformed: true`;
@@ -126,7 +133,7 @@ This hidden mode keeps transport stopped. It first creates a selected-note `+1` 
 
 ### Artifact-schema gate
 
-`scripts/validate-artifacts.py` validates the current JSON reports, project fixtures, and edit-command fixture against the schemas under `schema/`. The current full sequence validates 13 artifacts and fixtures.
+`scripts/validate-artifacts.py` validates the current JSON reports, versioned project fixtures, historical version-1 project artifact, and edit-command fixture against the schemas under `schema/`. The current full sequence validates 14 artifacts and fixtures.
 
 Machine-specific reports are ignored by Git. Schemas and portable `.resonance.json` fixtures are versioned.
 

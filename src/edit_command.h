@@ -30,8 +30,8 @@ struct EditCommand
     int commandVersion = supportedVersion;
     juce::String projectContentSha256;
     juce::String operation { "editNotes" };
-    juce::String trackId { "track-1" };
-    juce::String clipId { "loop-1" };
+    juce::String trackId;
+    juce::String clipId;
     juce::String summary;
     std::optional<std::int64_t> seed;
     std::vector<NoteEditChange> changes;
