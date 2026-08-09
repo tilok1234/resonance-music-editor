@@ -16,6 +16,7 @@ CMakeUserPresets.json
 # Machine-specific test output; project fixtures and visual evidence stay versioned
 artifacts/*.json
 !artifacts/*.resonance.json
+!artifacts/m6-runtime-test-report.json
 artifacts/*.wav
 
 # Operating-system metadata

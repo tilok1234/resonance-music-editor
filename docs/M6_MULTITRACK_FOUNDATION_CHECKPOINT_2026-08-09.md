@@ -8,7 +8,7 @@ Status: implemented and technically verified; M6 remains in progress
 
 The first M6 slice establishes the persistence, identity, and realtime ownership contracts needed before a second instrument is introduced. Editor version 0.4.0 writes song-project schema version 2, reads both versions 1 and 2, preserves non-default legacy track and clip IDs, and adds bounded per-track mixer and MIDI-routing state. A fixed-capacity eight-lane mixer snapshot and its mute, solo, gain, pan, and capacity semantics are native-tested.
 
-The production editor still loads and renders exactly one Surge XT instance. This checkpoint does not claim that multiple tracks, live per-track mixing, mixer controls, meters, missing-plug-in recovery, or track topology Undo/Redo are implemented.
+At this first checkpoint, the production editor still loaded and rendered exactly one Surge XT instance. This checkpoint did not claim that multiple tracks, live per-track mixing, mixer controls, meters, missing-plug-in recovery, or track topology Undo/Redo were implemented. The later [M6 two-track runtime checkpoint](M6_TWO_TRACK_RUNTIME_CHECKPOINT_2026-08-09.md) completes the bounded engine proof while retaining the one-track schema and UI.
 
 ## Persistence and migration evidence
 
@@ -55,4 +55,4 @@ No audible production path changed in this slice, and no new listening approval 
 
 ## Next gate
 
-Implement the first two-instrument runtime path behind the fixed-capacity ownership boundary. Keep schema version 2 at one production track until the second instance, state preservation, render/mix behavior, shutdown, CPU, clipping, and missing-plug-in failure paths are proven together.
+This historical gate was completed by the [M6 two-track runtime checkpoint](M6_TWO_TRACK_RUNTIME_CHECKPOINT_2026-08-09.md): the second instance, state isolation, render/mix behavior, shutdown, CPU, clipping, and missing-plug-in paths now pass together while schema version 2 remains one production track.

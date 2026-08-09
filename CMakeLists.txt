@@ -161,6 +161,8 @@ juce_generate_juce_header(RealtimeEngineTests)
 target_sources(RealtimeEngineTests PRIVATE
     src/loop_scheduler.h
     src/mixer_snapshot.h
+    src/realtime_engine.cpp
+    src/realtime_engine.h
     tests/realtime_engine_tests.cpp)
 
 target_compile_definitions(RealtimeEngineTests PRIVATE
@@ -170,6 +172,8 @@ target_compile_definitions(RealtimeEngineTests PRIVATE
 
 target_link_libraries(RealtimeEngineTests PRIVATE
     juce::juce_audio_basics
+    juce::juce_audio_devices
+    juce::juce_audio_processors_headless
     juce::juce_core
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)

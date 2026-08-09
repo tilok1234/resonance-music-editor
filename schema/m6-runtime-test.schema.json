@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resonance.local/schema/m6-runtime-test.schema.json",
+  "title": "Resonance M6 two-track runtime test report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "editorVersion",
+    "juceVersion",
+    "testedAt",
+    "inventoryPath",
+    "quarantinePath",
+    "alternateProjectPath",
+    "noRescanPerformed",
+    "audioEmitted",
+    "runtimeCapacity",
+    "device",
+    "plugin",
+    "runtime",
+    "passed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "editorVersion": { "type": "string", "minLength": 1 },
+    "juceVersion": { "type": "string", "minLength": 1 },
+    "testedAt": { "type": "string", "format": "date-time" },
+    "inventoryPath": { "type": "string", "minLength": 1, "pattern": "^[^/\\\\]+$" },
+    "quarantinePath": { "type": "string", "minLength": 1, "pattern": "^[^/\\\\]+$" },
+    "alternateProjectPath": { "type": "string", "minLength": 1, "pattern": "^[^/\\\\]+$" },
+    "noRescanPerformed": { "const": true },
+    "audioEmitted": { "const": false },
+    "runtimeCapacity": { "const": 8 },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "name", "sampleRate", "blockSize"],
+      "properties": {
+        "type": { "type": "string", "pattern": "Windows Audio" },
+        "name": { "type": "string", "minLength": 1 },
+        "sampleRate": { "type": "number", "exclusiveMinimum": 0 },
+        "blockSize": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "plugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identifier",
+        "name",
+        "version",
+        "expectedParameterCount",
+        "firstParameterCount",
+        "secondParameterCount",
+        "distinctInstances",
+        "firstStateBytes",
+        "secondStateBytes",
+        "alternateStateBytes",
+        "alternateStateSha256",
+        "normalisedAlternateStateSha256",
+        "alternateStateApplied",
+        "alternateStatePreservedExact",
+        "independentStateMutation",
+        "completeStateRoundTrip"
+      ],
+      "properties": {
+        "identifier": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "expectedParameterCount": { "type": "integer", "minimum": 1 },
+        "firstParameterCount": { "type": "integer", "minimum": 1 },
+        "secondParameterCount": { "type": "integer", "minimum": 1 },
+        "distinctInstances": { "const": true },
+        "firstStateBytes": { "type": "integer", "minimum": 1 },
+        "secondStateBytes": { "type": "integer", "minimum": 1 },
+        "alternateStateBytes": { "type": "integer", "minimum": 1 },
+        "alternateStateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "normalisedAlternateStateSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "alternateStateApplied": { "const": true },
+        "alternateStatePreservedExact": { "type": "boolean" },
+        "independentStateMutation": { "const": true },
+        "completeStateRoundTrip": { "const": true }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "installedInstances",
+        "renderedBlocks",
+        "stateSettleBlocks",
+        "bothTracksProcessed",
+        "maximumOutputPeak",
+        "maximumTrackOnePeak",
+        "maximumTrackTwoPeak",
+        "averageCallbackLoad",
+        "maximumCallbackLoad",
+        "invalidSamples",
+        "clippedSamples",
+        "processorExceptions",
+        "missingPluginPreserved",
+        "shutdownComplete"
+      ],
+      "properties": {
+        "installedInstances": { "const": 2 },
+        "renderedBlocks": { "type": "integer", "minimum": 32 },
+        "stateSettleBlocks": { "type": "integer", "minimum": 4 },
+        "bothTracksProcessed": { "const": true },
+        "maximumOutputPeak": { "type": "number", "exclusiveMinimum": 0 },
+        "maximumTrackOnePeak": { "type": "number", "exclusiveMinimum": 0 },
+        "maximumTrackTwoPeak": { "type": "number", "exclusiveMinimum": 0 },
+        "averageCallbackLoad": { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        "maximumCallbackLoad": { "type": "number", "minimum": 0 },
+        "invalidSamples": { "const": 0 },
+        "clippedSamples": { "const": 0 },
+        "processorExceptions": { "const": 0 },
+        "missingPluginPreserved": { "const": true },
+        "shutdownComplete": { "const": true }
+      }
+    },
+    "passed": { "const": true }
+  }
+}

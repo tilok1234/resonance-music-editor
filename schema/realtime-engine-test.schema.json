@@ -13,6 +13,8 @@
     "noteCount",
     "maxMixerTracks",
     "mixerContractPassed",
+    "twoTrackRuntimePassed",
+    "twoTrackAverageCallbackLoad",
     "passed"
   ],
   "properties": {
@@ -24,6 +26,12 @@
     "noteCount": { "type": "integer", "minimum": 1 },
     "maxMixerTracks": { "const": 8 },
     "mixerContractPassed": { "const": true },
+    "twoTrackRuntimePassed": { "const": true },
+    "twoTrackAverageCallbackLoad": {
+      "type": "number",
+      "minimum": 0,
+      "exclusiveMaximum": 0.25
+    },
     "passed": { "const": true }
   }
 }

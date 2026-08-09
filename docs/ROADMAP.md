@@ -18,7 +18,7 @@ The focus is game music. General sound-effect creation is not part of this roadm
 | F3 Editable single-track song | Complete | piano roll, Undo/Redo, exact state, and `.resonance.json` save/open |
 | M4 Sound and preset workflow | Complete | Accepted as version 0.3.0 after A/B, persistence, lifecycle, and listening gates passed |
 | M5 Unified edit-command layer | Complete | explicitly accepted after packaged command, A/B, deterministic controls, listening, Apply/Undo, and cleanup gates |
-| M6 Multi-track and mixer | In progress | schema-v2 migration, stable identities, and fixed-capacity mixer ownership are proven; multiple runtime instances remain |
+| M6 Multi-track and mixer | In progress | schema-v2 migration and the fixed eight-slot/two-real-instance runtime are proven; visible persisted multi-track authoring remains |
 | M7 Arrangement, automation, and effects | Planned | full sections, curves, buses, and dependable song structure |
 | M8 AI music assistant | Planned | natural-language requests resolve to bounded command proposals |
 | M9 Game-music authoring and export | Planned | variants, transitions, loops, stems, renders, and engine-facing metadata |
@@ -110,7 +110,7 @@ Manual UI actions do not all need to serialize as external JSON immediately, but
 
 ## M6: Multi-track and mixer
 
-Status: in progress. The first contract-first slice was implemented and technically verified on 2026-08-09 as editor 0.4.0.
+Status: in progress. The schema/identity foundation and the first two-instance runtime slice were implemented and technically verified on 2026-08-09 as editor 0.4.0.
 
 ### Goal
 
@@ -140,9 +140,20 @@ Effects can begin with a limited bus or slot design, but should not be allowed t
 
 See [ADR-0005](ADR-0005-multitrack-project-and-mixer-ownership.md) and the [M6 foundation checkpoint](M6_MULTITRACK_FOUNDATION_CHECKPOINT_2026-08-09.md).
 
+### Slice 2 delivered
+
+- `RealtimeEngine` owns eight stable message-thread-created slots with preallocated audio/MIDI scratch, indexed state access, and fail-closed prepared topology;
+- a double-buffered immutable `MixerSnapshot` publishes separate sequences, MIDI output channels, gain, pan, mute, and solo against one shared playhead;
+- the callback renders and sums slots without resizing, publishes bounded per-track/master meters, and counts invalid samples, clips, processor exceptions, and callback load;
+- deterministic fake-plug-in cases prove separate scheduling, exact summing and mix controls, meters, safety fallback, oversize handling, missing-slot preservation, state isolation, and shutdown;
+- the packaged hidden gate loads two distinct accepted Surge XT instances, renders 100 in-memory blocks plus eight state-settle blocks, applies the accepted M4 B only to slot two, restores both current baseline states, and emits no device audio;
+- Release verification passes 124 engine/runtime assertions, 162 project/migration/command assertions, the full packaged M4/M5 regressions, and 16 schema validations.
+
+The production schema and UI remain exactly one track, and the silent runtime gate is not a listening approval. See the [M6 two-track runtime checkpoint](M6_TWO_TRACK_RUNTIME_CHECKPOINT_2026-08-09.md).
+
 ### Next slice
 
-Build the first two-instrument runtime using stable message-thread-owned plug-in slots and preallocated callback scratch storage. Prove two-track scheduling, audible gain/pan/mute/solo, meters, CPU/clipping bounds, shutdown, missing-plug-in preservation, and complete state round trips before widening the production schema or adding broad mixer UI.
+Define the next bounded song-schema revision and migrate version 2 without source rewrite, then expose a minimal second instrument track using the proven slots. Add track selection, gain/pan/mute/solo, meters, add/remove/reorder Undo, and user-facing missing-plug-in recovery. Prove Save/Open and identity/state preservation, then run an explicit two-track listening pass before calling M6 complete.
 
 ## M7: Arrangement, automation, and effects
 

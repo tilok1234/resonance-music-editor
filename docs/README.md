@@ -1,6 +1,6 @@
 # Resonance Music Editor documentation
 
-This index is the entry point for product, architecture, development, and handoff information. Resonance is an early but working Windows-native game-music editor: version 0.4.0 edits one looping MIDI clip, drives one inventory-approved Surge XT VST3 instrument, plays through WASAPI, and preserves an explicitly accepted named plug-in state in a versioned project file. M4's sound A/B workflow and M5's version-1 command/proposal workflow are accepted, with the current sound's subtle velocity response recorded honestly. M6 is in progress: its first technical slice adds song-project schema version 2, lossless version-1 migration, stable track/clip identity, persisted mixer/MIDI settings, and a fixed eight-lane mixer ownership contract. The production engine still renders one instrument.
+This index is the entry point for product, architecture, development, and handoff information. Resonance is an early but working Windows-native game-music editor: version 0.4.0 edits one visible looping MIDI clip, plays through WASAPI, and preserves an explicitly accepted named Surge XT state in a versioned project file. M4's sound A/B workflow and M5's version-1 command/proposal workflow are accepted, with the current sound's subtle velocity response recorded honestly. M6 is in progress: schema version 2, lossless version-1 migration, stable identity, and persisted mixer/MIDI state are proven; the production engine now has eight stable slots and a silent Release gate renders two distinct real Surge instances through the fixed mixer. The project schema and UI still expose exactly one track, and the two-track runtime has no listening approval yet.
 
 ## Read this first
 
@@ -74,6 +74,7 @@ An ADR records a durable decision and its consequences. Add a new ADR when a cha
 - [M5 parameterized dynamics controls](M5_DYNAMICS_CONTROLS_CHECKPOINT_2026-08-09.md)
 - [Accepted M5 unified edit-command layer](M5_ACCEPTANCE_2026-08-09.md)
 - [M6 schema, identity, and mixer-ownership foundation](M6_MULTITRACK_FOUNDATION_CHECKPOINT_2026-08-09.md)
+- [M6 two-track runtime](M6_TWO_TRACK_RUNTIME_CHECKPOINT_2026-08-09.md)
 
 The acceptance files distinguish implementation proof from musical approval. A passing scheduler, schema, or audio-device test does not mean that a preset, loop, mix, or composition has passed a listening review.
 

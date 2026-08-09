@@ -11,11 +11,14 @@ $quarantine = Join-Path $artifacts "plugin-quarantine.json"
 $engineReport = Join-Path $artifacts "realtime-engine-test-report.json"
 $projectReport = Join-Path $artifacts "song-project-test-report.json"
 $selfTestReport = Join-Path $artifacts "realtime-self-test.json"
+$m6RuntimeReport = Join-Path $artifacts "m6-runtime-test-report.json"
 $m5WorkflowReport = Join-Path $artifacts "m5-workflow-test-report.json"
 $songProjectArtifact = Join-Path $artifacts "realtime-song-project.resonance.json"
 $uiSnapshot = Join-Path $artifacts "realtime-ui-snapshot.png"
 $editCommandFixture = Join-Path $projectRoot "tests\fixtures\edit-command-note-patch-v1.json"
 $legacyProjectFixture = Join-Path $projectRoot "tests\fixtures\song-project-v1-migration.resonance.json"
+$m4AcceptedFixture = Join-Path $artifacts "m4-accepted-candidate-b.resonance.json"
+$expectedM4AcceptedFixtureSha256 = "B0265238EF823D660B198C6730066CAACE09E001EAE3B3D3410521938FE74172"
 
 function Find-BuiltBinary([string]$Name) {
     $binary = Get-ChildItem -LiteralPath $buildDir -Recurse -Filter $Name |
@@ -38,7 +41,13 @@ if (-not (Test-Path -LiteralPath $editor)) {
 }
 
 New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
-Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m5WorkflowReport,$songProjectArtifact,$uiSnapshot -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m5WorkflowReport,$songProjectArtifact,$uiSnapshot -Force -ErrorAction SilentlyContinue
+
+if (-not (Test-Path -LiteralPath $m4AcceptedFixture) -or
+    (Get-FileHash -Algorithm SHA256 -LiteralPath $m4AcceptedFixture).Hash -ne
+        $expectedM4AcceptedFixtureSha256) {
+    throw "The exact accepted M4 candidate-B fixture is missing or changed"
+}
 
 & $engineTests --report $engineReport
 if ($LASTEXITCODE -ne 0) {
@@ -46,8 +55,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $engineResult = Get-Content -LiteralPath $engineReport -Raw | ConvertFrom-Json
-if (-not $engineResult.passed -or $engineResult.assertions -lt 19 -or
-    $engineResult.maxMixerTracks -ne 8 -or -not $engineResult.mixerContractPassed) {
+if (-not $engineResult.passed -or $engineResult.assertions -lt 124 -or
+    $engineResult.maxMixerTracks -ne 8 -or -not $engineResult.mixerContractPassed -or
+    -not $engineResult.twoTrackRuntimePassed -or
+    $engineResult.twoTrackAverageCallbackLoad -ge 0.25) {
     throw "Realtime scheduler report did not pass its assertion gate"
 }
 
@@ -133,6 +144,54 @@ if ($result.songProject.noteCount -ne 9 -or $result.songProject.loopLengthBeats 
 
 if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     throw "The hidden self-test left an editor process running"
+}
+
+$m6RuntimeTest = Start-Process -FilePath $editor -ArgumentList "--m6-runtime-test","--report",$m6RuntimeReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($m6RuntimeTest.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $m6RuntimeReport) {
+        Get-Content -LiteralPath $m6RuntimeReport
+    }
+    throw "M6 two-track runtime test failed with exit code $($m6RuntimeTest.ExitCode)"
+}
+
+$m6Result = Get-Content -LiteralPath $m6RuntimeReport -Raw | ConvertFrom-Json
+if (-not $m6Result.passed -or $m6Result.runtimeCapacity -ne 8 -or
+    $m6Result.audioEmitted -or -not $m6Result.noRescanPerformed) {
+    throw "The M6 runtime violated its fixed-capacity, silent, or no-rescan contract"
+}
+
+if ($m6Result.device.type -notmatch "Windows Audio" -or
+    -not $m6Result.plugin.distinctInstances -or
+    $m6Result.plugin.firstParameterCount -ne 2855 -or
+    $m6Result.plugin.secondParameterCount -ne 2855 -or
+    $m6Result.plugin.alternateStateSha256 -ne
+        "ccaf99d4dc86d0b272e6ff1cc3be8afd07349bbcfe5055d992a001bea74da308" -or
+    $m6Result.plugin.normalisedAlternateStateSha256 -ne
+        "91ed214e64b35e95cf20ca773ccf57f650bbeecb547d1aa5f0ba8a2f2f5c36a3" -or
+    $m6Result.plugin.alternateStatePreservedExact -or
+    -not $m6Result.plugin.alternateStateApplied -or
+    -not $m6Result.plugin.independentStateMutation -or
+    -not $m6Result.plugin.completeStateRoundTrip) {
+    throw "The M6 gate did not prove two independent accepted Surge instances and exact state"
+}
+
+if ($m6Result.runtime.installedInstances -ne 2 -or
+    -not $m6Result.runtime.bothTracksProcessed -or
+    $m6Result.runtime.maximumOutputPeak -le 0 -or
+    $m6Result.runtime.maximumTrackOnePeak -le 0 -or
+    $m6Result.runtime.maximumTrackTwoPeak -le 0 -or
+    $m6Result.runtime.averageCallbackLoad -ge 1 -or
+    $m6Result.runtime.invalidSamples -ne 0 -or
+    $m6Result.runtime.clippedSamples -ne 0 -or
+    $m6Result.runtime.processorExceptions -ne 0 -or
+    -not $m6Result.runtime.missingPluginPreserved -or
+    -not $m6Result.runtime.shutdownComplete) {
+    throw "The M6 two-track render, safety, missing-slot, or shutdown gate failed"
+}
+
+if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
+    throw "The M6 runtime test left an editor process running"
 }
 
 $m5WorkflowTest = Start-Process -FilePath $editor -ArgumentList "--m5-workflow-test","--report",$m5WorkflowReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
@@ -259,6 +318,8 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     SchedulerAssertions = $engineResult.assertions
     MaxMixerTracks = $engineResult.maxMixerTracks
     MixerContractPassed = $engineResult.mixerContractPassed
+    TwoTrackRuntimePassed = $engineResult.twoTrackRuntimePassed
+    TwoTrackSyntheticAverageCallbackLoad = $engineResult.twoTrackAverageCallbackLoad
     ProjectAssertions = $projectResult.assertions
     ProjectSchemaVersion = $projectResult.projectSchemaVersion
     LegacySchemaVersion = $projectResult.legacySchemaVersion
@@ -301,6 +362,15 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     PluginIdentifier = $result.plugin.identifier
     PluginVersion = $result.plugin.version
     PluginParameters = $result.plugin.parameterCount
+    M6RuntimeInstances = $m6Result.runtime.installedInstances
+    M6RuntimeBlocks = $m6Result.runtime.renderedBlocks
+    M6RuntimeAverageCallbackLoad = $m6Result.runtime.averageCallbackLoad
+    M6RuntimeMaximumCallbackLoad = $m6Result.runtime.maximumCallbackLoad
+    M6RuntimeOutputPeak = $m6Result.runtime.maximumOutputPeak
+    M6RuntimeTrackOnePeak = $m6Result.runtime.maximumTrackOnePeak
+    M6RuntimeTrackTwoPeak = $m6Result.runtime.maximumTrackTwoPeak
+    M6RuntimeStateRoundTrip = $m6Result.plugin.completeStateRoundTrip
+    M6RuntimeMissingPluginPreserved = $m6Result.runtime.missingPluginPreserved
     NoRescanPerformed = $result.noRescanPerformed
     AudioEmitted = $result.audioEmitted
     UiSnapshotBytes = $snapshotBytes

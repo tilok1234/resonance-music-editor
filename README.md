@@ -2,7 +2,7 @@
 
 Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. The project now has its first editable song, sound-design, and reversible note-proposal slices: a native Windows editor with real-time WASAPI output, a piano roll, lossless song projects, one inventory-approved Surge XT instrument track, host-owned A/B sound, and an editor-owned A/B note preview.
 
-The current scope is deliberately one instrument track and one looping clip. Editor 0.4.0 writes song-project schema version 2, migrates version-1 songs without rewriting their source, and persists stable track/clip identity plus bounded mixer and MIDI-routing settings. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. A version-1 edit command builds a validated non-mutating note candidate; command versioning is independent of the song schema. The fixed eight-lane mixer publication contract is proven, but the production engine still renders one instrument. Multiple runtime tracks, broader transform families, and natural-language model integration remain later work alongside factory-preset indexing, arrangement, automation, and game-state music tools.
+The current authoring surface deliberately remains one visible instrument track and one looping clip. Editor 0.4.0 writes song-project schema version 2, migrates version-1 songs without rewriting their source, and persists stable track/clip identity plus bounded mixer and MIDI-routing settings. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. A version-1 edit command builds a validated non-mutating note candidate; command versioning is independent of the song schema. Underneath that one-track UI, the production engine now owns eight stable render slots and its silent Release gate loads, schedules, mixes, meters, state-tests, and shuts down two distinct Surge XT instances. Persisted multi-track authoring, broader transform families, and natural-language model integration remain later work alongside factory-preset indexing, arrangement, automation, and game-state music tools.
 
 ![First playable Resonance Music Editor UI](artifacts/realtime-ui-snapshot.png)
 
@@ -68,6 +68,19 @@ Save writes only the accepted project sound. An unapplied B remains preview stat
 
 ## Proven checkpoints
 
+### M6 two-track runtime
+
+The second M6 slice was technically verified on 2026-08-09 without widening the one-track song schema or UI:
+
+- replaced the one-instance engine shape with eight stable message-thread-owned runtime slots, each with preallocated audio/MIDI scratch and indexed state access;
+- replaced sequence-only publication with a double-buffered immutable `MixerSnapshot`; the existing A/B sequence API remains a track-zero compatibility path;
+- added separate per-track scheduling and MIDI output channels, gain, stereo balance, mute, solo, meters, master accumulation, and bounded invalid/clipped/exception diagnostics;
+- passed 124 deterministic engine/runtime assertions, 162 project/migration/command assertions, every packaged M4/M5 regression, and 16 artifact-schema validations;
+- loaded two distinct accepted Surge XT 1.3.4 instances with 2,855 parameters each, rendered 100 in-memory blocks plus eight state-settle blocks at 44.1 kHz / 441 samples, processed both tracks, and recorded zero invalid samples, clips, or processor exceptions;
+- averaged 0.791% of the callback budget in the recorded real-Surge run, with clean missing-slot preservation and shutdown.
+
+The accepted M4 B fixture keeps its exact stored state hash `ccaf99d4...`; Surge normalises that state to the previously accepted live-equivalent `91ed214e...` after processing. The gate records that distinction, proves independent slot-two mutation, then restores both current live baseline states exactly. It never attaches the engine to the device callback (`audioEmitted: false`), so this is technical runtime evidence, not listening approval or a claim that visible multi-track authoring is complete. See `docs/M6_TWO_TRACK_RUNTIME_CHECKPOINT_2026-08-09.md`.
+
 ### M6 schema, identity, and mixer-ownership foundation
 
 The first M6 slice was technically verified on 2026-08-09 as editor 0.4.0:
@@ -80,7 +93,7 @@ The first M6 slice was technically verified on 2026-08-09 as editor 0.4.0:
 - added a trivially copyable, fixed-capacity eight-lane mixer snapshot with tested gain, stereo balance, mute, solo, disabled-lane, and capacity semantics;
 - passed 92 engine/mixer assertions, 162 project/migration/command assertions, every packaged M4/M5 regression, and 14 artifact-schema validations.
 
-This is a technical foundation rather than completed multi-track playback: the production editor still hosts one Surge instance, and no new listening approval was required. See `docs/ADR-0005-multitrack-project-and-mixer-ownership.md` and `docs/M6_MULTITRACK_FOUNDATION_CHECKPOINT_2026-08-09.md`.
+At that checkpoint this was a technical foundation rather than completed multi-instance playback. The later runtime slice above implements the bounded engine path while the visible project remains one track. See `docs/ADR-0005-multitrack-project-and-mixer-ownership.md` and `docs/M6_MULTITRACK_FOUNDATION_CHECKPOINT_2026-08-09.md`.
 
 ### M5 edit-command and note-proposal workflow
 
@@ -204,7 +217,7 @@ From PowerShell:
 python .\scripts\validate-artifacts.py
 ```
 
-Machine-local JUCE and Surge copies plus generated build files stay under the ignored `.local` directory. `RESONANCE_JUCE_DIR`, `RESONANCE_BUILD_DIR`, and `RESONANCE_SURGE_VST3` can override those defaults. Generated executables under `bin`, machine-specific JSON reports, and the diagnostic WAV remain local and are ignored by Git; source, schemas, documentation, UI snapshots, and portable `.resonance.json` fixtures remain versioned.
+Machine-local JUCE and Surge copies plus generated build files stay under the ignored `.local` directory. `RESONANCE_JUCE_DIR`, `RESONANCE_BUILD_DIR`, and `RESONANCE_SURGE_VST3` can override those defaults. Generated executables under `bin`, most machine-specific JSON reports, and the diagnostic WAV remain local and are ignored by Git; source, schemas, documentation, UI snapshots, portable `.resonance.json` fixtures, and the bounded path-sanitised M6 runtime checkpoint report remain versioned.
 
 The root `Open Resonance Music Editor.bat` launcher uses the repository location automatically. It expects a local Release build in `bin`; run `scripts\build.ps1` first when starting from a fresh clone.
 
@@ -222,8 +235,8 @@ The build copies four production executables to `bin`:
 ## Next implementation gate
 
 1. Preserve the accepted M4 sound workflow, accepted M5 proposal lifecycle, and proven version-1-to-version-2 migration.
-2. Add the first two-instrument runtime behind stable message-thread-owned plug-in slots and the fixed eight-lane publication boundary.
-3. Prove per-track scheduling, gain, pan, mute, solo, meters, CPU/clipping bounds, shutdown, missing-plug-in preservation, and exact state round trips before widening the production schema or adding broad mixer UI.
-4. Keep arrangement, automation, broad effects, factory-preset parsing, and model-service integration outside this M6 runtime slice.
+2. Define the next song-schema revision for a bounded second visible instrument track; migrate version 2 without rewriting its source and preserve every stable ID and accepted opaque state.
+3. Add minimal track selection plus gain/pan/mute/solo and meter UI, then prove Save/Open, add/remove/reorder Undo, missing-plug-in recovery, and an explicit two-track listening pass.
+4. Keep arrangement, automation, broad effects, factory-preset parsing, and model-service integration outside this M6 authoring slice.
 
 Architecture and evidence are recorded in `docs/ADR-0001-vst3-host-foundation.md`, `docs/ADR-0002-crash-isolated-plugin-scanning.md`, `docs/ADR-0003-realtime-audio-engine.md`, `docs/ADR-0004-host-owned-sound-snapshots.md`, `docs/ADR-0005-multitrack-project-and-mixer-ownership.md`, and the dated checkpoint files under `docs/`.

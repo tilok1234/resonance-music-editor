@@ -40,9 +40,15 @@ The first audio-side M6 contract is `MixerSnapshot` in `src/mixer_snapshot.h`:
 - pan uses stereo balance semantics: centre feeds both channels, hard left silences right, and hard right silences left;
 - invalid negative linear gain is clamped to silence.
 
-The message thread owns the mutable project, plug-in-instance creation and destruction, topology edits, and conversion to immutable render data. When multiple instances are added, each instance and its preallocated MIDI/audio scratch storage will live in a stable message-thread-created runtime slot. Instances must be prepared before publication and retired only after the audio callback can no longer reference their topology. The audio callback will read a published fixed-capacity snapshot/topology, render already-prepared slots, apply per-track gain and pan, accumulate into the master bus, and publish bounded meter values. It must not create or destroy plug-ins, resize a container or buffer, perform file I/O, or wait for the message thread.
+The message thread owns the mutable project, plug-in-instance creation and destruction, topology edits, and conversion to immutable render data. Each instance and its preallocated MIDI/audio scratch storage lives in one of eight stable message-thread-created runtime slots. Instances are installed before engine preparation, and prepared topology changes fail closed. The audio callback reads a double-buffered fixed-capacity snapshot, renders already-prepared slots against one playhead, applies per-track gain and pan, accumulates into the preallocated master bus, and publishes bounded meter and safety values. It does not create or destroy plug-ins, resize a container or buffer, perform file I/O, or wait for state access.
 
-This ADR defines that ownership boundary; the first slice does not yet replace the one-instance production engine with the multi-instance renderer.
+The indexed state API captures and restores one selected slot under the same non-blocking callback access boundary. The original unindexed API remains a slot-zero compatibility path for the accepted M4 sound workflow.
+
+## Implementation status
+
+- Slice 1 implements schema-version-2 migration, stable identities, persisted mixer/MIDI state, and the pure eight-lane snapshot contract.
+- Slice 2 replaces the one-instance engine shape with the eight stable runtime slots and proves two distinct real Surge instances through the production render/mix path.
+- The visible project still contains exactly one track and publishes it to slot zero. The second slot is exercised by deterministic native tests and the silent packaged M6 runtime gate, not by normal authoring UI.
 
 ## Consequences
 
@@ -51,7 +57,7 @@ This ADR defines that ownership boundary; the first slice does not yet replace t
 - Per-track settings have a persistence home before controls or processing depend on them.
 - The fixed eight-track ceiling makes memory, CPU, and failure tests bounded for the first ensemble implementation.
 - Schema version 2 is honest about current production behavior by retaining exactly one track until the runtime and UI can safely support more.
-- Mixer settings currently round-trip but do not yet change audible output; no listening approval is implied by this foundation.
+- Mixer and MIDI output settings now affect the visible track's slot-zero render path, but controls are not exposed in the UI and no new listening approval is implied.
 
 ## Rejected alternatives
 
@@ -63,4 +69,4 @@ This ADR defines that ownership boundary; the first slice does not yet replace t
 
 ## Follow-up gate
 
-Add a second accepted instrument through stable runtime slots and the fixed-capacity publication boundary, then prove two-track scheduling, gain/pan/mute/solo behavior, meters, CPU/clipping limits, shutdown, missing-plug-in preservation, and complete state round trips before widening the production schema or adding broad mixer UI.
+Define a bounded multi-track project-schema revision, migrate version 2 without rewriting its source, and expose a minimal second accepted instrument through the proven runtime slots. Prove track-topology Undo, Save/Open, user-facing missing-plug-in recovery, mixer controls/meters, and an explicit listening pass before declaring M6 complete.

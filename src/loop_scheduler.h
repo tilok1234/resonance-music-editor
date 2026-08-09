@@ -77,9 +77,27 @@ public:
                   bpm,
                   sampleRate,
                   numSamples,
+                  sequence,
+                  1);
+    }
+
+    static void addBlock (juce::MidiBuffer& destination,
+                          double absoluteStartBeat,
+                          double bpm,
+                          double sampleRate,
+                          int numSamples,
+                          const SequenceSnapshot& sequence,
+                          int midiChannel)
+    {
+        addBlock (destination,
+                  absoluteStartBeat,
+                  bpm,
+                  sampleRate,
+                  numSamples,
                   sequence.notes.data(),
                   sequence.noteCount,
-                  sequence.loopBeats);
+                  sequence.loopBeats,
+                  midiChannel);
     }
 
     static void addBlock (juce::MidiBuffer& destination,
@@ -89,13 +107,15 @@ public:
                           int numSamples,
                           const LoopNote* notes,
                           std::size_t noteCount,
-                          double loopBeats)
+                          double loopBeats,
+                          int midiChannel = 1)
     {
         if (absoluteStartBeat < 0.0 || bpm <= 0.0 || sampleRate <= 0.0
             || numSamples <= 0 || notes == nullptr || loopBeats <= 0.0)
             return;
 
         const auto beatsPerSample = bpm / (60.0 * sampleRate);
+        const auto outputChannel = juce::jlimit (1, 16, midiChannel);
         const auto absoluteEndBeat = absoluteStartBeat + beatsPerSample * static_cast<double> (numSamples);
         const auto safeCount = juce::jmin (noteCount, maxSequenceNotes);
 
@@ -113,9 +133,9 @@ public:
                                numSamples,
                                loopBeats,
                                note.beat,
-                               juce::MidiMessage::noteOn (1,
-                                                          note.midiNote,
-                                                          juce::jlimit (0.0f, 1.0f, note.velocity)));
+                               juce::MidiMessage::noteOn (outputChannel,
+                                                           note.midiNote,
+                                                           juce::jlimit (0.0f, 1.0f, note.velocity)));
             addRecurringEvent (destination,
                                absoluteStartBeat,
                                absoluteEndBeat,
@@ -123,7 +143,7 @@ public:
                                numSamples,
                                loopBeats,
                                note.beat + note.lengthBeats,
-                               juce::MidiMessage::noteOff (1, note.midiNote));
+                               juce::MidiMessage::noteOff (outputChannel, note.midiNote));
         }
     }
 

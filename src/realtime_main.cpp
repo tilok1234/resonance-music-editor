@@ -2,7 +2,9 @@
 
 #include "editor_component.h"
 #include "known_plugin.h"
+#include "plugin_identity.h"
 
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 
@@ -47,6 +49,317 @@ bool writeReport (const juce::File& reportFile, const juce::var& report)
 {
     reportFile.getParentDirectory().createDirectory();
     return reportFile.replaceWithText (juce::JSON::toString (report, true));
+}
+
+int runM6RuntimeTest (const juce::StringArray& args)
+{
+    const auto inventoryFile = resolvePathArgument (args, "--inventory", "plugin-inventory.json");
+    const auto quarantineFile = resolvePathArgument (args, "--quarantine", "plugin-quarantine.json");
+    const auto reportFile = resolvePathArgument (args, "--report", "m6-runtime-test-report.json");
+    const auto alternateProjectFile = resolvePathArgument (args,
+                                                           "--alternate-project",
+                                                           "m4-accepted-candidate-b.resonance.json");
+
+    auto* reportObject = new juce::DynamicObject();
+    juce::var report (reportObject);
+    reportObject->setProperty ("schemaVersion", 1);
+    reportObject->setProperty ("editorVersion", JUCE_APPLICATION_VERSION_STRING);
+    reportObject->setProperty ("juceVersion", juce::SystemStats::getJUCEVersion());
+    reportObject->setProperty ("testedAt", juce::Time::getCurrentTime().toISO8601 (true));
+    reportObject->setProperty ("inventoryPath", inventoryFile.getFileName());
+    reportObject->setProperty ("quarantinePath", quarantineFile.getFileName());
+    reportObject->setProperty ("alternateProjectPath", alternateProjectFile.getFileName());
+    reportObject->setProperty ("noRescanPerformed", true);
+    reportObject->setProperty ("audioEmitted", false);
+    reportObject->setProperty ("runtimeCapacity", static_cast<int> (maxMixerTracks));
+
+    try
+    {
+        KnownPluginRecord record;
+        const auto inventoryResult = loadFirstAcceptedInstrument (inventoryFile, quarantineFile, record);
+        if (inventoryResult.failed())
+            throw std::runtime_error (inventoryResult.getErrorMessage().toStdString());
+
+        SongProject alternateProject;
+        const auto alternateLoad = alternateProject.loadFromFile (alternateProjectFile);
+        if (alternateLoad.failed())
+            throw std::runtime_error (("Alternate Surge project load failed: "
+                                      + alternateLoad.getErrorMessage()).toStdString());
+        if (! vst3IdentifiersAreCompatible (alternateProject.getPluginIdentifier(),
+                                             record.identifier,
+                                             record.description.uniqueId))
+            throw std::runtime_error ("The alternate project does not target the accepted Surge identity");
+
+        juce::MemoryBlock alternatePluginState;
+        const auto alternateStateRead = alternateProject.getPluginState (alternatePluginState);
+        if (alternateStateRead.failed() || alternatePluginState.getSize() == 0)
+            throw std::runtime_error ("The alternate Surge project did not contain a state block");
+
+        juce::AudioDeviceManager deviceManager;
+        juce::AudioDeviceManager::AudioDeviceSetup preferred;
+        preferred.sampleRate = 48000.0;
+        preferred.bufferSize = 512;
+        const auto deviceError = deviceManager.initialise (0, 2, nullptr, true, {}, &preferred);
+        if (deviceError.isNotEmpty())
+            throw std::runtime_error (("WASAPI device open failed: " + deviceError).toStdString());
+
+        auto* device = deviceManager.getCurrentAudioDevice();
+        if (device == nullptr || ! device->getTypeName().containsIgnoreCase ("Windows Audio"))
+            throw std::runtime_error ("The M6 runtime gate did not open Windows Audio/WASAPI");
+
+        juce::AudioPluginFormatManager manager;
+        manager.addFormat (std::make_unique<juce::VST3PluginFormat>());
+        const auto rate = device->getCurrentSampleRate();
+        const auto blockSize = device->getCurrentBufferSizeSamples();
+        const auto deviceType = device->getTypeName();
+        const auto deviceName = device->getName();
+        juce::String firstLoadError;
+        juce::String secondLoadError;
+        auto firstPlugin = manager.createPluginInstance (record.description,
+                                                         rate,
+                                                         blockSize,
+                                                         firstLoadError);
+        auto secondPlugin = manager.createPluginInstance (record.description,
+                                                          rate,
+                                                          blockSize,
+                                                          secondLoadError);
+        if (firstPlugin == nullptr || secondPlugin == nullptr)
+            throw std::runtime_error (("Two-instance cached Surge load failed: "
+                                      + firstLoadError + " " + secondLoadError).toStdString());
+
+        const auto firstParameterCount = firstPlugin->getParameters().size();
+        const auto secondParameterCount = secondPlugin->getParameters().size();
+        const auto distinctInstances = firstPlugin.get() != secondPlugin.get();
+
+        RealtimeEngine engine;
+        const auto firstInstall = engine.setPluginForTrack (0, std::move (firstPlugin));
+        const auto secondInstall = engine.setPluginForTrack (1, std::move (secondPlugin));
+        if (firstInstall.failed() || secondInstall.failed())
+            throw std::runtime_error ((firstInstall.getErrorMessage() + " "
+                                      + secondInstall.getErrorMessage()).toStdString());
+
+        MixerSnapshot mixer;
+        mixer.trackCount = 2;
+        mixer.tracks[0].enabled = true;
+        mixer.tracks[0].gainLinear = 0.02f;
+        mixer.tracks[0].pan = -1.0f;
+        mixer.tracks[0].midiOutputChannel = 1;
+        mixer.tracks[0].sequence.loopBeats = 4.0;
+        mixer.tracks[0].sequence.noteCount = 1;
+        mixer.tracks[0].sequence.notes[0] = { 0.0, 0.5, 48, 0.75f };
+        mixer.tracks[1].enabled = true;
+        mixer.tracks[1].gainLinear = 0.02f;
+        mixer.tracks[1].pan = 1.0f;
+        mixer.tracks[1].midiOutputChannel = 2;
+        mixer.tracks[1].sequence.loopBeats = 4.0;
+        mixer.tracks[1].sequence.noteCount = 1;
+        mixer.tracks[1].sequence.notes[0] = { 0.0, 0.5, 67, 0.70f };
+        engine.setMixerSnapshot (mixer);
+        engine.setMasterGainDecibels (0.0f);
+
+        const auto preparation = engine.prepareForOfflineRender (rate, blockSize);
+        if (preparation.failed())
+            throw std::runtime_error (preparation.getErrorMessage().toStdString());
+
+        juce::MemoryBlock firstBaselineState;
+        juce::MemoryBlock secondBaselineState;
+        if (engine.capturePluginStateForTrack (0, firstBaselineState).failed()
+            || engine.capturePluginStateForTrack (1, secondBaselineState).failed())
+            throw std::runtime_error ("The prepared Surge slots did not expose complete state blocks");
+
+        engine.setPlaying (true);
+        juce::AudioBuffer<float> output (2, blockSize);
+        juce::AudioIODeviceCallbackContext callbackContext;
+        const auto blockCount = juce::jmax (32,
+                                            static_cast<int> (std::ceil (rate * 1.0
+                                                                        / blockSize)));
+        double accumulatedCallbackLoad = 0.0;
+        float maximumOutputPeak = 0.0f;
+        float maximumTrackOnePeak = 0.0f;
+        float maximumTrackTwoPeak = 0.0f;
+
+        for (int block = 0; block < blockCount; ++block)
+        {
+            output.clear();
+            auto* outputs = output.getArrayOfWritePointers();
+            engine.audioDeviceIOCallbackWithContext (nullptr,
+                                                     0,
+                                                     outputs,
+                                                     2,
+                                                     blockSize,
+                                                     callbackContext);
+            accumulatedCallbackLoad += engine.getLastCallbackLoad();
+            maximumOutputPeak = juce::jmax (maximumOutputPeak,
+                                            output.getMagnitude (0, blockSize));
+            maximumTrackOnePeak = juce::jmax (maximumTrackOnePeak,
+                                              engine.getTrackLeftPeak (0));
+            maximumTrackTwoPeak = juce::jmax (maximumTrackTwoPeak,
+                                              engine.getTrackRightPeak (1));
+        }
+
+        const auto averageCallbackLoad = accumulatedCallbackLoad / static_cast<double> (blockCount);
+        const auto bothTracksProcessed =
+            engine.getTrackProcessedBlockCount (0) == static_cast<juce::uint64> (blockCount)
+            && engine.getTrackProcessedBlockCount (1) == static_cast<juce::uint64> (blockCount);
+
+        const auto firstSlotAccessible = engine.getPluginForTrack (0) != nullptr;
+        juce::MemoryBlock firstStateBeforeMutation;
+        juce::MemoryBlock secondStateBeforeMutation;
+        engine.capturePluginStateForTrack (0, firstStateBeforeMutation);
+        engine.capturePluginStateForTrack (1, secondStateBeforeMutation);
+        juce::MemoryBlock changedSecondState;
+        juce::MemoryBlock unchangedFirstState;
+        const auto alternateStateRestore = engine.restorePluginStateForTrack (1,
+                                                                               alternatePluginState);
+        constexpr int stateSettleBlocks = 4;
+        engine.setPlaying (false);
+        for (int block = 0; block < stateSettleBlocks; ++block)
+        {
+            output.clear();
+            auto* outputs = output.getArrayOfWritePointers();
+            engine.audioDeviceIOCallbackWithContext (nullptr,
+                                                     0,
+                                                     outputs,
+                                                     2,
+                                                     blockSize,
+                                                     callbackContext);
+        }
+        const auto changedSecondCapture = engine.capturePluginStateForTrack (1,
+                                                                              changedSecondState);
+        const auto unchangedFirstCapture = engine.capturePluginStateForTrack (0,
+                                                                               unchangedFirstState);
+        const auto alternateStateApplied = alternateStateRestore.wasOk()
+                                           && changedSecondCapture.wasOk()
+                                           && changedSecondState != secondStateBeforeMutation;
+        const auto alternateStatePreservedExact = changedSecondState == alternatePluginState;
+        const auto independentStateMutation = alternateStateApplied
+                                              && changedSecondState != secondStateBeforeMutation
+                                              && unchangedFirstCapture.wasOk()
+                                              && unchangedFirstState == firstStateBeforeMutation;
+
+        const auto firstRestore = engine.restorePluginStateForTrack (0, firstBaselineState);
+        const auto secondRestore = engine.restorePluginStateForTrack (1, secondBaselineState);
+        for (int block = 0; block < stateSettleBlocks; ++block)
+        {
+            output.clear();
+            auto* outputs = output.getArrayOfWritePointers();
+            engine.audioDeviceIOCallbackWithContext (nullptr,
+                                                     0,
+                                                     outputs,
+                                                     2,
+                                                     blockSize,
+                                                     callbackContext);
+        }
+        juce::MemoryBlock firstRestoredState;
+        juce::MemoryBlock secondRestoredState;
+        const auto firstRecapture = engine.capturePluginStateForTrack (0, firstRestoredState);
+        const auto secondRecapture = engine.capturePluginStateForTrack (1, secondRestoredState);
+        const auto completeStateRoundTrip = firstRestore.wasOk() && secondRestore.wasOk()
+                                            && firstRecapture.wasOk() && secondRecapture.wasOk()
+                                            && firstRestoredState == firstBaselineState
+                                            && secondRestoredState == secondBaselineState;
+
+        engine.releaseOfflineRender();
+        juce::MemoryBlock survivingStateBeforeRemoval;
+        juce::MemoryBlock survivingStateAfterRemoval;
+        engine.capturePluginStateForTrack (0, survivingStateBeforeRemoval);
+        const auto removeSecond = engine.setPluginForTrack (1, {});
+        juce::MemoryBlock missingState;
+        const auto missingCapture = engine.capturePluginStateForTrack (1, missingState);
+        const auto survivingCapture = engine.capturePluginStateForTrack (0,
+                                                                         survivingStateAfterRemoval);
+        const auto missingPluginPreserved = removeSecond.wasOk() && missingCapture.failed()
+                                            && survivingCapture.wasOk()
+                                            && survivingStateAfterRemoval
+                                                   == survivingStateBeforeRemoval
+                                            && engine.getActivePluginCount() == 1;
+
+        const auto invalidSamples = engine.getInvalidSampleCount();
+        const auto clippedSamples = engine.getClippedSampleCount();
+        const auto processorExceptions = engine.getProcessorExceptionCount();
+        const auto maximumCallbackLoad = engine.getMaximumCallbackLoad();
+        engine.shutdown();
+        const auto shutdownComplete = ! engine.isPrepared()
+                                      && engine.getActivePluginCount() == 0;
+        deviceManager.closeAudioDevice();
+
+        auto* deviceObject = new juce::DynamicObject();
+        juce::var deviceReport (deviceObject);
+        deviceObject->setProperty ("type", deviceType);
+        deviceObject->setProperty ("name", deviceName);
+        deviceObject->setProperty ("sampleRate", rate);
+        deviceObject->setProperty ("blockSize", blockSize);
+        reportObject->setProperty ("device", deviceReport);
+
+        auto* pluginObject = new juce::DynamicObject();
+        juce::var pluginReport (pluginObject);
+        pluginObject->setProperty ("identifier", record.identifier);
+        pluginObject->setProperty ("name", record.description.name);
+        pluginObject->setProperty ("version", record.description.version);
+        pluginObject->setProperty ("expectedParameterCount", record.expectedParameterCount);
+        pluginObject->setProperty ("firstParameterCount", firstParameterCount);
+        pluginObject->setProperty ("secondParameterCount", secondParameterCount);
+        pluginObject->setProperty ("distinctInstances", distinctInstances);
+        pluginObject->setProperty ("firstStateBytes",
+                                   static_cast<juce::int64> (firstBaselineState.getSize()));
+        pluginObject->setProperty ("secondStateBytes",
+                                   static_cast<juce::int64> (secondBaselineState.getSize()));
+        pluginObject->setProperty ("alternateStateBytes",
+                                   static_cast<juce::int64> (alternatePluginState.getSize()));
+        pluginObject->setProperty ("alternateStateSha256",
+                                   juce::SHA256 (alternatePluginState).toHexString());
+        pluginObject->setProperty ("normalisedAlternateStateSha256",
+                                   juce::SHA256 (changedSecondState).toHexString());
+        pluginObject->setProperty ("alternateStateApplied", alternateStateApplied);
+        pluginObject->setProperty ("alternateStatePreservedExact",
+                                   alternateStatePreservedExact);
+        pluginObject->setProperty ("independentStateMutation", independentStateMutation);
+        pluginObject->setProperty ("completeStateRoundTrip", completeStateRoundTrip);
+        reportObject->setProperty ("plugin", pluginReport);
+
+        auto* runtimeObject = new juce::DynamicObject();
+        juce::var runtimeReport (runtimeObject);
+        runtimeObject->setProperty ("installedInstances", 2);
+        runtimeObject->setProperty ("renderedBlocks", blockCount);
+        runtimeObject->setProperty ("stateSettleBlocks", stateSettleBlocks * 2);
+        runtimeObject->setProperty ("bothTracksProcessed", bothTracksProcessed);
+        runtimeObject->setProperty ("maximumOutputPeak", maximumOutputPeak);
+        runtimeObject->setProperty ("maximumTrackOnePeak", maximumTrackOnePeak);
+        runtimeObject->setProperty ("maximumTrackTwoPeak", maximumTrackTwoPeak);
+        runtimeObject->setProperty ("averageCallbackLoad", averageCallbackLoad);
+        runtimeObject->setProperty ("maximumCallbackLoad", maximumCallbackLoad);
+        runtimeObject->setProperty ("invalidSamples", invalidSamples);
+        runtimeObject->setProperty ("clippedSamples", clippedSamples);
+        runtimeObject->setProperty ("processorExceptions", processorExceptions);
+        runtimeObject->setProperty ("missingPluginPreserved", missingPluginPreserved);
+        runtimeObject->setProperty ("shutdownComplete", shutdownComplete);
+        reportObject->setProperty ("runtime", runtimeReport);
+
+        const auto parameterCountsMatch = firstParameterCount == record.expectedParameterCount
+                                          && secondParameterCount == record.expectedParameterCount;
+        const auto audioObservedInMemory = maximumOutputPeak > 0.0f
+                                           && maximumTrackOnePeak > 0.0f
+                                           && maximumTrackTwoPeak > 0.0f;
+        reportObject->setProperty ("passed",
+                                   distinctInstances && parameterCountsMatch
+                                       && firstSlotAccessible && bothTracksProcessed
+                                       && audioObservedInMemory && averageCallbackLoad < 1.0
+                                       && invalidSamples == 0 && clippedSamples == 0
+                                       && processorExceptions == 0 && independentStateMutation
+                                       && completeStateRoundTrip && missingPluginPreserved
+                                       && shutdownComplete);
+    }
+    catch (const std::exception& error)
+    {
+        reportObject->setProperty ("passed", false);
+        reportObject->setProperty ("error", error.what());
+    }
+
+    if (! writeReport (reportFile, report))
+        return 2;
+
+    std::cout << juce::JSON::toString (report, true) << std::endl;
+    return static_cast<bool> (reportObject->getProperty ("passed")) ? 0 : 1;
 }
 
 int runSelfTest (const juce::StringArray& args)
@@ -308,6 +621,13 @@ public:
         if (args.contains ("--self-test"))
         {
             setApplicationReturnValue (runSelfTest (args));
+            quit();
+            return;
+        }
+
+        if (args.contains ("--m6-runtime-test"))
+        {
+            setApplicationReturnValue (runM6RuntimeTest (args));
             quit();
             return;
         }

@@ -120,15 +120,13 @@ Changes to `RealtimeEngine`, `LoopScheduler`, or the model-to-engine boundary mu
 - invalid and clipped samples are counted and bounded;
 - automated self-test remains silent.
 
-### Sequence publication
+### Sequence and mixer publication
 
-The message thread converts the project notes into a `SequenceSnapshot` with a fixed array of 512 entries. The engine maintains two sequence slots. A writer publishes into a slot that has no readers; the callback takes a non-blocking reader claim on the current slot, schedules it, and releases it. If an immediate publish is unavailable, the latest pending snapshot can be retried without making the callback wait.
+The message thread converts project notes into a `SequenceSnapshot` with a fixed array of 512 entries, then places it in an immutable `MixerSnapshot` lane with that track's bounded render and MIDI-routing settings. The engine maintains two mixer-snapshot slots. A writer publishes into a slot that has no readers; the callback takes a non-blocking reader claim on the current slot, schedules every enabled lane against one shared playhead, and releases it. If an immediate publish is unavailable, the latest pending snapshot can be retried without making the callback wait. The M4/M5 `setSequence` compatibility method updates lane zero while preserving its current mixer values.
 
-### M6 mixer publication contract
+`MixerSnapshot` contains at most eight trivially copyable lanes. Each lane owns one fixed-capacity sequence plus linear gain, pan, mute, solo, enabled state, and MIDI-routing values. Its pure resolver clamps count and pan, treats invalid negative gain as silence, ignores disabled solo flags, and gates non-solo lanes whenever an enabled solo is active.
 
-`MixerSnapshot` establishes the next bounded publication shape without claiming that the current engine already renders multiple plug-ins. It contains at most eight trivially copyable lanes. Each lane owns one fixed-capacity sequence plus linear gain, pan, mute, solo, enabled state, and MIDI-routing values. Its pure resolver clamps count and pan, treats invalid negative gain as silence, ignores disabled solo flags, and gates non-solo lanes whenever an enabled solo is active.
-
-The future multi-instance runtime must keep mutable topology and plug-in lifetime on the message thread. Prepared plug-in slots and preallocated MIDI/audio scratch storage must become stable before the callback can reference them, and retired topology must outlive every reader. The callback may read and render an immutable published topology but may not create, destroy, resize, or wait for a slot. [ADR-0005](ADR-0005-multitrack-project-and-mixer-ownership.md) owns the full decision.
+The production `RealtimeEngine` owns a fixed array of eight stable `RuntimeSlot` objects. Each slot owns one optional plug-in instance plus preallocated stereo audio and MIDI scratch, prepared state, bounded meters, and a processed-block counter. Mutable topology and plug-in lifetime stay on the message thread; topology changes fail closed after preparation. The callback takes only a non-blocking plug-in-access claim, renders already-prepared enabled slots, applies resolved stereo gains, accumulates into a preallocated master buffer, and publishes bounded meters and safety counters. It never creates, destroys, resizes, performs file I/O, or waits for state access. The visible version-2 project currently publishes its sole track to slot zero; the hidden M6 gate proves slots zero and one with two real Surge instances. [ADR-0005](ADR-0005-multitrack-project-and-mixer-ownership.md) owns the full decision.
 
 ### Plug-in state operations
 
@@ -170,18 +168,18 @@ See [VST3 hosting](VST3_HOSTING.md) and [ADR-0002](ADR-0002-crash-isolated-plugi
 
 ## Extension seams
 
-The current single-track shape is deliberate, but several seams are intended for growth:
+The current single-track authoring shape is deliberate, but several seams are intended for growth:
 
 - schema version 2 gives track and clip identity plus per-track settings a durable model home, while intentionally retaining one production track until the runtime is widened safely;
 - structured edit commands and the proposal card sit above the same note operations, Undo manager, and immutable sequence publisher used by the piano roll;
 - `MixerSnapshot` composes fixed-capacity per-track sequences and render values without exposing the mutable ValueTree to audio code;
-- the engine can grow stable prepared plug-in slots behind the eight-lane mixer boundary while keeping device callback rules intact;
+- the engine's stable prepared slots can accept future persisted tracks behind the eight-lane mixer boundary without changing callback ownership;
 - automation can publish fixed-capacity curves or block-local parameter events;
 - offline rendering can reuse the validated song and plug-in state while remaining separate from the device callback;
 - game-transition metadata can reference arrangement sections after ordinary arrangement editing exists.
 
-These are extension points, not permission to weaken current invariants. Multi-track, automation, additional transform families, AI translation/service integration, effects, and game-state playback are not implemented yet.
+These are extension points, not permission to weaken current invariants. Persisted/visible multi-track authoring, automation, additional transform families, AI translation/service integration, effects, and game-state playback are not implemented yet.
 
 ## Architectural evidence
 
-The durable decisions are recorded in the five ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the accepted M5 command/proposal slices, and the first M6 schema/identity/mixer-ownership foundation. See the [documentation index](README.md) for the full list.
+The durable decisions are recorded in the five ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the accepted M5 command/proposal slices, the first M6 schema/identity/mixer-ownership foundation, and the M6 two-track runtime. See the [documentation index](README.md) for the full list.

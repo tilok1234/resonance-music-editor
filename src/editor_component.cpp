@@ -1318,7 +1318,20 @@ void MainEditorComponent::projectChanged()
     }
 
     engine.setBpm (project.getTempoBpm());
-    engine.setSequence (project.createSequenceSnapshot());
+    const auto mixerSettings = project.getTrackMixerSettings();
+    const auto midiRouting = project.getTrackMidiRouting();
+    MixerSnapshot mixer;
+    mixer.trackCount = 1;
+    mixer.tracks[0].sequence = project.createSequenceSnapshot();
+    mixer.tracks[0].gainLinear = juce::Decibels::decibelsToGain (
+        static_cast<float> (mixerSettings.gainDecibels));
+    mixer.tracks[0].pan = static_cast<float> (mixerSettings.pan);
+    mixer.tracks[0].midiInputChannel = midiRouting.inputChannel;
+    mixer.tracks[0].midiOutputChannel = midiRouting.outputChannel;
+    mixer.tracks[0].enabled = true;
+    mixer.tracks[0].muted = mixerSettings.muted;
+    mixer.tracks[0].solo = mixerSettings.solo;
+    engine.setMixerSnapshot (mixer);
 
     if (pianoRoll != nullptr && pianoRoll->getSelectedNote().isNotEmpty()
         && ! project.findNote (pianoRoll->getSelectedNote()).has_value())

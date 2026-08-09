@@ -30,6 +30,7 @@ VALIDATION_GROUPS = (
             / "fixtures"
             / "song-project-v1-migration.resonance.json",
             PROJECT_ROOT / "artifacts" / "ui-save-open-roundtrip.resonance.json",
+            PROJECT_ROOT / "artifacts" / "m4-accepted-candidate-b.resonance.json",
         ),
     ),
     (
@@ -55,6 +56,10 @@ VALIDATION_GROUPS = (
     (
         PROJECT_ROOT / "schema" / "realtime-self-test.schema.json",
         (PROJECT_ROOT / "artifacts" / "realtime-self-test.json",),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "m6-runtime-test.schema.json",
+        (PROJECT_ROOT / "artifacts" / "m6-runtime-test-report.json",),
     ),
     (
         PROJECT_ROOT / "schema" / "song-project-test.schema.json",

@@ -2,9 +2,12 @@
 
 #include "../src/loop_scheduler.h"
 #include "../src/mixer_snapshot.h"
+#include "../src/realtime_engine.h"
 
 #include <cmath>
+#include <cstring>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 
 namespace
@@ -12,6 +15,7 @@ namespace
 struct TestContext
 {
     int assertions = 0;
+    double twoTrackAverageCallbackLoad = 0.0;
 
     void expect (bool condition, const juce::String& message)
     {
@@ -26,6 +30,112 @@ struct EventMatch
     int sample = -1;
     int count = 0;
 };
+
+struct FakePluginStats
+{
+    int prepareCalls = 0;
+    int releaseCalls = 0;
+    int processCalls = 0;
+    int noteOnCount = 0;
+    int lastNote = -1;
+    int lastChannel = -1;
+    double preparedRate = 0.0;
+    int preparedBlockSize = 0;
+};
+
+class FakeInstrument final : public juce::AudioPluginInstance
+{
+public:
+    FakeInstrument (float outputAmplitude,
+                    int initialState,
+                    std::shared_ptr<FakePluginStats> sharedStats)
+        : juce::AudioPluginInstance (
+              BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+          amplitude (outputAmplitude),
+          stateValue (initialState),
+          stats (std::move (sharedStats))
+    {
+    }
+
+    const juce::String getName() const override { return "Deterministic M6 instrument"; }
+    void prepareToPlay (double sampleRate, int maximumBlockSize) override
+    {
+        ++stats->prepareCalls;
+        stats->preparedRate = sampleRate;
+        stats->preparedBlockSize = maximumBlockSize;
+    }
+    void releaseResources() override { ++stats->releaseCalls; }
+    void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) override
+    {
+        ++stats->processCalls;
+        for (const auto metadata : midi)
+        {
+            const auto message = metadata.getMessage();
+            if (message.isNoteOn())
+            {
+                ++stats->noteOnCount;
+                stats->lastNote = message.getNoteNumber();
+                stats->lastChannel = message.getChannel();
+            }
+        }
+
+        for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+            for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+                buffer.setSample (channel, sample, amplitude);
+    }
+
+    double getTailLengthSeconds() const override { return 0.0; }
+    bool acceptsMidi() const override { return true; }
+    bool producesMidi() const override { return false; }
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return "Test"; }
+    void changeProgramName (int, const juce::String&) override {}
+    void getStateInformation (juce::MemoryBlock& destination) override
+    {
+        destination.reset();
+        destination.append (&stateValue, sizeof (stateValue));
+    }
+    void setStateInformation (const void* data, int size) override
+    {
+        if (data != nullptr && size == static_cast<int> (sizeof (stateValue)))
+            std::memcpy (&stateValue, data, sizeof (stateValue));
+    }
+    void fillInPluginDescription (juce::PluginDescription& description) const override
+    {
+        description.name = getName();
+        description.pluginFormatName = "M6 test";
+        description.fileOrIdentifier = "m6-fake-instrument";
+        description.uniqueId = stateValue;
+        description.isInstrument = true;
+    }
+
+private:
+    float amplitude = 0.0f;
+    int stateValue = 0;
+    std::shared_ptr<FakePluginStats> stats;
+};
+
+juce::MemoryBlock stateBlock (int value)
+{
+    juce::MemoryBlock result;
+    result.append (&value, sizeof (value));
+    return result;
+}
+
+void renderBlock (resonance::RealtimeEngine& engine,
+                  juce::AudioBuffer<float>& output,
+                  int numSamples = 512)
+{
+    output.setSize (2, numSamples, false, false, true);
+    output.clear();
+    auto* outputs = output.getArrayOfWritePointers();
+    const juce::AudioIODeviceCallbackContext context;
+    engine.audioDeviceIOCallbackWithContext (nullptr, 0, outputs, 2, numSamples, context);
+}
 
 EventMatch findNoteEvent (const juce::MidiBuffer& midi,
                           int note,
@@ -262,6 +372,167 @@ void testFixedCapacityMixerContract (TestContext& context)
                     "Mixer snapshots must remain allocation-free trivially copyable values");
 }
 
+void testTwoTrackRuntime (TestContext& context)
+{
+    auto firstStats = std::make_shared<FakePluginStats>();
+    auto secondStats = std::make_shared<FakePluginStats>();
+    resonance::RealtimeEngine engine;
+
+    context.expect (engine.setPluginForTrack (
+                              0, std::make_unique<FakeInstrument> (0.2f, 101, firstStats)).wasOk(),
+                    "The first stable runtime slot must accept an instrument before preparation");
+    context.expect (engine.setPluginForTrack (
+                              1, std::make_unique<FakeInstrument> (0.4f, 202, secondStats)).wasOk(),
+                    "The second stable runtime slot must accept an instrument before preparation");
+    context.expect (engine.getActivePluginCount() == 2,
+                    "The runtime must report both installed instrument instances");
+    context.expect (engine.setPluginForTrack (
+                              resonance::maxMixerTracks,
+                              std::make_unique<FakeInstrument> (0.1f, 303,
+                                                                std::make_shared<FakePluginStats>())).failed(),
+                    "Topology changes beyond the fixed eight-slot capacity must fail closed");
+
+    resonance::MixerSnapshot mixer;
+    mixer.trackCount = 2;
+    mixer.tracks[0].enabled = true;
+    mixer.tracks[0].gainLinear = 1.0f;
+    mixer.tracks[0].pan = -1.0f;
+    mixer.tracks[0].midiOutputChannel = 2;
+    mixer.tracks[0].sequence.loopBeats = 4.0;
+    mixer.tracks[0].sequence.noteCount = 1;
+    mixer.tracks[0].sequence.notes[0] = { 0.0, 0.5, 60, 0.8f };
+    mixer.tracks[1].enabled = true;
+    mixer.tracks[1].gainLinear = 0.5f;
+    mixer.tracks[1].pan = 1.0f;
+    mixer.tracks[1].midiOutputChannel = 10;
+    mixer.tracks[1].sequence.loopBeats = 4.0;
+    mixer.tracks[1].sequence.noteCount = 1;
+    mixer.tracks[1].sequence.notes[0] = { 0.0, 0.5, 67, 0.7f };
+    engine.setMixerSnapshot (mixer);
+    engine.setMasterGainDecibels (0.0f);
+
+    const auto preparation = engine.prepareForOfflineRender (48000.0, 512);
+    context.expect (preparation.wasOk() && engine.isPrepared(),
+                    "The fixed runtime must prepare both slots for a silent offline block");
+    context.expect (firstStats->prepareCalls == 1 && secondStats->prepareCalls == 1,
+                    "Every installed slot must be prepared exactly once");
+    context.expect (firstStats->preparedRate == 48000.0 && secondStats->preparedBlockSize == 512,
+                    "Both slots must receive the exact shared device format");
+    context.expect (engine.setPluginForTrack (
+                              2, std::make_unique<FakeInstrument> (0.1f, 404,
+                                                                   std::make_shared<FakePluginStats>())).failed(),
+                    "Prepared topology must remain immutable until the runtime is released");
+
+    engine.setPlaying (true);
+    juce::AudioBuffer<float> output;
+    renderBlock (engine, output);
+    context.expect (std::abs (output.getSample (0, 0) - 0.2f) < 1.0e-5f
+                        && std::abs (output.getSample (1, 0) - 0.2f) < 1.0e-5f,
+                    "Hard-left unity and hard-right half-gain tracks must sum deterministically");
+    context.expect (firstStats->noteOnCount == 1 && firstStats->lastNote == 60
+                        && firstStats->lastChannel == 2,
+                    "Track one must receive its own sequence on its routed MIDI output channel");
+    context.expect (secondStats->noteOnCount == 1 && secondStats->lastNote == 67
+                        && secondStats->lastChannel == 10,
+                    "Track two must receive its own sequence on its routed MIDI output channel");
+    context.expect (std::abs (engine.getTrackLeftPeak (0) - 0.2f) < 1.0e-5f
+                        && engine.getTrackRightPeak (0) == 0.0f,
+                    "Track-one post-fader meters must reflect hard-left balance");
+    context.expect (engine.getTrackLeftPeak (1) == 0.0f
+                        && std::abs (engine.getTrackRightPeak (1) - 0.2f) < 1.0e-5f,
+                    "Track-two post-fader meters must reflect gain and hard-right balance");
+    context.expect (engine.getTrackProcessedBlockCount (0) == 1
+                        && engine.getTrackProcessedBlockCount (1) == 1,
+                    "Both prepared instruments must process the same callback block");
+    context.expect (engine.getLastCallbackLoad() > 0.0f
+                        && std::isfinite (engine.getMaximumCallbackLoad()),
+                    "The callback must publish finite bounded-load diagnostics");
+
+    const auto loadStart = juce::Time::getHighResolutionTicks();
+    constexpr int loadBlocks = 64;
+    for (int block = 0; block < loadBlocks; ++block)
+        renderBlock (engine, output);
+    const auto loadSeconds = juce::Time::highResolutionTicksToSeconds (
+        juce::Time::getHighResolutionTicks() - loadStart);
+    context.twoTrackAverageCallbackLoad = loadSeconds
+                                          / (loadBlocks * 512.0 / 48000.0);
+    context.expect (context.twoTrackAverageCallbackLoad < 0.25,
+                    "The deterministic two-track renderer must remain below 25% average callback load");
+
+    mixer.tracks[0].muted = true;
+    engine.setMixerSnapshot (mixer);
+    renderBlock (engine, output);
+    context.expect (output.getSample (0, 0) == 0.0f
+                        && std::abs (output.getSample (1, 0) - 0.2f) < 1.0e-5f,
+                    "Muting track one must remove only its contribution from the master bus");
+
+    mixer.tracks[0].muted = false;
+    mixer.tracks[0].solo = true;
+    engine.setMixerSnapshot (mixer);
+    renderBlock (engine, output);
+    context.expect (std::abs (output.getSample (0, 0) - 0.2f) < 1.0e-5f
+                        && output.getSample (1, 0) == 0.0f,
+                    "Soloing track one must gate the non-soloed second track");
+
+    mixer.tracks[0].solo = false;
+    mixer.tracks[0].pan = 0.0f;
+    mixer.tracks[0].gainLinear = 4.0f;
+    mixer.tracks[1].pan = 0.0f;
+    mixer.tracks[1].gainLinear = 4.0f;
+    engine.setMixerSnapshot (mixer);
+    renderBlock (engine, output);
+    context.expect (output.getSample (0, 0) == 1.0f && output.getSample (1, 0) == 1.0f,
+                    "The master bus must clamp an intentionally overloaded two-track mix");
+    context.expect (engine.getClippedSampleCount() > 0,
+                    "The two-track runtime must count pre-clamp master overloads");
+    context.expect (engine.getLeftPeak() <= 1.0f && engine.getRightPeak() <= 1.0f
+                        && engine.getTrackLeftPeak (0) <= 1.0f,
+                    "Published master and track meters must remain bounded");
+    context.expect (engine.getInvalidSampleCount() == 0
+                        && engine.getProcessorExceptionCount() == 0,
+                    "A valid two-track render must remain finite and exception-free");
+
+    juce::MemoryBlock firstState;
+    juce::MemoryBlock secondState;
+    context.expect (engine.capturePluginStateForTrack (0, firstState).wasOk()
+                        && firstState == stateBlock (101),
+                    "Track one must expose its complete independent state block");
+    context.expect (engine.capturePluginStateForTrack (1, secondState).wasOk()
+                        && secondState == stateBlock (202),
+                    "Track two must expose its complete independent state block");
+    const auto replacementFirstState = stateBlock (1111);
+    const auto replacementSecondState = stateBlock (2222);
+    context.expect (engine.restorePluginStateForTrack (0, replacementFirstState).wasOk()
+                        && engine.restorePluginStateForTrack (1, replacementSecondState).wasOk(),
+                    "Each prepared slot must accept an independent state restore");
+    context.expect (engine.capturePluginStateForTrack (0, firstState).wasOk()
+                        && engine.capturePluginStateForTrack (1, secondState).wasOk()
+                        && firstState == replacementFirstState && secondState == replacementSecondState,
+                    "Both restored state blocks must round-trip byte-for-byte");
+
+    juce::AudioBuffer<float> oversized;
+    renderBlock (engine, oversized, 4097);
+    context.expect (engine.getOversizedBlockCount() == 1,
+                    "A callback beyond preallocated capacity must fail to silence without resizing");
+
+    engine.releaseOfflineRender();
+    context.expect (! engine.isPrepared() && firstStats->releaseCalls == 1
+                        && secondStats->releaseCalls == 1,
+                    "Releasing the runtime must release every prepared instance exactly once");
+    context.expect (engine.setPluginForTrack (1, {}).wasOk()
+                        && engine.getActivePluginCount() == 1,
+                    "A missing second plug-in must be represented without disturbing slot one");
+    context.expect (engine.capturePluginStateForTrack (1, secondState).failed(),
+                    "State access for a missing plug-in must fail closed");
+    context.expect (engine.capturePluginStateForTrack (0, firstState).wasOk()
+                        && firstState == replacementFirstState,
+                    "Removing a missing track slot must preserve the surviving track state exactly");
+
+    engine.shutdown();
+    context.expect (engine.getPlugin() == nullptr && engine.getActivePluginCount() == 0,
+                    "Shutdown must retire every stable plug-in slot");
+}
+
 juce::String getArgumentValue (const juce::StringArray& args, const juce::String& flag)
 {
     const auto index = args.indexOf (flag);
@@ -291,12 +562,16 @@ int main (int argc, char* argv[])
         testEditableSequence (context);
         testExactDeviceBlockBoundaries (context);
         testFixedCapacityMixerContract (context);
+        testTwoTrackRuntime (context);
 
         reportObject->setProperty ("assertions", context.assertions);
         reportObject->setProperty ("loopLengthBeats", resonance::loopLengthBeats);
         reportObject->setProperty ("noteCount", static_cast<int> (resonance::starterLoopNotes.size()));
         reportObject->setProperty ("maxMixerTracks", static_cast<int> (resonance::maxMixerTracks));
         reportObject->setProperty ("mixerContractPassed", true);
+        reportObject->setProperty ("twoTrackRuntimePassed", true);
+        reportObject->setProperty ("twoTrackAverageCallbackLoad",
+                                   context.twoTrackAverageCallbackLoad);
         reportObject->setProperty ("passed", true);
     }
     catch (const std::exception& error)

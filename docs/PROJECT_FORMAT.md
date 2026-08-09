@@ -68,7 +68,7 @@ The current version-2 writer requires exactly one track with `role: "instrument"
 | `inputChannel` | integer `0` through `16`; `0` means omni |
 | `outputChannel` | integer `1` through `16` |
 
-The first M6 slice persists and validates these values but does not yet apply them in the one-instance production audio engine or expose mixer controls. New and migrated version-1 tracks default to `0 dB`, centre, unmuted, unsoloed, omni input, and output channel 1.
+The production engine now applies these values to the visible project's slot-zero render path, including the MIDI output channel, although mixer controls are not exposed in the UI yet. New and migrated version-1 tracks default to `0 dB`, centre, unmuted, unsoloed, omni input, and output channel 1. Schema version 2 still persists exactly one track; the separate two-instance runtime proof is not a multi-track project-format claim.
 
 | Instrument field | Meaning |
 | --- | --- |

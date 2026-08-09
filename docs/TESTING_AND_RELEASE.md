@@ -1,6 +1,6 @@
 # Testing and release
 
-Status: current validation contract for the single-track prototype
+Status: current validation contract for the single-track authoring prototype and bounded two-instance runtime
 
 ## Gate philosophy
 
@@ -73,16 +73,30 @@ The optional `--state-project <song.resonance.json>` probe input restores an exa
 
 | Suite | Current passed assertions |
 | --- | ---: |
-| Real-time loop scheduler and mixer contract | 92 |
+| Real-time loop scheduler and two-track runtime | 124 |
 | Song project, migration, round trip, and edit commands | 162 |
 
-The tests cover timing boundaries, the real 44.1 kHz / 441-sample exact-block case, loop wrap, note-off behavior, event balance, project defaults, edit constraints, stable IDs, note and sound Undo/Redo, named opaque sound integrity, backward-compatible `soundName` loading, JSON round trips, malformed data, state hashes, and relocation-compatible VST3 identity. M6 cases additionally prove lossless version-1-to-version-2 migration, source-file immutability, non-default track/clip ID preservation, neutral mixer/MIDI defaults, bounded non-default round trips, strict future/missing/out-of-range rejection, and command targeting against migrated IDs. Mixer-contract cases prove the eight-lane capacity, trivially copyable snapshot, stereo balance, gain, mute, solo, disabled-lane, negative-gain, and out-of-capacity semantics. The M5 and seeded velocity cases continue to prove their full command, candidate, deterministic resolver, Apply/Reject, stale, and one-Undo contracts.
+The tests cover timing boundaries, the real 44.1 kHz / 441-sample exact-block case, loop wrap, note-off behavior, event balance, project defaults, edit constraints, stable IDs, note and sound Undo/Redo, named opaque sound integrity, backward-compatible `soundName` loading, JSON round trips, malformed data, state hashes, and relocation-compatible VST3 identity. M6 project cases additionally prove lossless version-1-to-version-2 migration, source-file immutability, non-default track/clip ID preservation, neutral mixer/MIDI defaults, bounded non-default round trips, strict future/missing/out-of-range rejection, and command targeting against migrated IDs. Runtime cases use deterministic fake processors to prove eight stable slots, two separate note/channel schedules, exact summing, stereo balance, gain, mute, solo, bounded track/master meters, clipping and invalid/exception fallback, oversize-block refusal without resizing, independent state, missing-slot preservation, CPU measurement, release, and shutdown. The M5 and seeded velocity cases continue to prove their full command, candidate, deterministic resolver, Apply/Reject, stale, and one-Undo contracts.
 
 ### M6 migration and mixer-contract gate
 
 `scripts/test-realtime.ps1` passes `tests/fixtures/song-project-v1-migration.resonance.json` to `SongProjectTests.exe`. The fixture uses `track-migrated` and `clip-migrated`, preventing hard-coded starter identities from satisfying the test. The report must declare song schema 2, legacy schema 1, `legacyMigrationPassed: true`, both stable IDs, and the exact source SHA-256. `RealtimeEngineTests.exe` must report capacity 8 and `mixerContractPassed: true`.
 
-The portable version-1 fixture and historical version-1 UI round-trip artifact validate against `schema/song-project-v1.schema.json`. The current real-Surge project validates against canonical `schema/song-project.schema.json`. This gate proves the data and ownership boundaries only; the production callback still renders one instrument.
+The portable version-1 fixture and historical version-1 UI round-trip artifact validate against `schema/song-project-v1.schema.json`. The current real-Surge project validates against canonical `schema/song-project.schema.json`. The visible project still publishes exactly one persisted track to runtime slot zero; schema migration proof remains separate from the two-slot engine proof.
+
+### M6 two-track runtime gate
+
+The Release editor exercises the production runtime without browser automation or audible output:
+
+```powershell
+.\bin\ResonanceMusicEditor.exe --m6-runtime-test --report <report.json>
+```
+
+The mode opens the configured Windows Audio device only to obtain the real sample rate and block size; it never attaches the runtime callback and requires `audioEmitted: false`. It loads two distinct instances of the accepted inventory record without rescanning, requires 2,855 Surge parameters on each, installs them in stable slots zero and one, publishes separate sequences/MIDI output channels, and renders 100 blocks in memory. Both track meters and the master output must become nonzero while invalid samples, clips, and processor exceptions remain zero. Average callback load must stay below one full device period.
+
+State isolation uses the exact accepted M4 B fixture. Its stored `ccaf99d4...` bytes normalise through live Surge processing to the accepted `91ed214e...` equivalent; four silent settle blocks follow the alternate restore and four follow the baseline restore. The gate requires only slot two to change, requires exact round trips for both current live baseline states, removes slot two without changing slot one, and proves clean shutdown. `schema/m6-runtime-test.schema.json` requires every condition, while deterministic fake-processor tests establish exact mix mathematics independently of Surge's opaque state normalisation.
+
+The versioned report records 100 rendered blocks plus eight settle blocks at the observed 44.1 kHz / 441-sample device format, average callback load `0.0079110`, maximum load `0.3994600`, zero safety counters, missing-slot preservation, and clean shutdown. This is technical evidence, not an audible mix or UI acceptance.
 
 ### M5 edit-command core gate
 
@@ -133,9 +147,9 @@ This hidden mode keeps transport stopped. It first creates a selected-note `+1` 
 
 ### Artifact-schema gate
 
-`scripts/validate-artifacts.py` validates the current JSON reports, versioned project fixtures, historical version-1 project artifact, and edit-command fixture against the schemas under `schema/`. The current full sequence validates 14 artifacts and fixtures.
+`scripts/validate-artifacts.py` validates the current JSON reports, versioned project fixtures, historical version-1 project artifact, and edit-command fixture against the schemas under `schema/`. The current full sequence validates 16 artifacts and fixtures.
 
-Machine-specific reports are ignored by Git. Schemas and portable `.resonance.json` fixtures are versioned.
+Most machine-specific reports are ignored by Git. Schemas, portable `.resonance.json` fixtures, and the bounded M6 runtime checkpoint report are versioned; the M6 report stores artifact filenames rather than absolute local paths.
 
 ### Documentation gate
 
@@ -184,6 +198,7 @@ Do not silently replace an approved track or treat an automated render as catalo
 - current documentation and ADRs;
 - bounded dated checkpoint evidence;
 - portable project fixtures;
+- the bounded, path-sanitised M6 runtime report;
 - selected UI screenshots;
 - `artifacts/release-binaries.sha256`.
 
@@ -193,7 +208,7 @@ Do not silently replace an approved track or treat an automated render as catalo
 - `.local` dependencies and build tree;
 - installed VST3 bundles and content;
 - inventory and quarantine files containing local paths;
-- test and self-test reports;
+- test and self-test reports other than the bounded M6 runtime checkpoint report;
 - diagnostic WAV files;
 - IDE state and logs.
 
