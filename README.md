@@ -87,7 +87,7 @@ The first four M5 host-side slices were implemented on 2026-08-09 without changi
 - preserved the accepted starter loop's legacy `0.82`-beat articulation during pitch-only edits while still requiring changed timing to resolve at 960 PPQ;
 - passed 122 native project/round-trip/command assertions, the expanded packaged M5 workflow test, and 13 schema-validated artifacts and fixtures.
 
-This is the technical implementation candidate for M5, not user interaction or musical approval. The bounded controls now prove deterministic resolution from explicit host inputs; a packaged manual audition and acceptance decision remain before M5 can be called complete. See `docs/M5_EDIT_COMMAND_FOUNDATION_2026-08-09.md`, `docs/M5_NOTE_PROPOSAL_WORKFLOW_CHECKPOINT_2026-08-09.md`, `docs/M5_SEEDED_LOOP_DYNAMICS_CHECKPOINT_2026-08-09.md`, and `docs/M5_DYNAMICS_CONTROLS_CHECKPOINT_2026-08-09.md`.
+M5 was explicitly accepted on 2026-08-09 after packaged review of both target scopes, multiple strengths, frozen controls, A/B, and Reject, followed by an automated Apply/Undo/repeat/cleanup rerun. The accepted Surge sound responded only subtly to velocity: A was slightly preferred but hard to distinguish at maximum delta `8`, while delta `24` and the selected-note delta `32` sounded about the same. Acceptance therefore covers the trusted command/proposal lifecycle without claiming that B was musically superior. See `docs/M5_EDIT_COMMAND_FOUNDATION_2026-08-09.md`, `docs/M5_NOTE_PROPOSAL_WORKFLOW_CHECKPOINT_2026-08-09.md`, `docs/M5_SEEDED_LOOP_DYNAMICS_CHECKPOINT_2026-08-09.md`, `docs/M5_DYNAMICS_CONTROLS_CHECKPOINT_2026-08-09.md`, and `docs/M5_ACCEPTANCE_2026-08-09.md`.
 
 ### Accepted host-owned sound workflow
 
@@ -205,11 +205,11 @@ The build copies four production executables to `bin`:
 
 `ScannerHangFixture.exe`, `RealtimeEngineTests.exe`, and `SongProjectTests.exe` stay in the build tree because they are development-only test programs. Exact SHA-256 values for the packaged binaries are recorded in `artifacts/release-binaries.sha256`.
 
-## Next acceptance gate
+## Next implementation gate
 
-1. Preserve the accepted M4 `0.3.0` sound workflow and the tested M5 proposal lifecycle.
-2. In the exact packaged editor, preview both whole-loop and selected-note dynamics with at least two strengths or seeds.
-3. Confirm the controls, larger diff, A/B sound, Reject, Apply, and one Undo are understandable and useful, then record an explicit M5 acceptance or repair request.
-4. Keep additional transforms, factory-preset parsing, multi-track expansion, arrangement, and model-service integration outside this acceptance gate.
+1. Preserve the accepted M4 `0.3.0` sound workflow and accepted M5 proposal lifecycle.
+2. Define M6's versioned project migration, stable track/clip IDs, and preallocated mixer ownership before changing production code.
+3. Prove version-1 projects migrate losslessly to the new in-memory shape before adding a second plug-in instance or mixer UI.
+4. Keep arrangement, automation, broad effects, factory-preset parsing, and model-service integration outside the first M6 slice.
 
 Architecture and evidence are recorded in `docs/ADR-0001-vst3-host-foundation.md`, `docs/ADR-0002-crash-isolated-plugin-scanning.md`, `docs/ADR-0003-realtime-audio-engine.md`, `docs/ADR-0004-host-owned-sound-snapshots.md`, and the dated checkpoint files under `docs/`.

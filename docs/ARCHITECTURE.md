@@ -176,4 +176,4 @@ These are extension points, not permission to weaken current invariants. Multi-t
 
 ## Architectural evidence
 
-The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the M5 edit-command foundation, the M5 note-proposal workflow, the first seeded loop-dynamics transform, and its explicit controls. See the [documentation index](README.md) for the full list.
+The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the M5 edit-command foundation, the M5 note-proposal workflow, the first seeded loop-dynamics transform, its explicit controls, and final M5 acceptance. See the [documentation index](README.md) for the full list.

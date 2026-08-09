@@ -1,6 +1,6 @@
 # AI-assisted music editing design
 
-Status: M5 technical implementation candidate; the version-1 host command core, editor-owned visual A/B workflow, seeded bounded velocity transform, and explicit target/strength/seed controls are implemented, while packaged user acceptance, additional transforms, natural-language translation, and the model-service boundary remain future work
+Status: M5 accepted; the version-1 host command core, editor-owned visual A/B workflow, seeded bounded velocity transform, and explicit target/strength/seed controls passed packaged review, while additional transforms, natural-language translation, and the model-service boundary remain future work
 
 ## Goal
 
@@ -220,6 +220,6 @@ The first AI slice should be intentionally small:
 7. apply as one Undo transaction or reject with no mutation;
 8. cover deterministic resolution, stale proposals, invalid IDs, bounds, and round trips with tests.
 
-Items 1, 2, 4, 5, 6, 7, and the host-side portions of item 8 now have native coverage, including deterministic multi-note resolution and explicit bounded host inputs. The remaining M5 gate is packaged user review of control clarity and musical usefulness. Natural-language translation remains intentionally deferred to the later AI milestone rather than being folded into M5 acceptance.
+Items 1, 2, 4, 5, 6, 7, and the host-side portions of item 8 have native coverage, including deterministic multi-note resolution and explicit bounded host inputs. The user accepted M5 after packaged review on 2026-08-09. The accepted Surge sound was only subtly velocity-sensitive, so that acceptance establishes trust in the command, preview, decision, and Undo contract rather than claiming that this first transform produced a preferable B. Natural-language translation remains intentionally deferred to the later AI milestone.
 
 Do not begin with open-ended “make a whole soundtrack” generation. The command and preview contract must become trustworthy first.
