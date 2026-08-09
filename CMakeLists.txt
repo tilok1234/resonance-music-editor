@@ -111,6 +111,8 @@ set_target_properties(ResonanceMusicEditor PROPERTIES
 juce_generate_juce_header(ResonanceMusicEditor)
 
 target_sources(ResonanceMusicEditor PRIVATE
+    src/edit_command.cpp
+    src/edit_command.h
     src/editor_component.cpp
     src/editor_component.h
     src/known_plugin.cpp
@@ -178,6 +180,8 @@ juce_add_console_app(SongProjectTests
 juce_generate_juce_header(SongProjectTests)
 
 target_sources(SongProjectTests PRIVATE
+    src/edit_command.cpp
+    src/edit_command.h
     src/loop_scheduler.h
     src/song_project.cpp
     src/song_project.h

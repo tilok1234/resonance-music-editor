@@ -9,9 +9,15 @@ Resonance is a C++20/JUCE 9 Windows application with four production executables
 ```mermaid
 flowchart LR
     U["Manual editor controls"] --> M["SongProject ValueTree"]
+    U --> EP["Bounded edit producers"]
     B["Host-owned A/B sound controls"] --> M
     B --> V
-    A["Future structured AI commands"] -. "same validated edits" .-> M
+    A["Future AI translator"] -. "version-1 JSON" .-> EC["EditCommand validator and candidate"]
+    EP --> EC
+    EC --> D["Before/after note diff"]
+    D --> PB["Editor proposal card"]
+    PB -->|"Apply once"| M
+    PB -->|"Audition candidate B"| S
     M --> S["Fixed-capacity SequenceSnapshot"]
     S --> R["RealtimeEngine audio callback"]
     K["Mouse and hardware MIDI"] --> R
@@ -19,14 +25,14 @@ flowchart LR
     V --> G["Master gain and sample guards"]
     G --> W["Windows Audio / WASAPI"]
 
-    P["VST3 bundle"] --> C["Disposable scanner child"]
-    C --> I["Inventory controller"]
+    P["VST3 bundle"] --> SC["Disposable scanner child"]
+    SC --> I["Inventory controller"]
     I --> Q["Inventory and quarantine JSON"]
     Q --> L["Known plug-in loader"]
     L --> V
 ```
 
-Solid lines are implemented. The dotted AI path is a planned seam, not a current feature.
+Solid lines are implemented host-side boundaries. Only the dotted AI translation path is unimplemented in this diagram; the current proposal card is driven by bounded manual selected-note `+1` and seeded velocity producers with whole-loop/selected-note target, maximum-delta, and seed inputs.
 
 ## Production executables
 
@@ -43,10 +49,11 @@ Solid lines are implemented. The dotted AI path is a planned seam, not a current
 
 | Area | Main files | Owns |
 | --- | --- | --- |
-| Application lifecycle | `src/realtime_main.cpp` | arguments, settings, window creation, self-test, UI snapshot, idle test |
-| Main UI | `src/editor_component.*` | transport, device controls, file choosers, project actions, native plug-in window |
-| Piano roll | `src/piano_roll.*` | note hit testing, selection, add, move, resize, delete, vertical scroll |
+| Application lifecycle | `src/realtime_main.cpp` | arguments, settings, window creation, self-tests, UI snapshot, idle test |
+| Main UI | `src/editor_component.*` | transport, device controls, file choosers, project actions, proposal ownership, native plug-in window |
+| Piano roll | `src/piano_roll.*` | note hit testing, selection, add, move, resize, delete, vertical scroll, proposal overlays |
 | Song model | `src/song_project.*` | ValueTree state, stable note IDs, Undo/Redo, JSON conversion, validation |
+| Edit-command core | `src/edit_command.*` | strict version-1 parsing, content-hash preconditions, deterministic bounded transform resolution, candidate projects, note diffs, consume-once Apply/Reject |
 | Scheduling | `src/loop_scheduler.h` | sample-offset MIDI events, note wrap, fixed-capacity sequence contract |
 | Audio engine | `src/realtime_engine.*` | device callback, transport, MIDI merge, VST3 processing, gain, meters, guards |
 | Accepted plug-in load | `src/known_plugin.*` | inventory/quarantine parse, exact bundle revalidation, selected instrument record |
@@ -59,6 +66,8 @@ Solid lines are implemented. The dotted AI path is a planned seam, not a current
 ## Interactive ownership
 
 `MainEditorComponent` owns one `SongProject`, one `RealtimeEngine`, one device manager, one accepted plug-in record, and the editor controls. The project is the authoritative symbolic state. UI operations modify the project; its change callback refreshes controls and publishes a new sequence snapshot.
+
+The component may also own one pending `EditCommandPreview`. That preview contains an independent candidate project and is never authoritative. Audition A publishes the active project's immutable sequence; Audition B publishes the candidate sequence. Apply suppresses intermediate UI publication while the command core performs its one Undo transaction, then publishes the accepted result once. Reject republishes A. Any unrelated project change invalidates the old content-hash precondition and clears the preview. The sound and note candidate lanes are mutually interlocked.
 
 The current model contains:
 
@@ -156,15 +165,15 @@ See [VST3 hosting](VST3_HOSTING.md) and [ADR-0002](ADR-0002-crash-isolated-plugi
 The current single-track shape is deliberate, but several seams are intended for growth:
 
 - `SongProject` can evolve from one track and clip into track and arrangement collections through an explicit schema migration.
-- structured edit commands can sit above the same project operations used by the piano roll;
+- structured edit commands and the proposal card sit above the same note operations, Undo manager, and immutable sequence publisher used by the piano roll;
 - `SequenceSnapshot` can become a per-track render snapshot without exposing the mutable ValueTree to audio code;
 - the engine can grow a graph or mixer while keeping device callback rules intact;
 - automation can publish fixed-capacity curves or block-local parameter events;
 - offline rendering can reuse the validated song and plug-in state while remaining separate from the device callback;
 - game-transition metadata can reference arrangement sections after ordinary arrangement editing exists.
 
-These are extension points, not permission to weaken current invariants. Multi-track, automation, AI editing, effects, and game-state playback are not implemented yet.
+These are extension points, not permission to weaken current invariants. Multi-track, automation, additional transform families, AI translation/service integration, effects, and game-state playback are not implemented yet.
 
 ## Architectural evidence
 
-The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, and the accepted M4 sound workflow. See the [documentation index](README.md) for the full list.
+The durable decisions are recorded in the four ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the M5 edit-command foundation, the M5 note-proposal workflow, the first seeded loop-dynamics transform, its explicit controls, and final M5 acceptance. See the [documentation index](README.md) for the full list.

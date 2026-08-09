@@ -74,9 +74,13 @@ The optional `--state-project <song.resonance.json>` probe input restores an exa
 | Suite | Current passed assertions |
 | --- | ---: |
 | Real-time loop scheduler | 83 |
-| Song project and round trip | 63 |
+| Song project, round trip, and edit commands | 122 |
 
-The tests cover timing boundaries, the real 44.1 kHz / 441-sample exact-block case, loop wrap, note-off behavior, event balance, project defaults, edit constraints, stable IDs, note and sound Undo/Redo, named opaque sound integrity, backward-compatible `soundName` loading, JSON round trips, malformed data, state hashes, and relocation-compatible VST3 identity.
+The tests cover timing boundaries, the real 44.1 kHz / 441-sample exact-block case, loop wrap, note-off behavior, event balance, project defaults, edit constraints, stable IDs, note and sound Undo/Redo, named opaque sound integrity, backward-compatible `soundName` loading, JSON round trips, malformed data, state hashes, and relocation-compatible VST3 identity. The M5 cases additionally prove strict versioned command parsing and round trip, deterministic seed preservation, exact content-hash preconditions, non-mutating candidates, concrete note diffs, consume-once Apply/Reject, one-Undo Apply, stale preview and stale Apply rejection, unknown targets, invalid bounds, and duplicate-target rejection against the portable command fixture. The seeded velocity cases prove canonical target ordering, same-input command and candidate identity, changed-seed divergence, velocity-only deltas of 1 through the declared maximum, one-Undo restoration, and fail-closed seed, bound, duplicate, empty, and missing-target validation.
+
+### M5 edit-command core gate
+
+`scripts/test-realtime.ps1` passes `tests/fixtures/edit-command-note-patch-v1.json` to `SongProjectTests.exe`. The fixture's schema-valid all-zero content hash is replaced in memory with the exact active-project SHA-256, keeping the committed fixture portable while exercising a current command. The structured report records command version 1, the fixture name and candidate SHA-256, plus the seeded velocity command and candidate hashes. These tests prove the host command and resolver boundaries only; they do not prove a visible diff, transform quality, or musical approval.
 
 ### Packaged silent self-test
 
@@ -110,9 +114,19 @@ For an explicitly selected saved project, the Release editor can exercise the pr
 
 This hidden mode opens the configured Windows Audio device and processes the song for 4.5 seconds. It requires A's post-processing live-equivalent hash to remain stable through playback, unchanged B to match A with `STATE MATCHES A`, Reject to preserve a clean project, and Close to proceed without a false discard warning. Unlike `--self-test`, this mode can emit audible audio; use a safe output level. It is a technical identity and interaction gate, not a new listening judgment.
 
+### Packaged M5 native proposal gate
+
+The Release editor exercises the production note-proposal controls without browser automation:
+
+```powershell
+.\bin\ResonanceMusicEditor.exe --m5-workflow-test --report <report.json>
+```
+
+This hidden mode keeps transport stopped. It first creates a selected-note `+1` candidate, proves the active song remains clean and hash-identical, saves and reloads accepted A while B remains pending, checks the sound/note candidate interlock, switches both A/B controls, rejects without mutation, applies as one Undo transaction, verifies Undo/Redo hashes, invalidates a stale preview after an unrelated edit, and restores the original project. It then creates the default eight-note dynamics candidate with seed `18421` and maximum delta `8`, verifies velocity-only bounds, auditions and rejects without mutating A, repeats the preview, applies exact B, and restores A with one Undo. Finally it enters selected-note scope, maximum delta `3`, and seed `90210` through the production controls; verifies one targeted bounded diff and a changed candidate; repeats A/B, Reject, deterministic preview, Apply, and Undo; and proves invalid delta `33` disables Preview before clean Close. `schema/m5-workflow-test.schema.json` requires every recorded lifecycle condition to pass.
+
 ### Artifact-schema gate
 
-`scripts/validate-artifacts.py` validates the current JSON reports and project fixtures against the schemas under `schema/`. The current full sequence validates 11 artifacts.
+`scripts/validate-artifacts.py` validates the current JSON reports, project fixtures, and edit-command fixture against the schemas under `schema/`. The current full sequence validates 13 artifacts and fixtures.
 
 Machine-specific reports are ignored by Git. Schemas and portable `.resonance.json` fixtures are versioned.
 
@@ -133,6 +147,7 @@ Before calling an interaction milestone complete, verify the exact packaged Rele
 - native Surge open, audition strip, keyboard, close, and reopen;
 - sound B capture, A/B audition, Apply, Reject, dirty state, and discard warning;
 - sound Undo/Redo restoring the live instance, then Save, close, and Open preserving the applied sound;
+- whole-loop/selected-note target, maximum-delta, and seed entry; invalid-input feedback; frozen pending controls; proposal overlays/counts; seed and velocity detail; A/B audition; Save-A isolation; Apply; Reject; one-step Undo/Redo; and discard warning;
 - no stuck note or leftover process;
 - responsive idle behavior.
 

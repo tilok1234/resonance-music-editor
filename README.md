@@ -1,8 +1,8 @@
 # Resonance Music Editor
 
-Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. The project now has its first editable song and sound-design slice: a native Windows editor with real-time WASAPI output, a piano roll, lossless song projects, one inventory-approved Surge XT instrument track, and a host-owned A/B sound workflow.
+Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. The project now has its first editable song, sound-design, and reversible note-proposal slices: a native Windows editor with real-time WASAPI output, a piano roll, lossless song projects, one inventory-approved Surge XT instrument track, host-owned A/B sound, and an editor-owned A/B note preview.
 
-The current scope is deliberately one instrument track and one looping clip. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. Factory-preset indexing, arrangement tracks, automation, AI commands, and game-state music tools remain later work.
+The current scope is deliberately one instrument track and one looping clip. Notes, tempo, loop length, grid snap, velocity, and an explicitly accepted named Surge state are editable and saveable. A version-1 command builds a validated non-mutating note candidate; the editor shows its before/after diff, auditions project A or candidate B through the normal immutable sequence path, and applies it as one Undo transaction or rejects it unchanged. The first deterministic transform varies either the whole loop or one selected note using an explicit maximum velocity change and seed, then resolves those inputs to ordinary concrete note updates before preview. Additional transform families and any natural-language model integration remain later work alongside factory-preset indexing, arrangement, automation, and game-state music tools.
 
 ![First playable Resonance Music Editor UI](artifacts/realtime-ui-snapshot.png)
 
@@ -19,7 +19,7 @@ Start with the [documentation index](docs/README.md). It separates current behav
 - [Development guide](docs/DEVELOPMENT.md) - Windows setup, local dependencies, build, run, test, and troubleshooting.
 - [Project format](docs/PROJECT_FORMAT.md) - the versioned `.resonance.json` contract and migration rules.
 - [VST3 hosting](docs/VST3_HOSTING.md) - scanning, quarantine, identity, loading, state, and native-editor behavior.
-- [AI editing design](docs/AI_EDITING_DESIGN.md) - the proposed reversible command model shared with manual editing.
+- [AI editing design](docs/AI_EDITING_DESIGN.md) - the implemented command foundation and the remaining reversible editing plan.
 - [Testing and release](docs/TESTING_AND_RELEASE.md) - automated gates, listening gates, artifacts, and release checklist.
 - [Roadmap](docs/ROADMAP.md) - completed foundations and the ordered route to a game-music production editor.
 - [Current handoff](HANDOFF.md) - exact live status, known limitations, and a ready-to-paste fresh-task prompt.
@@ -47,6 +47,16 @@ Keep the master level low for the first listen. It defaults to `-12 dB`, and tra
 
 Unsaved project changes are marked with `*`. New, Open, and window close ask before discarding project edits, an unapplied B, or live Surge state that matches neither known live-equivalent snapshot.
 
+## Preview and apply a note proposal
+
+1. Choose **Whole loop** or **Selected note**, enter **MAX +/-** from `1` through `32`, and enter a seed from `0` through `2147483647`. Selected-note scope requires a piano-roll selection.
+2. Press **Preview dynamics**. The defaults are whole loop, maximum delta `8`, and seed `18421`. For the separate pitch proof, select a note and press **Selected +1**.
+3. Read the change count, first exact note diff, seed, and A/B hashes. Proposal inputs freeze while B is pending.
+4. Use **Audition A** and **Audition B** to switch the realtime loop between the accepted project and candidate.
+5. Press **Apply** to make B one undoable project edit, or **Reject** to restore A without mutation.
+
+Orange marks the accepted before-note and blue marks the proposed after-note. Save writes accepted A only while a proposal remains pending, and New, Open, or Close warns before discarding that proposal. The sound and note candidate lanes are intentionally interlocked so there is only one active A/B decision at a time.
+
 ## Compare and apply a Surge sound
 
 1. Press **Open Surge XT** and choose or design a sound in Surge's native window.
@@ -57,6 +67,27 @@ Unsaved project changes are marked with `*`. New, Open, and window close ask bef
 Save writes only the accepted project sound. An unapplied B remains preview state and is not silently substituted into the project. Undo/Redo restores the corresponding live Surge state as well as the saved model. The exact saved SHA-256 protects project bytes; the UI separately tracks the live-equivalent hash returned by Surge after restore because one sound can have lifecycle-dependent opaque encodings. The current snapshot-first workflow intentionally does not parse or index Surge's vendor-specific `.fxp` library; see `docs/ADR-0004-host-owned-sound-snapshots.md`.
 
 ## Proven checkpoints
+
+### M5 edit-command and note-proposal workflow
+
+The first four M5 host-side slices were implemented on 2026-08-09 without changing song-project schema version 1 or editor version 0.3.0:
+
+- added a strict version-1 `editNotes` JSON schema, parser, and serializer;
+- added full-project content SHA-256 preconditions and stale-command/stale-Apply rejection;
+- resolved note add, update, and remove changes into a separate candidate `SongProject` without dirtying the active song;
+- exposed concrete before/after note diffs and candidate content hashes;
+- made Apply and Reject consume the preview exactly once, with Apply mapping to one named Undo transaction;
+- preserved an optional deterministic seed in resolved commands;
+- added a host-side seeded velocity resolver with canonical target order, a 31-bit seed, a `1`-through-`32` maximum delta, strict target validation, and platform-independent integer resolution;
+- added explicit whole-loop/selected-note target, maximum-delta, and seed controls above **Preview dynamics**, retaining seed `18421` and delta `8` as defaults;
+- disabled Preview for invalid settings, required a selection for selected-note scope, and froze all three inputs while B is pending;
+- gave the editor ownership of one pending preview with visible add/update/remove overlays, counts, hashes, and exact note detail;
+- added A/B note audition through the same fixed-capacity sequence publication path used by normal playback;
+- added explicit Apply/Reject, Save-A isolation, stale-preview invalidation, discard warnings, and a sound/note candidate interlock;
+- preserved the accepted starter loop's legacy `0.82`-beat articulation during pitch-only edits while still requiring changed timing to resolve at 960 PPQ;
+- passed 122 native project/round-trip/command assertions, the expanded packaged M5 workflow test, and 13 schema-validated artifacts and fixtures.
+
+M5 was explicitly accepted on 2026-08-09 after packaged review of both target scopes, multiple strengths, frozen controls, A/B, and Reject, followed by an automated Apply/Undo/repeat/cleanup rerun. The accepted Surge sound responded only subtly to velocity: A was slightly preferred but hard to distinguish at maximum delta `8`, while delta `24` and the selected-note delta `32` sounded about the same. Acceptance therefore covers the trusted command/proposal lifecycle without claiming that B was musically superior. See `docs/M5_EDIT_COMMAND_FOUNDATION_2026-08-09.md`, `docs/M5_NOTE_PROPOSAL_WORKFLOW_CHECKPOINT_2026-08-09.md`, `docs/M5_SEEDED_LOOP_DYNAMICS_CHECKPOINT_2026-08-09.md`, `docs/M5_DYNAMICS_CONTROLS_CHECKPOINT_2026-08-09.md`, and `docs/M5_ACCEPTANCE_2026-08-09.md`.
 
 ### Accepted host-owned sound workflow
 
@@ -174,10 +205,11 @@ The build copies four production executables to `bin`:
 
 `ScannerHangFixture.exe`, `RealtimeEngineTests.exe`, and `SongProjectTests.exe` stay in the build tree because they are development-only test programs. Exact SHA-256 values for the packaged binaries are recorded in `artifacts/release-binaries.sha256`.
 
-## Next implementation slice
+## Next implementation gate
 
-1. Preserve the accepted M4 `0.3.0` sound-workflow contract and its exact saved-B evidence.
-2. Begin M5's unified validated edit-command layer as a separate implementation scope.
-3. Do not combine M5 with factory-preset parsing, multi-track expansion, arrangement, or model-service integration.
+1. Preserve the accepted M4 `0.3.0` sound workflow and accepted M5 proposal lifecycle.
+2. Define M6's versioned project migration, stable track/clip IDs, and preallocated mixer ownership before changing production code.
+3. Prove version-1 projects migrate losslessly to the new in-memory shape before adding a second plug-in instance or mixer UI.
+4. Keep arrangement, automation, broad effects, factory-preset parsing, and model-service integration outside the first M6 slice.
 
 Architecture and evidence are recorded in `docs/ADR-0001-vst3-host-foundation.md`, `docs/ADR-0002-crash-isolated-plugin-scanning.md`, `docs/ADR-0003-realtime-audio-engine.md`, `docs/ADR-0004-host-owned-sound-snapshots.md`, and the dated checkpoint files under `docs/`.

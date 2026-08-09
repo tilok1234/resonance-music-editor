@@ -250,6 +250,39 @@ juce::String SongProject::addNote (double beat, double lengthBeatsValue, int mid
     return id;
 }
 
+juce::Result SongProject::insertNote (const SongNote& note)
+{
+    auto notes = getNotesTree();
+    if (! notes.isValid())
+        return juce::Result::fail ("The project notes collection is missing");
+    if (notes.getNumChildren() >= static_cast<int> (maxSequenceNotes))
+        return juce::Result::fail ("The project already contains the maximum number of notes");
+    if (note.id.isEmpty())
+        return juce::Result::fail ("A note id is required");
+    if (findNoteTree (note.id).isValid())
+        return juce::Result::fail ("The note id already exists: " + note.id);
+    if (! std::isfinite (note.beat) || ! std::isfinite (note.lengthBeats))
+        return juce::Result::fail ("Note timing must be finite");
+    if (note.beat < 0.0 || note.beat >= getLoopLengthBeats())
+        return juce::Result::fail ("Note start is outside the loop");
+    if (note.lengthBeats <= 0.0
+        || note.beat + note.lengthBeats > getLoopLengthBeats() + 1.0e-9)
+        return juce::Result::fail ("Note length is outside the loop");
+    if (note.midiNote < 0 || note.midiNote > 127)
+        return juce::Result::fail ("Note MIDI pitch must be from 0 through 127");
+    if (note.velocity < 1 || note.velocity > 127)
+        return juce::Result::fail ("Note velocity must be from 1 through 127");
+
+    juce::ValueTree added (noteType);
+    added.setProperty ("id", note.id, nullptr);
+    added.setProperty ("beat", note.beat, nullptr);
+    added.setProperty ("lengthBeats", note.lengthBeats, nullptr);
+    added.setProperty ("midiNote", note.midiNote, nullptr);
+    added.setProperty ("velocity", note.velocity, nullptr);
+    notes.addChild (added, -1, &undoManager);
+    return juce::Result::ok();
+}
+
 bool SongProject::updateNote (const SongNote& note)
 {
     auto target = findNoteTree (note.id);
@@ -275,6 +308,18 @@ bool SongProject::removeNote (const juce::String& id)
 
     getNotesTree().removeChild (note, &undoManager);
     return true;
+}
+
+juce::String SongProject::getContentSha256() const
+{
+    auto content = toJsonValue();
+    if (auto* object = content.getDynamicObject())
+        object->removeProperty ("editorVersion");
+
+    const auto canonicalJson = juce::JSON::toString (content, false);
+    const juce::MemoryBlock bytes (canonicalJson.toRawUTF8(),
+                                   canonicalJson.getNumBytesAsUTF8());
+    return juce::SHA256 (bytes).toHexString().toLowerCase();
 }
 
 void SongProject::setPluginMetadata (const juce::String& identifier,

@@ -1,6 +1,6 @@
 # AI-assisted music editing design
 
-Status: proposed contract; no AI command system is implemented yet
+Status: M5 accepted; the version-1 host command core, editor-owned visual A/B workflow, seeded bounded velocity transform, and explicit target/strength/seed controls passed packaged review, while additional transforms, natural-language translation, and the model-service boundary remain future work
 
 ## Goal
 
@@ -37,6 +37,30 @@ flowchart LR
 
 The model proposes intent. A deterministic host-side engine resolves and validates concrete edits. The active project changes only at Apply.
 
+## Implemented M5 command and proposal boundary
+
+The first host-side slice is deliberately service-independent:
+
+- `schema/edit-command.schema.json` defines command version 1;
+- `src/edit_command.*` strictly parses and serializes fully resolved `editNotes` commands;
+- every command targets the current `track-1` / `loop-1` IDs and carries the exact active-project content SHA-256;
+- add, update, and remove changes use stable note IDs and integer ticks at 960 PPQ;
+- preview clones the active `SongProject`, validates all targets and bounds, applies the resolved changes only to that candidate, and returns explicit before/after note records and content hashes;
+- Apply rechecks the content hash, publishes exactly the previewed changes as one named Undo transaction, and consumes the preview;
+- Reject consumes the preview without changing or dirtying the active project;
+- the optional integer seed is preserved as deterministic provenance in resolved commands;
+- `SeededVelocityVariation` validates 1 through 128 note IDs, a 31-bit non-negative seed, and maximum delta 1 through 32, canonicalizes target order, and resolves through a fixed integer mixer into concrete velocity-only updates;
+- identical project content, target set, seed, and maximum delta produce the same serialized command and candidate independently of supplied target order;
+- `MainEditorComponent` owns at most one pending preview and shows its summary, counts, exact first note change, and before/after hashes;
+- the piano roll draws accepted before-notes and proposed after-notes without changing active hit testing;
+- Audition A and B publish either project or candidate through the normal immutable `SequenceSnapshot` path;
+- explicit Apply and Reject preserve the consume-once core, Save writes only A, and unrelated project edits invalidate stale B;
+- note and sound candidate controls are interlocked so the editor never presents two simultaneous A/B decisions;
+- the manual producers remain deliberately bounded: transpose the selected note up one semitone, or vary velocities for the whole loop or selected note with explicit maximum delta and seed;
+- the proposal card validates maximum delta `1` through `32` and seed `0` through `2147483647`, requires a current selection for selected-note scope, and freezes all request inputs while B is pending.
+
+The content hash excludes only the editor build-version label. It includes the musical model and accepted opaque instrument state, so a command becomes stale after any material project change. Existing note timing that predates exact tick storage may be preserved byte-semantically by a pitch- or velocity-only update; any changed timing must still resolve to an integer tick at 960 PPQ. The current seeded resolver is host-side and service-independent: it records the seed, but preview and Apply use its fully resolved concrete changes rather than rerunning randomness.
+
 ## Command envelope
 
 A future command format should include:
@@ -51,21 +75,28 @@ A future command format should include:
 - human-readable summary;
 - concrete additions, updates, removals, or generated section references.
 
-Illustrative, non-implemented example:
+The implemented version-1 envelope uses concrete, already-resolved note changes:
 
 ```json
 {
   "commandVersion": 1,
-  "projectRevision": 42,
-  "operation": "transformNotes",
-  "selection": { "clipId": "loop-1", "noteIds": ["note-1", "note-2"] },
-  "intent": {
-    "energyDelta": 0.25,
-    "preservePitchContour": true,
-    "maxTimingShiftBeats": 0.125
-  },
+  "projectContentSha256": "<64 hexadecimal characters>",
+  "operation": "editNotes",
+  "target": { "trackId": "track-1", "clipId": "loop-1" },
   "seed": 18421,
-  "summary": "Increase rhythmic drive while preserving the motif"
+  "summary": "Increase rhythmic drive while preserving the motif",
+  "changes": [
+    {
+      "action": "update",
+      "note": {
+        "id": "note-1",
+        "startTick": 0,
+        "lengthTicks": 720,
+        "midiNote": 50,
+        "velocity": 100
+      }
+    }
+  ]
 }
 ```
 
@@ -77,6 +108,7 @@ The host must reject stale project revisions, unknown IDs, unsupported operation
 
 Implement these first because they are easy to preview and test:
 
+- vary whole-loop or selected-note velocity within an explicit bound and deterministic seed; this first parameterized form is implemented;
 - quantize with strength rather than only hard snap;
 - humanize timing and velocity within explicit bounds;
 - transpose or constrain to a scale/register;
@@ -146,6 +178,8 @@ A proposal should create a candidate project revision or bounded patch, not muta
 
 The preview engine must not create a second unsafe plug-in scan path. For opaque VST3 state, use explicit before/after snapshots and label the diff as opaque unless parameters are mapped semantically.
 
+The implemented single-note card covers the first, second, and final bullets for note updates: orange before-note, blue after-note, add/update/remove counts, exact note detail, content hashes, and A/B sequence audition. Multi-note transforms will reuse this card; parameter, track, section, and warning views remain future extensions.
+
 ## VST3 parameter and preset edits
 
 The first sound-editing milestone should establish host-owned parameter metadata and named state snapshots. AI should initially operate only on allowlisted parameters with known normalized ranges and stable identifiers.
@@ -185,5 +219,7 @@ The first AI slice should be intentionally small:
 6. audition without changing the active project;
 7. apply as one Undo transaction or reject with no mutation;
 8. cover deterministic resolution, stale proposals, invalid IDs, bounds, and round trips with tests.
+
+Items 1, 2, 4, 5, 6, 7, and the host-side portions of item 8 have native coverage, including deterministic multi-note resolution and explicit bounded host inputs. The user accepted M5 after packaged review on 2026-08-09. The accepted Surge sound was only subtly velocity-sensitive, so that acceptance establishes trust in the command, preview, decision, and Undo contract rather than claiming that this first transform produced a preferable B. Natural-language translation remains intentionally deferred to the later AI milestone.
 
 Do not begin with open-ended “make a whole soundtrack” generation. The command and preview contract must become trustworthy first.

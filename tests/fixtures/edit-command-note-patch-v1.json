@@ -1,0 +1,37 @@
+{
+  "commandVersion": 1,
+  "projectContentSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "operation": "editNotes",
+  "target": {
+    "trackId": "track-1",
+    "clipId": "loop-1"
+  },
+  "summary": "Tighten the opening motif",
+  "seed": 18421,
+  "changes": [
+    {
+      "action": "update",
+      "note": {
+        "id": "note-1",
+        "startTick": 0,
+        "lengthTicks": 720,
+        "midiNote": 50,
+        "velocity": 100
+      }
+    },
+    {
+      "action": "remove",
+      "noteId": "note-2"
+    },
+    {
+      "action": "add",
+      "note": {
+        "id": "note-m5-fixture-1",
+        "startTick": 960,
+        "lengthTicks": 240,
+        "midiNote": 67,
+        "velocity": 88
+      }
+    }
+  ]
+}

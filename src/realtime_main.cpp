@@ -142,7 +142,9 @@ int runSelfTest (const juce::StringArray& args)
         if (soundApplyResult.failed())
             throw std::runtime_error (soundApplyResult.getErrorMessage().toStdString());
         song.beginUndoTransaction ("Self-test note");
-        song.addNote (10.5, 0.75, 67, 109);
+        const auto noteInsertResult = song.insertNote ({ "note-self-test-1", 10.5, 0.75, 67, 109 });
+        if (noteInsertResult.failed())
+            throw std::runtime_error (noteInsertResult.getErrorMessage().toStdString());
 
         const auto projectSaveResult = song.saveToFile (songProjectFile);
         if (projectSaveResult.failed())
@@ -162,6 +164,7 @@ int runSelfTest (const juce::StringArray& args)
 
         const auto savedPayloadExact = reopenedPluginState == livePluginState;
         const auto soundNameRoundTrip = reopenedSong.getPluginSoundName() == "Self-test Surge state";
+        const auto fixtureNotePresent = reopenedSong.findNote ("note-self-test-1").has_value();
         plugin->setStateInformation (reopenedPluginState.getData(),
                                      static_cast<int> (reopenedPluginState.getSize()));
         juce::MemoryBlock recapturedPluginState;
@@ -176,6 +179,7 @@ int runSelfTest (const juce::StringArray& args)
         songObject->setProperty ("stateSha256", song.getPluginStateSha256());
         songObject->setProperty ("soundName", reopenedSong.getPluginSoundName());
         songObject->setProperty ("noteCount", static_cast<int> (reopenedSong.getNotes().size()));
+        songObject->setProperty ("fixtureNoteId", "note-self-test-1");
         songObject->setProperty ("tempoBpm", reopenedSong.getTempoBpm());
         songObject->setProperty ("loopLengthBeats", reopenedSong.getLoopLengthBeats());
         songObject->setProperty ("savedPayloadExact", savedPayloadExact);
@@ -206,7 +210,7 @@ int runSelfTest (const juce::StringArray& args)
         reportObject->setProperty ("passed",
                                    parameterCountMatches && stereoOutput
                                        && savedPayloadExact && pluginRestoreExact
-                                       && soundNameRoundTrip);
+                                       && soundNameRoundTrip && fixtureNotePresent);
     }
     catch (const std::exception& error)
     {
@@ -254,6 +258,17 @@ public:
         return editor != nullptr ? editor->runM4WorkflowSelfTest (projectFile) : juce::var {};
     }
 
+    juce::var runM5WorkflowSelfTest()
+    {
+        return editor != nullptr ? editor->runM5WorkflowSelfTest() : juce::var {};
+    }
+
+    void prepareM5PreviewForSnapshot()
+    {
+        if (editor != nullptr)
+            editor->prepareM5PreviewForSnapshot();
+    }
+
 private:
     MainEditorComponent* editor = nullptr;
 };
@@ -292,10 +307,12 @@ public:
         const auto snapshotMode = args.contains ("--ui-snapshot");
         const auto idleTestMode = args.contains ("--ui-idle-test");
         const auto m4WorkflowTestMode = args.contains ("--m4-workflow-test");
+        const auto m5WorkflowTestMode = args.contains ("--m5-workflow-test");
         window = std::make_unique<MainWindow> (inventory,
                                                quarantine,
                                                properties.getUserSettings(),
-                                               ! snapshotMode && ! idleTestMode && ! m4WorkflowTestMode);
+                                               ! snapshotMode && ! idleTestMode
+                                                   && ! m4WorkflowTestMode && ! m5WorkflowTestMode);
 
         if (snapshotMode)
         {
@@ -307,6 +324,7 @@ public:
 
                 if (content != nullptr)
                 {
+                    window->prepareM5PreviewForSnapshot();
                     const auto image = content->createComponentSnapshot (content->getLocalBounds(), true, 1.0f);
                     juce::MemoryOutputStream encoded;
                     juce::PNGImageFormat png;
@@ -348,6 +366,24 @@ public:
                                     && static_cast<bool> (object->getProperty ("passed"));
                 const auto reportWritten = writeReport (reportFile, report);
                 setApplicationReturnValue (passed && reportWritten ? 0 : 5);
+                quit();
+            });
+        }
+        else if (m5WorkflowTestMode)
+        {
+            const auto reportFile = resolvePathArgument (args,
+                                                         "--report",
+                                                         "m5-workflow-test-report.json");
+            juce::Timer::callAfterDelay (750, [this, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runM5WorkflowSelfTest()
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 6);
                 quit();
             });
         }

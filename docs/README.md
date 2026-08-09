@@ -1,6 +1,6 @@
 # Resonance Music Editor documentation
 
-This index is the entry point for product, architecture, development, and handoff information. Resonance is an early but working Windows-native game-music editor: version 0.3.0 edits one looping MIDI clip, drives one inventory-approved Surge XT VST3 instrument, plays through WASAPI, and preserves an explicitly accepted named plug-in state in a versioned project file. The M4 A/B sound workflow passed packaged interaction, state-lifecycle, and user listening gates and is accepted.
+This index is the entry point for product, architecture, development, and handoff information. Resonance is an early but working Windows-native game-music editor: version 0.3.0 edits one looping MIDI clip, drives one inventory-approved Surge XT VST3 instrument, plays through WASAPI, and preserves an explicitly accepted named plug-in state in a versioned project file. The M4 A/B sound workflow passed packaged interaction, state-lifecycle, and user listening gates and is accepted. M5 is also accepted: its version-1 command core, visual A/B proposal workflow, deterministic seeded velocity transform, and explicit target/strength/seed controls passed automated and packaged user gates. The current sound's subtle velocity response is recorded as a limitation rather than a false claim that B sounded better.
 
 ## Read this first
 
@@ -67,6 +67,11 @@ An ADR records a durable decision and its consequences. Add a new ADR when a cha
 - [Accepted M4 host-owned sound workflow](M4_SOUND_WORKFLOW_CHECKPOINT_2026-08-08.md)
 - [First-play MIDI boundary diagnosis and fix](FIRST_PLAY_MIDI_BOUNDARY_FIX_2026-08-08.md)
 - [M4 Surge state-equivalence diagnosis and fix](M4_SURGE_STATE_EQUIVALENCE_FIX_2026-08-08.md)
+- [M5 edit-command foundation](M5_EDIT_COMMAND_FOUNDATION_2026-08-09.md)
+- [M5 note-proposal workflow](M5_NOTE_PROPOSAL_WORKFLOW_CHECKPOINT_2026-08-09.md)
+- [M5 seeded loop-dynamics transform](M5_SEEDED_LOOP_DYNAMICS_CHECKPOINT_2026-08-09.md)
+- [M5 parameterized dynamics controls](M5_DYNAMICS_CONTROLS_CHECKPOINT_2026-08-09.md)
+- [Accepted M5 unified edit-command layer](M5_ACCEPTANCE_2026-08-09.md)
 
 The acceptance files distinguish implementation proof from musical approval. A passing scheduler, schema, or audio-device test does not mean that a preset, loop, mix, or composition has passed a listening review.
 

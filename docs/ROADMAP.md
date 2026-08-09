@@ -17,7 +17,7 @@ The focus is game music. General sound-effect creation is not part of this roadm
 | F2 First real-time editor | Complete | accepted Surge plays through explicit Windows Audio with safe transport and diagnostics |
 | F3 Editable single-track song | Complete | piano roll, Undo/Redo, exact state, and `.resonance.json` save/open |
 | M4 Sound and preset workflow | Complete | Accepted as version 0.3.0 after A/B, persistence, lifecycle, and listening gates passed |
-| M5 Unified edit-command layer | Planned next | manual and future AI edits share validated, previewable project operations |
+| M5 Unified edit-command layer | Complete | explicitly accepted after packaged command, A/B, deterministic controls, listening, Apply/Undo, and cleanup gates |
 | M6 Multi-track and mixer | Planned | several instruments play through a safe mixer and schema migration |
 | M7 Arrangement, automation, and effects | Planned | full sections, curves, buses, and dependable song structure |
 | M8 AI music assistant | Planned | natural-language requests resolve to bounded command proposals |
@@ -44,7 +44,7 @@ Delivered the first piano roll, stable note IDs, gesture-level Undo/Redo, tempo/
 
 ## M4: Sound and preset workflow
 
-The snapshot-first implementation and its bounded packaged retest are complete. The user preferred B, the saved project preserved it, and the exact native reopen/play/unchanged-recapture/reject/close sequence passed. The user explicitly accepted M4 at 2026-08-08 23:54 +02:00, establishing editor version 0.3.0. M5 is the next milestone.
+The snapshot-first implementation and its bounded packaged retest are complete. The user preferred B, the saved project preserved it, and the exact native reopen/play/unchanged-recapture/reject/close sequence passed. The user explicitly accepted M4 at 2026-08-08 23:54 +02:00, establishing editor version 0.3.0. M5 continued on a separate stacked branch and was explicitly accepted on 2026-08-09 without changing that executable version.
 
 ### Goal
 
@@ -79,6 +79,8 @@ VST3 does not guarantee one uniform factory-preset browsing experience across al
 
 ## M5: Unified edit-command layer
 
+Status: complete and explicitly accepted at 2026-08-09 11:02 +02:00. The foundation implements schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, non-mutating candidate projects, explicit note diffs, consume-once Apply/Reject, one-transaction Undo/Redo, strict stale/invalid rejection, seed provenance, native tests, and a portable schema-validated fixture. The editor owns one pending preview, renders before/after note overlays and counts, auditions A/B through normal immutable sequence publication, applies or rejects explicitly, preserves accepted A on Save, and invalidates stale previews. Checkpoint `2351cb6` adds deterministic bounded velocity resolution. Checkpoint `ef9710d` exposes whole-loop/selected-note target, maximum delta, and seed controls, fails closed on invalid input, and proves repeat, A/B, Reject, Apply, and one Undo through the packaged native workflow. The user found A slightly preferable but difficult to distinguish at delta `8`, and heard about the same result at delta `24` and for selected-note delta `32`; M5 acceptance therefore covers the trusted edit-command workflow without claiming that the current Surge sound made B musically superior. Additional transform families and natural-language translation remain later work.
+
 ### Goal
 
 Give every edit a validated command and diff representation before connecting an AI model.
@@ -96,6 +98,15 @@ Give every edit a validated command and diff representation before connecting an
 - command tests and portable fixtures.
 
 Manual UI actions do not all need to serialize as external JSON immediately, but they and external commands must converge on the same model operations and invariants.
+
+### Acceptance evidence
+
+- the user previewed whole-loop and selected-note dynamics through the exact packaged editor;
+- delta `8` and `24` whole-loop requests plus a delta `32` selected-note request covered multiple strengths and both scopes;
+- the packaged UI showed one targeted update and froze proposal inputs while B was pending;
+- the user exercised A/B and Reject; the fresh hidden workflow proved deterministic repeat, Apply as one transaction, and Undo to A;
+- the fresh report matched the schema-validated artifact byte-for-byte and cleanup left zero editor processes;
+- the user explicitly accepted M5 at 2026-08-09 11:02 +02:00 with the subtle-velocity listening caveat recorded.
 
 ## M6: Multi-track and mixer
 

@@ -13,6 +13,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 VALIDATION_GROUPS = (
     (
+        PROJECT_ROOT / "schema" / "edit-command.schema.json",
+        (PROJECT_ROOT / "tests" / "fixtures" / "edit-command-note-patch-v1.json",),
+    ),
+    (
         PROJECT_ROOT / "schema" / "song-project.schema.json",
         (
             PROJECT_ROOT / "artifacts" / "realtime-song-project.resonance.json",
@@ -46,6 +50,10 @@ VALIDATION_GROUPS = (
     (
         PROJECT_ROOT / "schema" / "song-project-test.schema.json",
         (PROJECT_ROOT / "artifacts" / "song-project-test-report.json",),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "m5-workflow-test.schema.json",
+        (PROJECT_ROOT / "artifacts" / "m5-workflow-test-report.json",),
     ),
 )
 

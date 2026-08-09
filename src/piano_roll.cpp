@@ -13,6 +13,8 @@ const auto gridLine = juce::Colour::fromRGB (46, 62, 82);
 const auto primary = juce::Colour::fromRGB (93, 214, 196);
 const auto secondary = juce::Colour::fromRGB (123, 151, 255);
 const auto textMuted = juce::Colour::fromRGB (137, 153, 173);
+const auto warning = juce::Colour::fromRGB (247, 184, 88);
+const auto danger = juce::Colour::fromRGB (245, 103, 119);
 
 juce::Font rollFont (float height, int style = juce::Font::plain)
 {
@@ -41,6 +43,27 @@ void PianoRoll::setSelectedNote (const juce::String& id)
         select ({});
     else
         select (id);
+}
+
+void PianoRoll::setEditPreview (const std::vector<NoteEditDiff>& diffs,
+                                bool auditioningCandidate)
+{
+    editPreviewDiffs = diffs;
+    auditioningEditCandidate = auditioningCandidate;
+    repaint();
+}
+
+void PianoRoll::setEditPreviewAudition (bool auditioningCandidate)
+{
+    auditioningEditCandidate = auditioningCandidate;
+    repaint();
+}
+
+void PianoRoll::clearEditPreview()
+{
+    editPreviewDiffs.clear();
+    auditioningEditCandidate = false;
+    repaint();
 }
 
 void PianoRoll::setSelectionChangedCallback (std::function<void (const juce::String&)> callback)
@@ -181,6 +204,42 @@ void PianoRoll::paint (juce::Graphics& graphics)
             graphics.setColour (juce::Colours::white.withAlpha (0.96f));
             graphics.drawRoundedRectangle (bounds.reduced (0.5f), 3.0f, 1.5f);
             graphics.fillRect (bounds.getRight() - 4.0f, bounds.getY() + 1.0f, 2.0f, bounds.getHeight() - 2.0f);
+        }
+    }
+
+    for (const auto& diff : editPreviewDiffs)
+    {
+        if (diff.before.has_value())
+        {
+            const auto beforeBounds = boundsForNote (*diff.before);
+            if (! beforeBounds.isEmpty())
+            {
+                const auto beforeColour = diff.action == NoteEditAction::remove ? danger : warning;
+                graphics.setColour (beforeColour.withAlpha (auditioningEditCandidate ? 0.42f : 0.92f));
+                graphics.drawRoundedRectangle (beforeBounds.reduced (1.0f), 3.0f, 2.0f);
+
+                if (diff.action == NoteEditAction::remove)
+                {
+                    graphics.drawLine (beforeBounds.getX() + 4.0f,
+                                       beforeBounds.getCentreY(),
+                                       beforeBounds.getRight() - 4.0f,
+                                       beforeBounds.getCentreY(),
+                                       2.0f);
+                }
+            }
+        }
+
+        if (diff.after.has_value())
+        {
+            const auto afterBounds = boundsForNote (*diff.after);
+            if (! afterBounds.isEmpty())
+            {
+                const auto afterAlpha = auditioningEditCandidate ? 0.92f : 0.42f;
+                graphics.setColour (secondary.withAlpha (afterAlpha));
+                graphics.fillRoundedRectangle (afterBounds.reduced (1.0f), 3.0f);
+                graphics.setColour (juce::Colours::white.withAlpha (auditioningEditCandidate ? 0.88f : 0.42f));
+                graphics.drawRoundedRectangle (afterBounds.reduced (1.0f), 3.0f, 1.4f);
+            }
         }
     }
 
