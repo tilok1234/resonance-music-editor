@@ -59,6 +59,19 @@ The first host-side slice is deliberately service-independent:
 - the manual producers remain deliberately bounded: transpose the selected note up one semitone, or vary velocities for the whole loop or selected note with explicit maximum delta and seed;
 - the proposal card validates maximum delta `1` through `32` and seed `0` through `2147483647`, requires a current selection for selected-note scope, and freezes all request inputs while B is pending.
 
+## External command entry point
+
+Editor 0.5.0 adds **Load command** and **Copy hash** to the proposal card. Together they open the accepted command layer to commands authored outside the editor without adding a model service, a network boundary, or a new trust assumption.
+
+- **Copy hash** places the active project's content SHA-256, track ID, and clip ID on the clipboard as three lines. A command author needs these three values and cannot otherwise obtain them, because the hash is only displayed after a preview already exists.
+- **Load command** reads a `.json` file of at most 256 KB, parses it through the same `parseEditCommand` used by the resolver lane, and installs the result through the same `installEditPreview`. There is no separate application path.
+
+Everything downstream is unchanged and therefore inherits every property M5 proved: the hash precondition, target-ID validation, the non-mutating candidate project, before/after diff overlays, A/B audition, one-transaction Apply, Reject, and stale-preview invalidation. A loaded command is a proposal exactly like a resolver-produced one, and the button is disabled while any candidate is pending so the editor never presents two simultaneous A/B decisions.
+
+Failure is closed and silent about nothing: a missing file, an oversize file, malformed JSON, an unsupported version, a stale hash, or a target that does not match the selected track and clip each leave the active project byte-identical and undirtied. `loadEditCommandFile` and `installEditPreview` return a `juce::Result` and take a `reportFailure` flag so the decision is separable from the dialog, which is what makes the path testable headlessly.
+
+This closes the gap where the only way to produce notes was one mouse click at a time. It does **not** add natural-language translation, a model service, or any new transform family; a command file must still carry fully resolved concrete note changes.
+
 The content hash excludes only the editor build-version label. It includes the musical model and accepted opaque instrument state, so a command becomes stale after any material project change. Existing note timing that predates exact tick storage may be preserved byte-semantically by a pitch- or velocity-only update; any changed timing must still resolve to an integer tick at 960 PPQ. The current seeded resolver is host-side and service-independent: it records the seed, but preview and Apply use its fully resolved concrete changes rather than rerunning randomness.
 
 ## Command envelope

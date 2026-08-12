@@ -14,6 +14,7 @@ $selfTestReport = Join-Path $artifacts "realtime-self-test.json"
 $m6RuntimeReport = Join-Path $artifacts "m6-runtime-test-report.json"
 $m6AuthoringReport = Join-Path $artifacts "m6-authoring-test-report.json"
 $m5WorkflowReport = Join-Path $artifacts "m5-workflow-test-report.json"
+$commandLoadReport = Join-Path $artifacts "command-load-test-report.json"
 $songProjectArtifact = Join-Path $artifacts "realtime-song-project.resonance.json"
 $m6AuthoringProject = Join-Path $artifacts "m6-two-track-authoring.resonance.json"
 $uiSnapshot = Join-Path $artifacts "realtime-ui-snapshot.png"
@@ -44,7 +45,7 @@ if (-not (Test-Path -LiteralPath $editor)) {
 }
 
 New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
-Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m6AuthoringReport,$m5WorkflowReport,$songProjectArtifact,$m6AuthoringProject,$uiSnapshot -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m6AuthoringReport,$m5WorkflowReport,$commandLoadReport,$songProjectArtifact,$m6AuthoringProject,$uiSnapshot -Force -ErrorAction SilentlyContinue
 
 if (-not (Test-Path -LiteralPath $m4AcceptedFixture) -or
     (Get-FileHash -Algorithm SHA256 -LiteralPath $m4AcceptedFixture).Hash -ne
@@ -284,6 +285,33 @@ if (-not $m5Result.stalePreviewInvalidated -or -not $m5Result.finalRestored -or
     throw "The M5 stale-preview or lifecycle cleanup contract failed"
 }
 
+$commandLoadTest = Start-Process -FilePath $editor -ArgumentList "--command-load-test","--report",$commandLoadReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($commandLoadTest.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $commandLoadReport) {
+        Get-Content -LiteralPath $commandLoadReport
+    }
+    throw "External command-load test failed with exit code $($commandLoadTest.ExitCode)"
+}
+
+$commandLoadResult = Get-Content -LiteralPath $commandLoadReport -Raw | ConvertFrom-Json
+if (-not $commandLoadResult.staleHashRefused -or -not $commandLoadResult.wrongTrackRefused -or
+    -not $commandLoadResult.wrongClipRefused -or -not $commandLoadResult.malformedRefused -or
+    -not $commandLoadResult.oversizeRefused -or -not $commandLoadResult.missingFileRefused) {
+    throw "An invalid external edit command was not refused"
+}
+
+if (-not $commandLoadResult.previewCreated -or -not $commandLoadResult.candidateCarriesEdit -or
+    -not $commandLoadResult.activeUnchangedDuringPreview -or
+    -not $commandLoadResult.soundLaneInterlocked) {
+    throw "The external command preview failed or mutated the active project"
+}
+
+if (-not $commandLoadResult.appliedAsOneTransaction -or -not $commandLoadResult.undoneInOneStep -or
+    -not $commandLoadResult.replayAfterApplyRefused) {
+    throw "The external command Apply/Undo contract failed"
+}
+
 if ($m5Result.seededVelocitySeed -ne 18421 -or
     $m5Result.seededVelocityMaximumDelta -ne 8 -or
     $m5Result.seededVelocityDiffCount -ne 8 -or
@@ -407,6 +435,12 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     ParameterizedDynamicsCandidateSha256 = $m5Result.parameterizedCandidateSha256
     ParameterizedDynamicsDiffs = $m5Result.parameterizedDiffCount
     InvalidDynamicsSettingsBlocked = $m5Result.invalidDynamicsSettingsBlocked
+    CommandLoadCandidateSha256 = $commandLoadResult.candidateContentSha256
+    CommandLoadDiffs = $commandLoadResult.noteDiffCount
+    CommandLoadRefusalsPassed = ($commandLoadResult.staleHashRefused -and
+        $commandLoadResult.wrongTrackRefused -and $commandLoadResult.wrongClipRefused -and
+        $commandLoadResult.malformedRefused -and $commandLoadResult.oversizeRefused -and
+        $commandLoadResult.missingFileRefused -and $commandLoadResult.replayAfterApplyRefused)
     LiveSurgeStateBytes = $result.songProject.stateBytes
     LiveSurgeStateSha256 = $result.songProject.stateSha256
     LiveSoundName = $result.songProject.soundName

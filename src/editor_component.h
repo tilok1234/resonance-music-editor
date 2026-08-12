@@ -32,6 +32,7 @@ public:
     juce::var runM4WorkflowSelfTest (const juce::File& projectFile);
     juce::var runM5WorkflowSelfTest();
     juce::var runM6AuthoringSelfTest (const juce::File& projectFile);
+    juce::var runCommandLoadSelfTest();
     void prepareM5PreviewForSnapshot();
 
 private:
@@ -70,7 +71,12 @@ private:
     void previewSelectedNoteEdit();
     void previewVelocityVariation();
     juce::Result readVelocityVariationControls (SeededVelocityVariation& variation) const;
-    void installEditPreview (EditCommand command, const juce::String& readyStatus);
+    void chooseEditCommandFile();
+    juce::Result loadEditCommandFile (const juce::File& commandFile, bool reportFailure = true);
+    void copyProjectContentHash();
+    juce::Result installEditPreview (EditCommand command,
+                                     const juce::String& readyStatus,
+                                     bool reportFailure = true);
     void auditionEditProject();
     void auditionEditCandidate();
     void applyEditPreview();
@@ -159,6 +165,8 @@ private:
     juce::TextButton rejectSoundButton { "Reject B" };
     juce::TextButton previewSelectedEditButton { "Selected +1" };
     juce::TextButton previewDynamicsButton { "Preview dynamics" };
+    juce::TextButton loadCommandButton { "Load command" };
+    juce::TextButton copyHashButton { "Copy hash" };
     juce::TextButton auditionEditProjectButton { "Audition A" };
     juce::TextButton auditionEditCandidateButton { "Audition B" };
     juce::TextButton applyEditButton { "Apply" };

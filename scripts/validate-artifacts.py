@@ -83,6 +83,10 @@ VALIDATION_GROUPS = (
         PROJECT_ROOT / "schema" / "m5-workflow-test.schema.json",
         (PROJECT_ROOT / "artifacts" / "m5-workflow-test-report.json",),
     ),
+    (
+        PROJECT_ROOT / "schema" / "command-load-test.schema.json",
+        (PROJECT_ROOT / "artifacts" / "command-load-test-report.json",),
+    ),
 )
 
 

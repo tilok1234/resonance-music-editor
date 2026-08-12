@@ -22,6 +22,7 @@ constexpr int velocityScopeWholeLoop = 1;
 constexpr int velocityScopeSelectedNote = 2;
 constexpr std::int64_t maximumVelocityVariationSeed = 2147483647;
 constexpr int maximumVelocityVariationDelta = 32;
+constexpr juce::int64 maximumEditCommandBytes = 256 * 1024;
 
 juce::Font uiFont (float height, int style = juce::Font::plain)
 {
@@ -381,6 +382,7 @@ void MainEditorComponent::configureControls()
                           &auditionProjectSoundButton, &captureSoundButton,
                           &auditionCandidateButton, &applySoundButton, &rejectSoundButton,
                           &previewSelectedEditButton, &previewDynamicsButton,
+                          &loadCommandButton, &copyHashButton,
                           &auditionEditProjectButton,
                           &auditionEditCandidateButton, &applyEditButton, &rejectEditButton,
                           &addTrackButton, &removeTrackButton,
@@ -398,6 +400,8 @@ void MainEditorComponent::configureControls()
     rejectSoundButton.setColour (juce::TextButton::buttonColourId, danger.darker (0.65f));
     previewSelectedEditButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.55f));
     previewDynamicsButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.45f));
+    loadCommandButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.45f));
+    copyHashButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.65f));
     auditionEditCandidateButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.55f));
     applyEditButton.setColour (juce::TextButton::buttonColourId, primary.darker (0.55f));
     rejectEditButton.setColour (juce::TextButton::buttonColourId, danger.darker (0.65f));
@@ -424,6 +428,8 @@ void MainEditorComponent::configureControls()
     rejectSoundButton.onClick = [this] { rejectSoundCandidate(); };
     previewSelectedEditButton.onClick = [this] { previewSelectedNoteEdit(); };
     previewDynamicsButton.onClick = [this] { previewVelocityVariation(); };
+    loadCommandButton.onClick = [this] { chooseEditCommandFile(); };
+    copyHashButton.onClick = [this] { copyProjectContentHash(); };
     auditionEditProjectButton.onClick = [this] { auditionEditProject(); };
     auditionEditCandidateButton.onClick = [this] { auditionEditCandidate(); };
     applyEditButton.onClick = [this] { applyEditPreview(); };
@@ -443,6 +449,8 @@ void MainEditorComponent::configureControls()
 
     previewSelectedEditButton.setTooltip ("Preview the selected note one semitone higher");
     previewDynamicsButton.setTooltip ("Resolve the target, maximum velocity change, and seed into candidate B");
+    loadCommandButton.setTooltip ("Preview a version-1 edit-command file as candidate B without applying it");
+    copyHashButton.setTooltip ("Copy this project's content SHA-256, track id, and clip id for authoring a command");
 
     soundNameEditor.setTextToShowWhenEmpty ("Candidate sound name", textMuted);
     soundNameEditor.setInputRestrictions (80);
@@ -1520,8 +1528,262 @@ void MainEditorComponent::previewVelocityVariation()
                                                        static_cast<long long> (variation.seed)));
 }
 
-void MainEditorComponent::installEditPreview (EditCommand command,
-                                              const juce::String& readyStatus)
+juce::var MainEditorComponent::runCommandLoadSelfTest()
+{
+    auto* resultObject = new juce::DynamicObject();
+    juce::var result (resultObject);
+    resultObject->setProperty ("schemaVersion", 1);
+    resultObject->setProperty ("testVersion", JUCE_APPLICATION_VERSION_STRING);
+    resultObject->setProperty ("commandVersion", EditCommand::supportedVersion);
+
+    clearEditPreview (true);
+    clearSoundCandidate();
+    project.markClean();
+
+    if (getActivePlugin() == nullptr || pianoRoll == nullptr || project.getNotes().empty())
+    {
+        resultObject->setProperty ("passed", false);
+        resultObject->setProperty ("error", "The starter project has no instrument or editable note");
+        return result;
+    }
+
+    const auto original = project.getNotes().front();
+    const auto beforeHash = project.getContentSha256();
+    const auto trackId = project.getTrackId();
+    const auto clipId = project.getClipId();
+    resultObject->setProperty ("projectContentSha256", beforeHash);
+    resultObject->setProperty ("targetTrackId", trackId);
+    resultObject->setProperty ("targetClipId", clipId);
+
+    // One velocity update the resolver would never produce on its own, so a passing
+    // preview proves the file drove it rather than the seeded dynamics path.
+    auto updated = original;
+    updated.velocity = original.velocity >= 64 ? original.velocity - 21 : original.velocity + 21;
+
+    const auto buildCommand = [&] (const juce::String& hash,
+                                   const juce::String& targetTrack,
+                                   const juce::String& targetClip)
+    {
+        EditCommand command;
+        command.projectContentSha256 = hash;
+        command.trackId = targetTrack;
+        command.clipId = targetClip;
+        command.summary = "Command load self test";
+        NoteEditChange change;
+        change.action = NoteEditAction::update;
+        change.noteId = original.id;
+        change.note = updated;
+        command.changes.push_back (change);
+        return command;
+    };
+
+    const auto tempDirectory = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    std::vector<juce::File> temporaryFiles;
+    const auto writeCommandFile = [&] (const juce::String& contents)
+    {
+        const auto file = tempDirectory.getNonexistentChildFile ("resonance-command-load",
+                                                                 ".json",
+                                                                 false);
+        file.replaceWithText (contents);
+        temporaryFiles.push_back (file);
+        return file;
+    };
+
+    // Every refusal below must leave the active project byte-identical and preview-free.
+    // Failures are loaded silently so the headless run never stacks modal alerts.
+    const auto refusedCleanly = [&] (const juce::File& file)
+    {
+        return loadEditCommandFile (file, false).failed()
+               && ! hasPendingEditPreview()
+               && project.getContentSha256() == beforeHash
+               && ! project.isDirty();
+    };
+
+    const auto staleHash = juce::String::repeatedString ("0", 64);
+    const auto staleRefused = refusedCleanly (
+        writeCommandFile (serialiseEditCommand (buildCommand (staleHash, trackId, clipId))));
+    const auto wrongTrackRefused = refusedCleanly (
+        writeCommandFile (serialiseEditCommand (
+            buildCommand (beforeHash, trackId + "-not-a-track", clipId))));
+    const auto wrongClipRefused = refusedCleanly (
+        writeCommandFile (serialiseEditCommand (
+            buildCommand (beforeHash, trackId, clipId + "-not-a-clip"))));
+    const auto malformedRefused = refusedCleanly (writeCommandFile ("{ this is not json"));
+    const auto oversizeRefused = refusedCleanly (
+        writeCommandFile (juce::String::repeatedString (
+            "x", static_cast<int> (maximumEditCommandBytes) + 1)));
+    const auto missingFile = tempDirectory.getNonexistentChildFile ("resonance-command-absent",
+                                                                    ".json",
+                                                                    false);
+    const auto missingRefused = refusedCleanly (missingFile);
+
+    const auto validFile = writeCommandFile (
+        serialiseEditCommand (buildCommand (beforeHash, trackId, clipId)));
+    const auto validLoaded = loadEditCommandFile (validFile, false).wasOk();
+    const auto previewCreated = validLoaded && hasPendingEditPreview();
+    const auto diffCount = previewCreated ? static_cast<int> (editPreview->noteDiffs.size()) : 0;
+    const auto candidate = previewCreated ? editPreview->getCandidateProject() : nullptr;
+    const auto candidateNote = candidate != nullptr ? candidate->findNote (original.id)
+                                                    : std::nullopt;
+    const auto candidateCarriesEdit = candidateNote.has_value()
+                                      && candidateNote->velocity == updated.velocity;
+    const auto activeUnchangedDuringPreview = project.getContentSha256() == beforeHash
+                                              && ! project.isDirty();
+    const auto candidateHash = previewCreated ? editPreview->afterContentSha256 : juce::String {};
+    // The load lane must interlock with the sound lane exactly like the resolver lane does.
+    const auto soundLaneInterlocked = previewCreated
+                                      && ! captureSoundButton.isEnabled()
+                                      && ! applySoundButton.isEnabled()
+                                      && ! loadCommandButton.isEnabled();
+
+    applyEditPreview();
+    const auto appliedNote = project.findNote (original.id);
+    const auto appliedHash = project.getContentSha256();
+    const auto applied = ! hasPendingEditPreview()
+                         && appliedNote.has_value()
+                         && appliedNote->velocity == updated.velocity
+                         && project.isDirty()
+                         && appliedHash != beforeHash;
+
+    // The precondition is the pre-edit content hash, so replaying the same file while
+    // the edit still stands must fail closed instead of stacking a second edit. After
+    // Undo the hash legitimately returns to beforeHash and the file is valid again.
+    const auto replayAfterApplyRefused = loadEditCommandFile (validFile, false).failed()
+                                         && ! hasPendingEditPreview()
+                                         && project.getContentSha256() == appliedHash;
+
+    performUndoRedo (false);
+    const auto undoneNote = project.findNote (original.id);
+    const auto undoneInOneStep = undoneNote.has_value()
+                                 && undoneNote->velocity == original.velocity
+                                 && project.getContentSha256() == beforeHash;
+
+    for (const auto& file : temporaryFiles)
+        file.deleteFile();
+
+    clearEditPreview (true);
+    project.markClean();
+
+    const auto passed = staleRefused && wrongTrackRefused && wrongClipRefused
+                        && malformedRefused && oversizeRefused && missingRefused
+                        && previewCreated && diffCount == 1 && candidateCarriesEdit
+                        && activeUnchangedDuringPreview && soundLaneInterlocked
+                        && applied && replayAfterApplyRefused && undoneInOneStep;
+
+    resultObject->setProperty ("staleHashRefused", staleRefused);
+    resultObject->setProperty ("wrongTrackRefused", wrongTrackRefused);
+    resultObject->setProperty ("wrongClipRefused", wrongClipRefused);
+    resultObject->setProperty ("malformedRefused", malformedRefused);
+    resultObject->setProperty ("oversizeRefused", oversizeRefused);
+    resultObject->setProperty ("missingFileRefused", missingRefused);
+    resultObject->setProperty ("previewCreated", previewCreated);
+    resultObject->setProperty ("noteDiffCount", diffCount);
+    resultObject->setProperty ("candidateCarriesEdit", candidateCarriesEdit);
+    resultObject->setProperty ("activeUnchangedDuringPreview", activeUnchangedDuringPreview);
+    resultObject->setProperty ("soundLaneInterlocked", soundLaneInterlocked);
+    resultObject->setProperty ("candidateContentSha256", candidateHash);
+    resultObject->setProperty ("appliedAsOneTransaction", applied);
+    resultObject->setProperty ("replayAfterApplyRefused", replayAfterApplyRefused);
+    resultObject->setProperty ("undoneInOneStep", undoneInOneStep);
+    resultObject->setProperty ("passed", passed);
+    if (! passed)
+        resultObject->setProperty ("error", "One or more command-load expectations failed");
+
+    return result;
+}
+
+void MainEditorComponent::chooseEditCommandFile()
+{
+    if (soundCandidate.has_value())
+    {
+        projectStatusMessage = "APPLY OR REJECT SOUND B BEFORE LOADING A COMMAND";
+        updateStatus();
+        return;
+    }
+
+    projectStatusMessage = "CHOOSE AN EDIT COMMAND TO PREVIEW";
+    updateStatus();
+    const auto initial = currentProjectFile != juce::File()
+                             ? currentProjectFile.getParentDirectory()
+                             : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+    activeFileChooser = std::make_unique<juce::FileChooser> ("Preview a Resonance edit command",
+                                                             initial,
+                                                             "*.json",
+                                                             true);
+    const juce::Component::SafePointer<MainEditorComponent> safe (this);
+    activeFileChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                        | juce::FileBrowserComponent::canSelectFiles,
+                                    [safe] (const juce::FileChooser& chooser)
+                                    {
+                                        if (safe == nullptr)
+                                            return;
+
+                                        if (chooser.getResult() != juce::File())
+                                            safe->loadEditCommandFile (chooser.getResult());
+                                        else
+                                        {
+                                            safe->projectStatusMessage = "COMMAND LOAD CANCELED";
+                                            safe->updateStatus();
+                                        }
+                                    });
+}
+
+juce::Result MainEditorComponent::loadEditCommandFile (const juce::File& commandFile,
+                                                       bool reportFailure)
+{
+    const auto refuse = [this, reportFailure] (const juce::String& status,
+                                               const juce::String& detail)
+    {
+        projectStatusMessage = status;
+        updateStatus();
+        if (reportFailure)
+            showError ("Could not load edit command", detail);
+        return juce::Result::fail (detail);
+    };
+
+    if (soundCandidate.has_value())
+        return refuse ("APPLY OR REJECT SOUND B BEFORE LOADING A COMMAND",
+                       "Apply or reject the pending sound candidate first.");
+
+    if (getActivePlugin() == nullptr)
+        return refuse ("COMMAND LOAD BLOCKED  /  NO ACTIVE INSTRUMENT",
+                       "The active track has no loaded instrument.");
+
+    if (! commandFile.existsAsFile())
+        return refuse ("COMMAND FILE NOT FOUND",
+                       "The chosen edit-command file no longer exists.");
+
+    if (commandFile.getSize() > maximumEditCommandBytes)
+        return refuse ("COMMAND FILE TOO LARGE",
+                       "An edit command must be at most 256 KB.");
+
+    EditCommand command;
+    const auto parsed = parseEditCommand (commandFile.loadFileAsString(), command);
+    if (parsed.failed())
+        return refuse ("COMMAND PARSE ERROR  /  " + parsed.getErrorMessage().toUpperCase(),
+                       parsed.getErrorMessage());
+
+    // installEditPreview re-checks the content hash and target ids through
+    // createEditCommandPreview, so a stale or mistargeted command still fails closed.
+    return installEditPreview (std::move (command),
+                               "COMMAND B READY  /  " + commandFile.getFileName().toUpperCase(),
+                               reportFailure);
+}
+
+void MainEditorComponent::copyProjectContentHash()
+{
+    const auto hash = project.getContentSha256();
+    const auto trackId = project.getTrackId();
+    const auto clipId = project.getClipId();
+    juce::SystemClipboard::copyTextToClipboard (hash + "\n" + trackId + "\n" + clipId);
+    projectStatusMessage = "COPIED HASH " + hash.substring (0, 16).toUpperCase()
+                           + "  /  TRACK " + trackId + "  /  CLIP " + clipId;
+    updateStatus();
+}
+
+juce::Result MainEditorComponent::installEditPreview (EditCommand command,
+                                                      const juce::String& readyStatus,
+                                                      bool reportFailure)
 {
     if (hasPendingEditPreview())
         clearEditPreview (true);
@@ -1532,8 +1794,9 @@ void MainEditorComponent::installEditPreview (EditCommand command,
     {
         projectStatusMessage = "EDIT PROPOSAL ERROR  /  " + result.getErrorMessage();
         updateStatus();
-        showError ("Could not preview edit", result.getErrorMessage());
-        return;
+        if (reportFailure)
+            showError ("Could not preview edit", result.getErrorMessage());
+        return result;
     }
 
     editPreview.emplace (std::move (proposed));
@@ -1543,6 +1806,7 @@ void MainEditorComponent::installEditPreview (EditCommand command,
         pianoRoll->setEditPreview (editPreview->noteDiffs, false);
     projectStatusMessage = readyStatus;
     refreshProjectControls();
+    return juce::Result::ok();
 }
 
 void MainEditorComponent::auditionEditProject()
@@ -1744,6 +2008,8 @@ void MainEditorComponent::refreshEditPreviewControls()
     previewSelectedEditButton.setEnabled (ready && ! pending && ! soundCandidate.has_value()
                                           && selected.has_value() && selected->midiNote < 127);
     previewDynamicsButton.setEnabled (controlsEnabled && velocitySettings.wasOk());
+    loadCommandButton.setEnabled (controlsEnabled);
+    copyHashButton.setEnabled (ready);
     auditionEditProjectButton.setEnabled (ready && pending);
     auditionEditCandidateButton.setEnabled (ready && pending);
     applyEditButton.setEnabled (ready && pending);
@@ -3235,7 +3501,7 @@ void MainEditorComponent::resized()
     deviceSummaryLabel.setBounds (device.removeFromTop (62));
     diagnosticLabel.setBounds (device.removeFromBottom (34));
     device.removeFromBottom (6);
-    const auto proposalHeight = juce::jlimit (210, 230, device.getHeight() - 180);
+    const auto proposalHeight = juce::jlimit (240, 260, device.getHeight() - 180);
     editProposalBounds = device.removeFromBottom (proposalHeight);
     device.removeFromBottom (8);
     if (deviceSelector != nullptr)
@@ -3269,6 +3535,13 @@ void MainEditorComponent::resized()
     previewSelectedEditButton.setBounds (previewActions.removeFromLeft (previewWidth));
     previewActions.removeFromLeft (previewGap);
     previewDynamicsButton.setBounds (previewActions);
+    proposal.removeFromTop (4);
+    auto commandActions = proposal.removeFromTop (26);
+    const auto commandGap = 4;
+    const auto commandWidth = (commandActions.getWidth() - commandGap) / 2;
+    loadCommandButton.setBounds (commandActions.removeFromLeft (commandWidth));
+    commandActions.removeFromLeft (commandGap);
+    copyHashButton.setBounds (commandActions);
     proposal.removeFromTop (5);
     auto editActions = proposal.removeFromTop (28);
     const auto actionGap = 4;

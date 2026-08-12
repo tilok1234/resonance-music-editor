@@ -599,6 +599,11 @@ public:
         return editor != nullptr ? editor->runM6AuthoringSelfTest (projectFile) : juce::var {};
     }
 
+    juce::var runCommandLoadSelfTest()
+    {
+        return editor != nullptr ? editor->runCommandLoadSelfTest() : juce::var {};
+    }
+
     void prepareM5PreviewForSnapshot()
     {
         if (editor != nullptr)
@@ -652,12 +657,14 @@ public:
         const auto m4WorkflowTestMode = args.contains ("--m4-workflow-test");
         const auto m5WorkflowTestMode = args.contains ("--m5-workflow-test");
         const auto m6AuthoringTestMode = args.contains ("--m6-authoring-test");
+        const auto commandLoadTestMode = args.contains ("--command-load-test");
         window = std::make_unique<MainWindow> (inventory,
                                                quarantine,
                                                properties.getUserSettings(),
                                                ! snapshotMode && ! idleTestMode
                                                    && ! m4WorkflowTestMode && ! m5WorkflowTestMode
-                                                   && ! m6AuthoringTestMode);
+                                                   && ! m6AuthoringTestMode
+                                                   && ! commandLoadTestMode);
 
         if (snapshotMode)
         {
@@ -748,6 +755,23 @@ public:
                                     && static_cast<bool> (object->getProperty ("passed"));
                 const auto reportWritten = writeReport (reportFile, report);
                 setApplicationReturnValue (passed && reportWritten ? 0 : 7);
+                quit();
+            });
+        }
+        else if (commandLoadTestMode)
+        {
+            const auto reportFile = resolvePathArgument (
+                args, "--report", "command-load-test-report.json");
+            juce::Timer::callAfterDelay (750, [this, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runCommandLoadSelfTest()
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 8);
                 quit();
             });
         }

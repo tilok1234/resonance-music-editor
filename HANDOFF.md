@@ -59,10 +59,11 @@ Read [the product vision](docs/PRODUCT_VISION.md) before changing product scope.
 - Orange before-note and blue after-note piano-roll overlays for add, update, and remove diffs.
 - Note A/B audition through normal immutable sequence snapshots without mutating the project.
 - Explicit note Apply/Reject, automatic stale invalidation, and one-step Undo/Redo.
+- External version-1 edit-command files load into the accepted preview path through **Load command**, with **Copy hash** publishing the content SHA-256, track ID, and clip ID needed to author one.
 - Save isolation: unapplied note or sound previews never silently replace accepted A.
 - Mutually exclusive sound and note candidate lanes plus pending-preview discard warnings.
 - Separate exact saved-state integrity from the live-equivalent hash observed after Surge restore.
-- Silent packaged self-test, M4/M5 native workflow modes, M6 two-instance runtime and authoring modes, UI snapshot mode, and idle CPU regression mode.
+- Silent packaged self-test, M4/M5 native workflow modes, M6 two-instance runtime and authoring modes, external command-load mode, UI snapshot mode, and idle CPU regression mode.
 - Fixed-capacity eight-lane `MixerSnapshot` contract with native-tested gain, balance, mute, solo, and capacity semantics.
 - Eight stable prepared runtime slots with preallocated per-slot scratch, indexed state, separate scheduling/MIDI channels, bounded meters, load/safety diagnostics, and clean missing-slot/shutdown behavior.
 - Silent packaged proof of two distinct real Surge XT instances through the production render/mix path without rescanning or attaching an audio callback.
@@ -77,7 +78,8 @@ The latest machine-local reports available when this handoff was prepared showed
 | --- | --- |
 | Scheduler/mixer/runtime assertions | 124 passed |
 | Project/migration/topology/round-trip/command assertions | 209 passed |
-| Schema-validated artifacts and fixtures | 19 passed |
+| Schema-validated artifacts and fixtures | 20 passed |
+| Packaged external command load | passed; 6 refusal paths, 1-diff preview, Apply, replay-after-Apply refused, one-step Undo |
 | Song project schemas | canonical writer `3`; accepted previous inputs `2` and `1` |
 | Version-1 migration fixture | passed; source SHA-256 `4725dd74075981ceb6ecd605db270954deafb7743b98190d090eb42dd677c0f7`; `track-migrated` / `clip-migrated` preserved |
 | Version-2 migration fixture | passed; source SHA-256 `4b15956b981e085602e3e000f94bd08992ff7ea9ba53669d67a0be917406f21b`; non-default mixer/MIDI and exact state preserved |
@@ -106,9 +108,9 @@ The latest machine-local reports available when this handoff was prepared showed
 | Host-owned real-Surge sound name | `Self-test Surge state`; exact round trip |
 | Latest captured real Surge state | 67,345 bytes; SHA-256 `a771b28878606e1b830c9c5f02a46686328cc690e03153d2bd141cf0eee8ea40` |
 | Exact saved-B packaged workflow | passed; A/B `91ED214E`, clean Reject and Close |
-| Packaged UI snapshot | 97,045 bytes; SHA-256 `5341f4cdfa80f660eaf362f98fee7e0b1ba412e6df9010d2b1f9dc92e9fd152c`; includes the selected-track topology and mixer row |
-| UI idle gate | passed below the 3,000 ms process-CPU threshold |
-| Packaged editor SHA-256 | `46af844d523e46f82f0b0cf7adf9b491c75e44b1320706ba46b06ae45f05db82` |
+| Packaged UI snapshot | 99,152 bytes; SHA-256 `000d8796edc4686030a7e4db5c634cd49a6ff8f2259be605370fe2db1fbf9339`; includes the selected-track topology/mixer row and the command-load row |
+| UI idle gate | passed at 1,296.9 ms, below the 3,000 ms process-CPU threshold |
+| Packaged editor SHA-256 | `0cf4aeae9a5a84dd07efe1b890a73ad50dffe2646d7367f9ea76b1be4d1d5e3f` |
 
 Device name, sample rate, block size, latency, full path-derived identifier, and bundle fingerprint are machine observations. Regenerate rather than copying them to another machine.
 
