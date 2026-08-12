@@ -15,6 +15,7 @@ public:
     explicit PianoRoll (SongProject& projectToEdit);
 
     void setPlayheadBeat (double beat);
+    void frameAllTracks();
     void setSelectedNote (const juce::String& id);
     void setEditPreview (const std::vector<NoteEditDiff>& diffs,
                          bool auditioningCandidate);
@@ -39,6 +40,7 @@ private:
         resize
     };
 
+    void adjustVerticalZoom (int rowDelta);
     juce::Rectangle<float> gridBounds() const;
     juce::Rectangle<float> boundsForNote (const SongNote& note) const;
     std::optional<SongNote> noteAt (juce::Point<float> point) const;
@@ -54,7 +56,10 @@ private:
     juce::String selectedNoteId;
     double playheadBeat = 0.0;
     int lowestVisibleNote = 40;
-    static constexpr int visibleNoteRows = 29;
+    // Session-only view state; deliberately not persisted in the song project.
+    int visibleNoteRows = 29;
+    static constexpr int minimumVisibleRows = 12;
+    static constexpr int maximumVisibleRows = 72;
     DragMode dragMode = DragMode::none;
     std::optional<SongNote> dragOrigin;
     std::vector<NoteEditDiff> editPreviewDiffs;

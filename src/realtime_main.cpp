@@ -604,6 +604,11 @@ public:
         return editor != nullptr ? editor->runCommandLoadSelfTest() : juce::var {};
     }
 
+    bool openProjectForSnapshot (const juce::File& projectFile)
+    {
+        return editor != nullptr && editor->openProjectForSnapshot (projectFile);
+    }
+
     void prepareM5PreviewForSnapshot()
     {
         if (editor != nullptr)
@@ -669,14 +674,22 @@ public:
         if (snapshotMode)
         {
             const auto snapshotFile = resolvePathArgument (args, "--snapshot", "realtime-ui-snapshot.png");
-            juce::Timer::callAfterDelay (1800, [this, snapshotFile]
+            // Optional: snapshot a specific project instead of the starter one, so
+            // two-track views can be captured as visual evidence.
+            const auto snapshotProject = args.contains ("--project")
+                                             ? resolvePathArgument (args, "--project", "")
+                                             : juce::File {};
+            juce::Timer::callAfterDelay (1800, [this, snapshotFile, snapshotProject]
             {
                 auto* content = window != nullptr ? window->getContentComponent() : nullptr;
                 auto passed = false;
 
-                if (content != nullptr)
+                if (content != nullptr
+                    && (snapshotProject == juce::File()
+                        || window->openProjectForSnapshot (snapshotProject)))
                 {
-                    window->prepareM5PreviewForSnapshot();
+                    if (snapshotProject == juce::File())
+                        window->prepareM5PreviewForSnapshot();
                     const auto image = content->createComponentSnapshot (content->getLocalBounds(), true, 1.0f);
                     juce::MemoryOutputStream encoded;
                     juce::PNGImageFormat png;

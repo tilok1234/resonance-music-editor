@@ -15,6 +15,7 @@ const auto secondary = juce::Colour::fromRGB (123, 151, 255);
 const auto textMuted = juce::Colour::fromRGB (137, 153, 173);
 const auto warning = juce::Colour::fromRGB (247, 184, 88);
 const auto danger = juce::Colour::fromRGB (245, 103, 119);
+const auto ghost = juce::Colour::fromRGB (108, 126, 150);
 
 juce::Font rollFont (float height, int style = juce::Font::plain)
 {
@@ -28,7 +29,52 @@ PianoRoll::PianoRoll (SongProject& projectToEdit)
     setWantsKeyboardFocus (true);
     setMouseClickGrabsKeyboardFocus (true);
     setTitle ("Editable piano roll");
-    setDescription ("Click empty space to add a note. Drag notes to move them, drag the right edge to resize, and press Delete to remove the selection.");
+    setDescription ("Click empty space to add a note. Drag notes to move them, drag the right edge to resize, and press Delete to remove the selection. Scroll to move through pitch, hold Ctrl while scrolling or press plus and minus to zoom vertically. Notes on the other track are shown dimmed and cannot be edited here.");
+}
+
+void PianoRoll::frameAllTracks()
+{
+    auto lowest = 127;
+    auto highest = 0;
+    auto foundNote = false;
+
+    for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
+    {
+        for (const auto& note : project.getNotes (trackIndex))
+        {
+            lowest = juce::jmin (lowest, note.midiNote);
+            highest = juce::jmax (highest, note.midiNote);
+            foundNote = true;
+        }
+    }
+
+    // An empty project keeps whatever the user was looking at.
+    if (! foundNote)
+        return;
+
+    // Two extra rows above and below keep the outermost notes off the frame edge.
+    visibleNoteRows = juce::jlimit (minimumVisibleRows,
+                                    maximumVisibleRows,
+                                    highest - lowest + 5);
+    const auto centrePitch = (lowest + highest) / 2;
+    lowestVisibleNote = juce::jlimit (0, 128 - visibleNoteRows, centrePitch - visibleNoteRows / 2);
+    repaint();
+}
+
+void PianoRoll::adjustVerticalZoom (int rowDelta)
+{
+    const auto previousRows = visibleNoteRows;
+    const auto requested = juce::jlimit (minimumVisibleRows,
+                                         maximumVisibleRows,
+                                         previousRows + rowDelta);
+    if (requested == previousRows)
+        return;
+
+    // Hold the centre pitch steady so zooming does not scroll the material off screen.
+    const auto centrePitch = lowestVisibleNote + previousRows / 2;
+    visibleNoteRows = requested;
+    lowestVisibleNote = juce::jlimit (0, 128 - visibleNoteRows, centrePitch - visibleNoteRows / 2);
+    repaint();
 }
 
 void PianoRoll::setPlayheadBeat (double beat)
@@ -157,9 +203,12 @@ void PianoRoll::paint (juce::Graphics& graphics)
         graphics.setColour (gridLine.withAlpha (0.20f));
         graphics.drawHorizontalLine (juce::roundToInt (y), grid.getX(), grid.getRight());
 
-        if (midiNote % 12 == 0)
+        // Every octave is always labelled; zoomed-in rows are tall enough to name
+        // each white key without the labels colliding.
+        const auto labelWhiteKeys = rowHeight >= 14.0f && ! isBlackKey (midiNote);
+        if (midiNote % 12 == 0 || labelWhiteKeys)
         {
-            graphics.setColour (textMuted);
+            graphics.setColour (textMuted.withAlpha (midiNote % 12 == 0 ? 1.0f : 0.55f));
             graphics.drawText (juce::MidiMessage::getMidiNoteName (midiNote, true, true, 3),
                                juce::Rectangle<float> (5.0f, y, 40.0f, rowHeight).toNearestInt(),
                                juce::Justification::centredRight);
@@ -184,6 +233,28 @@ void PianoRoll::paint (juce::Graphics& graphics)
             graphics.drawText ("BAR " + juce::String (roundedBeat / 4 + 1),
                                juce::Rectangle<float> (x + 5.0f, 5.0f, 62.0f, 15.0f).toNearestInt(),
                                juce::Justification::centredLeft);
+        }
+    }
+
+    // Inactive-track notes are drawn as dim ghosts so two parts can be written against
+    // each other. They are painted before the active notes and are never hit tested,
+    // so selection, dragging, and deletion still apply only to the selected track.
+    const auto activeTrackIndex = project.getActiveTrackIndex();
+    for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
+    {
+        if (trackIndex == activeTrackIndex)
+            continue;
+
+        for (const auto& note : project.getNotes (trackIndex))
+        {
+            const auto bounds = boundsForNote (note);
+            if (bounds.isEmpty())
+                continue;
+
+            graphics.setColour (ghost.withAlpha (0.26f));
+            graphics.fillRoundedRectangle (bounds, 3.0f);
+            graphics.setColour (ghost.withAlpha (0.50f));
+            graphics.drawRoundedRectangle (bounds.reduced (0.5f), 3.0f, 1.0f);
         }
     }
 
@@ -329,9 +400,19 @@ void PianoRoll::mouseUp (const juce::MouseEvent&)
     dragOrigin.reset();
 }
 
-void PianoRoll::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
+void PianoRoll::mouseWheelMove (const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
 {
     const auto direction = wheel.deltaY > 0.0f ? 2 : wheel.deltaY < 0.0f ? -2 : 0;
+    if (direction == 0)
+        return;
+
+    if (event.mods.isCommandDown())
+    {
+        // Scrolling up shows fewer, taller rows.
+        adjustVerticalZoom (-direction * 2);
+        return;
+    }
+
     lowestVisibleNote = juce::jlimit (0, 128 - visibleNoteRows, lowestVisibleNote + direction);
     repaint();
 }
@@ -348,6 +429,18 @@ bool PianoRoll::keyPressed (const juce::KeyPress& key)
     if (key == juce::KeyPress::escapeKey)
     {
         select ({});
+        return true;
+    }
+
+    if (key.getTextCharacter() == '+' || key.getTextCharacter() == '=')
+    {
+        adjustVerticalZoom (-4);
+        return true;
+    }
+
+    if (key.getTextCharacter() == '-' || key.getTextCharacter() == '_')
+    {
+        adjustVerticalZoom (4);
         return true;
     }
 

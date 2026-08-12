@@ -368,6 +368,24 @@ void testTwoTrackTopology (TestContext& context)
     context.expect (noteIdsAreUnique,
                     "Duplicated musical content must receive project-unique note ids");
 
+    // The piano roll draws inactive-track notes as ghosts, so notes must be readable
+    // by index without disturbing the active-track selection.
+    const auto notesByIndexZero = project.getNotes (0);
+    const auto notesByIndexOne = project.getNotes (1);
+    context.expect (notesByIndexZero.size() == firstNotes.size()
+                        && notesByIndexOne.size() == secondNotes.size()
+                        && project.getActiveTrackIndex() == 1,
+                    "Indexed note access must read either track without changing selection");
+    bool indexedNotesMatchFirstTrack = notesByIndexZero.size() == firstNotes.size();
+    for (std::size_t index = 0; index < notesByIndexZero.size(); ++index)
+        indexedNotesMatchFirstTrack = indexedNotesMatchFirstTrack
+                                      && notesByIndexZero[index].id == firstNotes[index].id
+                                      && notesByIndexZero[index].midiNote == firstNotes[index].midiNote;
+    context.expect (indexedNotesMatchFirstTrack,
+                    "Indexed note access must return that track's exact notes");
+    context.expect (project.getNotes (-1).empty() && project.getNotes (2).empty(),
+                    "Indexed note access must return nothing for an out-of-range track");
+
     juce::MemoryBlock firstState;
     juce::MemoryBlock secondState;
     context.expect (project.getPluginStateForTrack (0, firstState).wasOk()

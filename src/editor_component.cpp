@@ -1528,6 +1528,15 @@ void MainEditorComponent::previewVelocityVariation()
                                                        static_cast<long long> (variation.seed)));
 }
 
+bool MainEditorComponent::openProjectForSnapshot (const juce::File& projectFile)
+{
+    if (! projectFile.existsAsFile())
+        return false;
+
+    openProjectFile (projectFile);
+    return currentProjectFile == projectFile;
+}
+
 juce::var MainEditorComponent::runCommandLoadSelfTest()
 {
     auto* resultObject = new juce::DynamicObject();
@@ -2178,7 +2187,10 @@ void MainEditorComponent::startNewProject()
     auditionedSoundSha256 = acceptedLiveSoundSha256;
     currentProjectFile = {};
     if (pianoRoll != nullptr)
+    {
         pianoRoll->setSelectedNote ({});
+        pianoRoll->frameAllTracks();
+    }
     projectStatusMessage = "NEW PROJECT  /  TRACK 1 READY";
     projectChanged();
 }
@@ -2281,7 +2293,12 @@ void MainEditorComponent::openProjectFile (const juce::File& file)
     auditionedSoundSha256 = acceptedLiveSoundSha256;
     projectStatusMessage = "OPENED  /  " + file.getFileName();
     if (pianoRoll != nullptr)
+    {
         pianoRoll->setSelectedNote ({});
+        // Fit the pitch range of every track so both parts are visible on open
+        // rather than leaving material above or below the default window.
+        pianoRoll->frameAllTracks();
+    }
     projectChanged();
 }
 

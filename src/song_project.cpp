@@ -440,8 +440,13 @@ juce::Result SongProject::moveTrack (const juce::String& trackId, int newIndex)
 
 std::vector<SongNote> SongProject::getNotes() const
 {
+    return getNotes (getActiveTrackIndex());
+}
+
+std::vector<SongNote> SongProject::getNotes (int trackIndex) const
+{
     std::vector<SongNote> result;
-    auto notes = getNotesTree();
+    auto notes = getNotesTree (trackIndex);
     result.reserve (static_cast<std::size_t> (notes.getNumChildren()));
 
     for (int index = 0; index < notes.getNumChildren(); ++index)

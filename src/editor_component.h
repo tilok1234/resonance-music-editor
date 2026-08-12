@@ -33,6 +33,7 @@ public:
     juce::var runM5WorkflowSelfTest();
     juce::var runM6AuthoringSelfTest (const juce::File& projectFile);
     juce::var runCommandLoadSelfTest();
+    bool openProjectForSnapshot (const juce::File& projectFile);
     void prepareM5PreviewForSnapshot();
 
 private:

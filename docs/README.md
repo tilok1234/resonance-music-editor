@@ -77,6 +77,7 @@ An ADR records a durable decision and its consequences. Add a new ADR when a cha
 - [M6 two-track runtime](M6_TWO_TRACK_RUNTIME_CHECKPOINT_2026-08-09.md)
 - [M6 bounded two-track authoring](M6_TWO_TRACK_AUTHORING_CHECKPOINT_2026-08-09.md)
 - [M6 external command load](M6_EXTERNAL_COMMAND_LOAD_CHECKPOINT_2026-08-12.md)
+- [M6 piano roll visibility](M6_PIANO_ROLL_VISIBILITY_CHECKPOINT_2026-08-12.md)
 
 The acceptance files distinguish implementation proof from musical approval. A passing scheduler, schema, or audio-device test does not mean that a preset, loop, mix, or composition has passed a listening review.
 

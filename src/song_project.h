@@ -90,6 +90,7 @@ public:
     juce::Result moveTrack (const juce::String& trackId, int newIndex);
 
     std::vector<SongNote> getNotes() const;
+    std::vector<SongNote> getNotes (int trackIndex) const;
     std::optional<SongNote> findNote (const juce::String& id) const;
     juce::String addNote (double beat, double lengthBeats, int midiNote, int velocity);
     juce::Result insertNote (const SongNote& note);
