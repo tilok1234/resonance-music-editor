@@ -23,6 +23,7 @@ $uiSnapshot = Join-Path $artifacts "realtime-ui-snapshot.png"
 $editCommandFixture = Join-Path $projectRoot "tests\fixtures\edit-command-note-patch-v1.json"
 $legacyProjectFixture = Join-Path $projectRoot "tests\fixtures\song-project-v1-migration.resonance.json"
 $previousProjectFixture = Join-Path $projectRoot "tests\fixtures\song-project-v2-migration.resonance.json"
+$priorProjectFixture = Join-Path $projectRoot "tests\fixtures\song-project-v3-migration.resonance.json"
 $m4AcceptedFixture = Join-Path $artifacts "m4-accepted-candidate-b.resonance.json"
 $expectedM4AcceptedFixtureSha256 = "B0265238EF823D660B198C6730066CAACE09E001EAE3B3D3410521938FE74172"
 
@@ -70,26 +71,30 @@ if (-not $engineResult.passed -or $engineResult.assertions -lt 124 -or
 
 & $projectTests --report $projectReport --edit-command-fixture $editCommandFixture `
     --legacy-project-fixture $legacyProjectFixture `
-    --previous-project-fixture $previousProjectFixture
+    --previous-project-fixture $previousProjectFixture `
+    --prior-project-fixture $priorProjectFixture
 if ($LASTEXITCODE -ne 0) {
     throw "Song project tests failed with exit code $LASTEXITCODE"
 }
 
 $projectResult = Get-Content -LiteralPath $projectReport -Raw | ConvertFrom-Json
-if (-not $projectResult.passed -or $projectResult.assertions -lt 209) {
+if (-not $projectResult.passed -or $projectResult.assertions -lt 250) {
     throw "Song project report did not pass its assertion gate"
 }
 
-if ($projectResult.projectSchemaVersion -ne 3 -or
+if ($projectResult.projectSchemaVersion -ne 4 -or
     $projectResult.legacySchemaVersion -ne 1 -or
     $projectResult.previousSchemaVersion -ne 2 -or
+    $projectResult.priorSchemaVersion -ne 3 -or
     -not $projectResult.legacyMigrationPassed -or
     -not $projectResult.previousMigrationPassed -or
-    $projectResult.maxProjectTracks -ne 2 -or
+    -not $projectResult.priorMigrationPassed -or
+    $projectResult.maxProjectTracks -ne 4 -or
     -not $projectResult.twoTrackTopologyPassed -or
+    -not $projectResult.fourTrackCeilingPassed -or
     $projectResult.stableTrackId -ne "track-migrated" -or
     $projectResult.stableClipId -ne "clip-migrated") {
-    throw "The version-1/version-2 to version-3 project and topology gate did not pass"
+    throw "The version-1/2/3 to version-4 migration and four-track ceiling gate did not pass"
 }
 
 if ($projectResult.seededVelocitySeed -ne 18421 -or
@@ -137,7 +142,7 @@ if (-not $result.songProject.soundNameRoundTrip -or $result.songProject.soundNam
     throw "The host-owned sound name did not round-trip with the real Surge state"
 }
 
-if ($result.songProject.schemaVersion -ne 3 -or
+if ($result.songProject.schemaVersion -ne 4 -or
     $result.songProject.trackId -ne "track-1" -or
     $result.songProject.clipId -ne "loop-1" -or
     $result.songProject.mixerGainDb -ne 0 -or
@@ -145,7 +150,7 @@ if ($result.songProject.schemaVersion -ne 3 -or
     $result.songProject.mixerMuted -or $result.songProject.mixerSolo -or
     $result.songProject.midiInputChannel -ne 0 -or
     $result.songProject.midiOutputChannel -ne 1) {
-    throw "The packaged editor did not preserve the schema-v3 identity, mixer, and MIDI defaults"
+    throw "The packaged editor did not preserve the schema-v4 identity, mixer, and MIDI defaults"
 }
 
 if ($result.songProject.noteCount -ne 9 -or $result.songProject.loopLengthBeats -ne 16 -or
@@ -218,7 +223,7 @@ if ($m6AuthoringTest.ExitCode -ne 0) {
 
 $m6AuthoringResult = Get-Content -LiteralPath $m6AuthoringReport -Raw | ConvertFrom-Json
 if (-not $m6AuthoringResult.passed -or $m6AuthoringResult.audioEmitted -or
-    $m6AuthoringResult.preloadedPluginCount -ne 2 -or
+    $m6AuthoringResult.preloadedPluginCount -ne 4 -or
     -not $m6AuthoringResult.distinctRuntimeInstances -or
     -not $m6AuthoringResult.addTrackSucceeded -or
     -not $m6AuthoringResult.stableDistinctIds -or
@@ -238,7 +243,7 @@ if (-not $m6AuthoringResult.reorderSucceeded -or
 }
 
 if (-not $m6AuthoringResult.saveSucceeded -or
-    $m6AuthoringResult.reopenedSchemaVersion -ne 3 -or
+    $m6AuthoringResult.reopenedSchemaVersion -ne 4 -or
     $m6AuthoringResult.reopenedTrackCount -ne 2 -or
     -not $m6AuthoringResult.reopenedOrderPreserved -or
     -not $m6AuthoringResult.reopenedMixerPreserved -or

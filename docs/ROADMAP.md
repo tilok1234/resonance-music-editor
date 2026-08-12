@@ -18,7 +18,7 @@ The focus is game music. General sound-effect creation is not part of this roadm
 | F3 Editable single-track song | Complete | piano roll, Undo/Redo, exact state, and `.resonance.json` save/open |
 | M4 Sound and preset workflow | Complete | Accepted as version 0.3.0 after A/B, persistence, lifecycle, and listening gates passed |
 | M5 Unified edit-command layer | Complete | explicitly accepted after packaged command, A/B, deterministic controls, listening, Apply/Undo, and cleanup gates |
-| M6 Multi-track and mixer | In progress | schema-v2 migration and the fixed eight-slot/two-real-instance runtime are proven; visible persisted multi-track authoring remains |
+| M6 Multi-track and mixer | In progress | schema-v4 four-track authoring, the sound shelf, and the eight-slot runtime are proven; the listening pass and missing-plug-in recovery remain |
 | M7 Arrangement, automation, and effects | Planned | full sections, curves, buses, and dependable song structure |
 | M8 AI music assistant | Planned | natural-language requests resolve to bounded command proposals |
 | M9 Game-music authoring and export | Planned | variants, transitions, loops, stems, renders, and engine-facing metadata |
@@ -163,9 +163,22 @@ At that checkpoint the production schema and UI still contained exactly one trac
 
 See the [M6 bounded two-track authoring checkpoint](M6_TWO_TRACK_AUTHORING_CHECKPOINT_2026-08-09.md).
 
+### Slice 4 delivered: authoring throughput and a wider ceiling
+
+A 2026-08-12 assessment found that the binding constraint on making songs was note-entry throughput and sound variety rather than arrangement or AI translation. Six stacked slices addressed it, none of which changed the accepted M4 sound or M5 command contracts:
+
+1. external version-1 edit-command files load into the accepted preview path, with **Copy hash** publishing the values needed to author one;
+2. the piano roll gained vertical zoom, dim ghost notes for inactive tracks, and pitch-range fitting on Open and New;
+3. a real multiple-selection model with selection-wide delete, move, velocity, and transpose;
+4. a note clipboard with copy, paste at a drawn insert marker, duplicate, nudge, and transpose;
+5. a named sound shelf outside the song project, so sound work survives New, Open, and restart;
+6. schema version 4 raising the persisted track ceiling from two to four, with version-3 migration.
+
+See the six dated 2026-08-12 checkpoints.
+
 ### Remaining M6 gate
 
-Run an explicit packaged two-track listening and interaction pass, then add user-facing missing-plug-in preservation/recovery before calling M6 complete. Different plug-in products and more than two persisted tracks remain outside this bounded milestone.
+Run an explicit packaged listening and interaction pass, then add user-facing missing-plug-in preservation/recovery before calling M6 complete. That listening gate is now worth running: the sound shelf and the four-track ceiling together make a genuinely multi-timbral mix possible, so a listening judgment can be about the mix rather than about the ceiling. Different plug-in products per track, and more than four persisted tracks, remain outside this bounded milestone even though the runtime owns eight lanes.
 
 ## M7: Arrangement, automation, and effects
 

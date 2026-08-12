@@ -1,12 +1,12 @@
 # Resonance song project format
 
-Status: implemented schema version 3 with version-1 and version-2 migration
+Status: implemented schema version 4 with version-1, version-2, and version-3 migration
 
 ## Overview
 
-Resonance songs use the `.resonance.json` suffix and a versioned JSON document. The canonical writer contract is [`schema/song-project.schema.json`](../schema/song-project.schema.json). Editor 0.5.0 reads schema versions 1, 2, and 3 and writes schema version 3. The archived input contracts are [`schema/song-project-v1.schema.json`](../schema/song-project-v1.schema.json) and [`schema/song-project-v2.schema.json`](../schema/song-project-v2.schema.json).
+Resonance songs use the `.resonance.json` suffix and a versioned JSON document. The canonical writer contract is [`schema/song-project.schema.json`](../schema/song-project.schema.json). Editor 0.5.0 reads schema versions 1 through 4 and writes schema version 4. The archived input contracts are [`schema/song-project-v1.schema.json`](../schema/song-project-v1.schema.json), [`schema/song-project-v2.schema.json`](../schema/song-project-v2.schema.json), and [`schema/song-project-v3.schema.json`](../schema/song-project-v3.schema.json).
 
-The file stores symbolic music and enough VST3 identity and state to reopen one or two implemented instrument tracks. It never embeds the VST3 binary, factory content, sample library, or a machine's plug-in inventory. Active-track selection is editor session state and is not serialized.
+The file stores symbolic music and enough VST3 identity and state to reopen one through four implemented instrument tracks. It never embeds the VST3 binary, factory content, sample library, or a machine's plug-in inventory. Active-track selection is editor session state and is not serialized.
 
 ## Document shape
 
@@ -21,7 +21,7 @@ project
 |-- meterMap[]
 |-- editor
 |   `-- snapBeats
-`-- tracks[1..2]
+`-- tracks[1..4]
     |-- id, name, role
     |-- mixer
     |   `-- gainDb, pan, mute, solo
@@ -40,7 +40,7 @@ project
 
 | Field | Version 3 meaning |
 | --- | --- |
-| `schemaVersion` | integer `3`; selects the persistence contract |
+| `schemaVersion` | integer `4`; selects the persistence contract |
 | `editorVersion` | application version that wrote the file; currently `0.5.0` |
 | `title` | non-empty song title |
 | `sampleRate` | one of 44,100, 48,000, 88,200, or 96,000 Hz |
@@ -48,13 +48,13 @@ project
 | `tempoMap` | schema allows one or more entries; the current editor writes and uses the first entry at tick 0 |
 | `meterMap` | schema allows meter entries; the current editor writes one 4/4 entry at tick 0 |
 | `editor.snapBeats` | one of 0.125, 0.25, 0.5, or 1.0 beats |
-| `tracks` | one or two ordered instrument tracks in the current bounded slice |
+| `tracks` | one through four ordered instrument tracks in the current bounded slice |
 
 The current loader validates the implemented subset needed by the editor. The standalone JSON-schema check enforces the full public shape, including `additionalProperties: false` where declared.
 
 ## Instrument track
 
-The current version-3 writer requires one or two tracks with `role: "instrument"`. Every track owns one mixer object, one MIDI-routing object, one VST3 instrument object, and one loop clip. Track, clip, and note IDs are stable model data rather than array-derived identities; all three ID classes must be unique across the complete project. Array order is the persisted track order.
+The current version-4 writer requires one through four tracks with `role: "instrument"`. Every track owns one mixer object, one MIDI-routing object, one VST3 instrument object, and one loop clip. Track, clip, and note IDs are stable model data rather than array-derived identities; all three ID classes must be unique across the complete project. Array order is the persisted track order.
 
 | Mixer field | Constraint and meaning |
 | --- | --- |
@@ -68,7 +68,7 @@ The current version-3 writer requires one or two tracks with `role: "instrument"
 | `inputChannel` | integer `0` through `16`; `0` means omni |
 | `outputChannel` | integer `1` through `16` |
 
-The production editor maps persisted track order to stable runtime slots zero and one and exposes active-track gain, pan, mute, solo, meter, selection, add, remove, and reorder controls. New and migrated version-1 tracks default to `0 dB`, centre, unmuted, unsoloed, omni input, and output channel 1. Duplicating a track copies its accepted instrument state and notes exactly, creates new track/clip/note IDs, selects the duplicate, and assigns MIDI output channel 2. A third track fails closed in this slice.
+The production editor maps persisted track order to stable runtime slots zero and one and exposes active-track gain, pan, mute, solo, meter, selection, add, remove, and reorder controls. New and migrated version-1 tracks default to `0 dB`, centre, unmuted, unsoloed, omni input, and output channel 1. Duplicating a track copies its accepted instrument state and notes exactly, creates new track/clip/note IDs, selects the duplicate, and assigns MIDI output channel 2. A fifth track fails closed in this slice, at the loader as well as in the UI.
 
 | Instrument field | Meaning |
 | --- | --- |
@@ -111,7 +111,7 @@ This shortened example explains the shape but is not loadable because the placeh
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "editorVersion": "0.5.0",
   "title": "Untitled",
   "sampleRate": 48000,
@@ -196,18 +196,24 @@ The dynamics target, maximum-delta, and seed controls are also outside the song-
 
 ## Compatibility and migrations
 
-Migration to version 3 is explicit and deterministic:
+Migration to version 4 is explicit and deterministic. Version 4 differs from version 3 only by widening the persisted track ceiling from two to four; no field was added, removed, or reinterpreted, so a version-3 document is already a valid version-4 document once its `schemaVersion` is raised in memory. `tests/fixtures/song-project-v3-migration.resonance.json` is a two-track version-3 project with non-default track and clip IDs and non-default mixer and MIDI values on both tracks, so the migration cannot pass by relying on defaults or on `track-1`.
+
+### Version bumps change every command hash
+
+The command precondition hashes the complete canonical material, and `schemaVersion` is part of that material. Raising the version therefore changes the content SHA-256 of every project, which means **edit-command files authored against a version-3 project are stale against the same project opened as version 4**. This is correct fail-closed behavior rather than a defect: the document really did change. Re-author the command with a fresh hash from **Copy hash**. The same effect will occur at every future schema version bump, and any recorded command or candidate hash in dated evidence is historical from that point on.
+
+Migration from version 1 is explicit and deterministic:
 
 1. validate and parse the complete version-1 document into a separate candidate;
 2. retain track name, track ID, clip ID, notes, timing, plug-in identity, sound name, exact opaque state, and its SHA-256;
 3. add the documented neutral mixer and MIDI defaults;
-4. install a one-track schema-version-3 in-memory model only after the candidate succeeds;
+4. install a one-track current-schema in-memory model only after the candidate succeeds;
 5. leave the original version-1 file byte-identical until the user explicitly saves;
-6. write the complete version-3 contract on that later Save.
+6. write the complete version-4 contract on that later Save.
 
-`tests/fixtures/song-project-v1-migration.resonance.json` uses non-default track and clip IDs so migration and command tests cannot pass by relying on `track-1` or `loop-1`. Version 1 receives neutral mixer/MIDI defaults. `tests/fixtures/song-project-v2-migration.resonance.json` proves that version-2 stable identity, non-default mixer/MIDI data, notes, and exact state survive without source rewrite. Version 3 additionally rejects duplicate track or clip IDs, duplicate note IDs across tracks, mismatched loop lengths, and a third track. The two archived schemas remain authoritative for historical input validation.
+`tests/fixtures/song-project-v1-migration.resonance.json` uses non-default track and clip IDs so migration and command tests cannot pass by relying on `track-1` or `loop-1`. Version 1 receives neutral mixer/MIDI defaults. `tests/fixtures/song-project-v2-migration.resonance.json` proves that version-2 stable identity, non-default mixer/MIDI data, notes, and exact state survive without source rewrite. Version 3 additionally rejects duplicate track or clip IDs, duplicate note IDs across tracks, mismatched loop lengths, and more tracks than the published ceiling; version 4 applies the same rules with that ceiling raised to four. The three archived schemas remain authoritative for historical input validation.
 
-Do not reinterpret either version in place. A future change that widens the production track count or adds arrangement sections, automation, effects, or game-transition metadata must:
+Do not reinterpret any version in place. A future change that widens the production track count or adds arrangement sections, automation, effects, or game-transition metadata must:
 
 1. define a new schema version or a rigorously backward-compatible optional field policy;
 2. add a migration function with deterministic fixtures;

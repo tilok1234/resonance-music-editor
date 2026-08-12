@@ -45,8 +45,11 @@ class SongProject final : private juce::ValueTree::Listener
 public:
     static constexpr int legacySchemaVersion = 1;
     static constexpr int previousSchemaVersion = 2;
-    static constexpr int currentSchemaVersion = 3;
-    static constexpr int maxProjectTracks = 2;
+    // Versions 1 and 2 hold exactly one track; 3 was the first to persist more.
+    static constexpr int multiTrackSchemaVersion = 3;
+    static constexpr int priorSchemaVersion = 3;
+    static constexpr int currentSchemaVersion = 4;
+    static constexpr int maxProjectTracks = 4;
 
     SongProject();
     ~SongProject() override;

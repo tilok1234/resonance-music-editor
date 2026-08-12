@@ -44,6 +44,15 @@ VALIDATION_GROUPS = (
         ),
     ),
     (
+        PROJECT_ROOT / "schema" / "song-project-v3.schema.json",
+        (
+            PROJECT_ROOT
+            / "tests"
+            / "fixtures"
+            / "song-project-v3-migration.resonance.json",
+        ),
+    ),
+    (
         PROJECT_ROOT / "schema" / "plugin-inventory.schema.json",
         (
             PROJECT_ROOT / "artifacts" / "plugin-inventory.json",

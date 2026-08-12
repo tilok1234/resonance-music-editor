@@ -964,10 +964,10 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
     int sampleRate = 0;
     int ppq = 0;
     if (! readInt (*rootObject, "schemaVersion", schemaVersion)
-        || (schemaVersion != legacySchemaVersion
-            && schemaVersion != previousSchemaVersion
-            && schemaVersion != currentSchemaVersion))
-        return juce::Result::fail ("Only song-project schema versions 1, 2, and 3 are supported");
+        || schemaVersion < legacySchemaVersion
+        || schemaVersion > currentSchemaVersion)
+        return juce::Result::fail ("Only song-project schema versions 1 through "
+                                   + juce::String (currentSchemaVersion) + " are supported");
     if (! readInt (*rootObject, "sampleRate", sampleRate) || ! isSupportedSampleRate (sampleRate))
         return juce::Result::fail ("Project sampleRate is unsupported");
     if (! readInt (*rootObject, "ppq", ppq) || ppq != projectPpq)
@@ -994,9 +994,18 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
 
     const auto tracksValue = rootObject->getProperty ("tracks");
     const auto* tracks = tracksValue.getArray();
-    if (schemaVersion == currentSchemaVersion && tracks != nullptr && tracks->size() == 2)
+    if (tracks != nullptr && tracks->size() > 1)
     {
-        auto parseSingleTrack = [&json] (int trackIndex, juce::ValueTree& parsedRoot)
+        if (schemaVersion < multiTrackSchemaVersion)
+            return juce::Result::fail ("Song-project schema versions 1 and 2 hold exactly one track");
+        if (tracks->size() > maxProjectTracks)
+            return juce::Result::fail ("This editor version supports at most "
+                                       + juce::String (maxProjectTracks) + " instrument tracks");
+
+        // Each track is validated in isolation through the ordinary single-track path,
+        // so a multi-track project cannot relax any per-track rule.
+        const auto trackCount = tracks->size();
+        auto parseSingleTrack = [&json, trackCount] (int trackIndex, juce::ValueTree& parsedRoot)
         {
             juce::var copy;
             const auto copyResult = juce::JSON::parse (juce::JSON::toString (json, false), copy);
@@ -1007,8 +1016,8 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
             auto* copyTracks = copyRoot != nullptr
                                    ? copyRoot->getProperty ("tracks").getArray()
                                    : nullptr;
-            if (copyTracks == nullptr || copyTracks->size() != 2)
-                return juce::Result::fail ("The two-track project could not be isolated for validation");
+            if (copyTracks == nullptr || copyTracks->size() != trackCount)
+                return juce::Result::fail ("The multi-track project could not be isolated for validation");
 
             const auto selectedTrack = copyTracks->getReference (trackIndex);
             juce::Array<juce::var> isolatedTracks;
@@ -1017,28 +1026,32 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
             return SongProject::valueTreeFromJson (copy, parsedRoot);
         };
 
-        juce::ValueTree firstRoot;
-        juce::ValueTree secondRoot;
-        const auto firstResult = parseSingleTrack (0, firstRoot);
-        if (firstResult.failed())
-            return firstResult;
-        const auto secondResult = parseSingleTrack (1, secondRoot);
-        if (secondResult.failed())
-            return secondResult;
-
-        const auto firstTrack = firstRoot.getChild (0);
-        const auto secondTrack = secondRoot.getChild (0);
-        if (firstTrack.getProperty ("id") == secondTrack.getProperty ("id"))
-            return juce::Result::fail ("Track ids must be unique within the project");
-        if (firstTrack.getProperty ("clipId") == secondTrack.getProperty ("clipId"))
-            return juce::Result::fail ("Clip ids must be unique within the project");
-        if (std::abs (static_cast<double> (firstRoot.getProperty ("loopLengthBeats"))
-                      - static_cast<double> (secondRoot.getProperty ("loopLengthBeats"))) > 1.0e-9)
-            return juce::Result::fail ("Both tracks must share the same loop length");
-
-        std::set<juce::String> noteIds;
-        for (const auto& parsedTrack : { firstTrack, secondTrack })
+        std::vector<juce::ValueTree> parsedRoots;
+        parsedRoots.reserve (static_cast<std::size_t> (trackCount));
+        for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
         {
+            juce::ValueTree parsedRoot;
+            const auto parseResult = parseSingleTrack (trackIndex, parsedRoot);
+            if (parseResult.failed())
+                return parseResult;
+            parsedRoots.push_back (parsedRoot);
+        }
+
+        std::set<juce::String> trackIds;
+        std::set<juce::String> clipIds;
+        std::set<juce::String> noteIds;
+        const auto sharedLoop = static_cast<double> (parsedRoots.front().getProperty ("loopLengthBeats"));
+        for (const auto& parsedRoot : parsedRoots)
+        {
+            const auto parsedTrack = parsedRoot.getChild (0);
+            if (! trackIds.insert (parsedTrack.getProperty ("id").toString()).second)
+                return juce::Result::fail ("Track ids must be unique within the project");
+            if (! clipIds.insert (parsedTrack.getProperty ("clipId").toString()).second)
+                return juce::Result::fail ("Clip ids must be unique within the project");
+            if (std::abs (static_cast<double> (parsedRoot.getProperty ("loopLengthBeats")) - sharedLoop)
+                > 1.0e-9)
+                return juce::Result::fail ("Every track must share the same loop length");
+
             const auto parsedNotes = parsedTrack.getChildWithName (notesType);
             for (int noteIndex = 0; noteIndex < parsedNotes.getNumChildren(); ++noteIndex)
             {
@@ -1048,13 +1061,17 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
             }
         }
 
-        firstRoot.addChild (secondTrack.createCopy(), -1, nullptr);
-        destination = firstRoot;
+        auto combined = parsedRoots.front();
+        for (std::size_t index = 1; index < parsedRoots.size(); ++index)
+            combined.addChild (parsedRoots[index].getChild (0).createCopy(), -1, nullptr);
+
+        destination = combined;
         return juce::Result::ok();
     }
 
     if (tracks == nullptr || tracks->size() != 1)
-        return juce::Result::fail ("This editor version requires one or two instrument tracks");
+        return juce::Result::fail ("This editor version requires one through "
+                                   + juce::String (maxProjectTracks) + " instrument tracks");
     auto* trackObject = requireObject (tracks->getReference (0));
     if (trackObject == nullptr)
         return juce::Result::fail ("Track must be a JSON object");

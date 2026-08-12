@@ -81,10 +81,10 @@ The latest machine-local reports available when this handoff was prepared showed
 | Gate | Result |
 | --- | --- |
 | Scheduler/mixer/runtime assertions | 124 passed |
-| Project/migration/topology/shelf/round-trip/command assertions | 230 passed |
-| Schema-validated artifacts and fixtures | 22 passed |
+| Project/migration/ceiling/shelf/round-trip/command assertions | 253 passed |
+| Schema-validated artifacts and fixtures | 23 passed |
 | Packaged external command load | passed; 6 refusal paths, 1-diff preview, Apply, replay-after-Apply refused, one-step Undo |
-| Song project schemas | canonical writer `3`; accepted previous inputs `2` and `1` |
+| Song project schemas | canonical writer `4`; accepted previous inputs `3`, `2`, and `1` |
 | Version-1 migration fixture | passed; source SHA-256 `4725dd74075981ceb6ecd605db270954deafb7743b98190d090eb42dd677c0f7`; `track-migrated` / `clip-migrated` preserved |
 | Version-2 migration fixture | passed; source SHA-256 `4b15956b981e085602e3e000f94bd08992ff7ea9ba53669d67a0be917406f21b`; non-default mixer/MIDI and exact state preserved |
 | Fixed runtime/mixer contract | 8 stable slots/lanes; double-buffered publication; two-slot scheduling, mix, meters, safety, state, failure, and shutdown cases passed |
@@ -113,8 +113,8 @@ The latest machine-local reports available when this handoff was prepared showed
 | Latest captured real Surge state | 67,345 bytes; SHA-256 `a771b28878606e1b830c9c5f02a46686328cc690e03153d2bd141cf0eee8ea40` |
 | Exact saved-B packaged workflow | passed; A/B `91ED214E`, clean Reject and Close |
 | Packaged UI snapshot | 104,046 bytes; SHA-256 `0f57c461b102795052f1f5481b7a7c0f00b683b963c643e3a0b6d7b20d8ede89`; includes the selected-track topology/mixer row and the command-load row |
-| UI idle gate | passed at 1,296.9 ms, below the 3,000 ms process-CPU threshold |
-| Packaged editor SHA-256 | `1aad107f41bc3bd92c7521c75e56d34810714b627fa2bc35af62f545bca6ea46` |
+| UI idle gate | passed at 1,796.9 ms with four preloaded Surge instances, below the 3,000 ms process-CPU threshold |
+| Packaged editor SHA-256 | `fd8dfa0c5dae0db981acb9451d9dc98f1bbb88bef090f54ba88dc298889d6179` |
 
 Device name, sample rate, block size, latency, full path-derived identifier, and bundle fingerprint are machine observations. Regenerate rather than copying them to another machine.
 

@@ -144,7 +144,7 @@ Opaque state bytes are not assumed to be a semantic sound fingerprint. `Realtime
 
 1. Require a valid accepted sound snapshot for every project track.
 2. Update every track's current identity metadata and the supported live sample rate.
-3. Serialize the complete schema version 3 document in memory.
+3. Serialize the complete schema version 4 document in memory.
 4. Write it through JUCE's `replaceWithText` operation.
 5. Mark the project clean after a successful save.
 
@@ -171,9 +171,9 @@ See [VST3 hosting](VST3_HOSTING.md) and [ADR-0002](ADR-0002-crash-isolated-plugi
 
 ## Extension seams
 
-The current two-track authoring ceiling is deliberate, but several seams are intended for growth:
+The current four-track authoring ceiling is deliberate, but several seams are intended for growth:
 
-- schema version 3 gives one or two ordered tracks, project-wide identity, and exact per-track state a durable model home while intentionally remaining below the eight-lane runtime capacity;
+- schema version 4 gives one through four ordered tracks, project-wide identity, and exact per-track state a durable model home while intentionally remaining below the eight-lane runtime capacity;
 - structured edit commands and the proposal card sit above the same note operations, Undo manager, and immutable sequence publisher used by the piano roll;
 - `MixerSnapshot` composes fixed-capacity per-track sequences and render values without exposing the mutable ValueTree to audio code;
 - the engine's stable prepared slots can accept a separately versioned future widening without changing callback ownership;

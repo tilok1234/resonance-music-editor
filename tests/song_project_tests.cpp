@@ -320,7 +320,7 @@ void testPreviousProjectMigration (TestContext& context,
                         && static_cast<int> (
                                saved.getDynamicObject()->getProperty ("schemaVersion"))
                                == resonance::SongProject::currentSchemaVersion,
-                    "An explicit save must materialise schema version 3");
+                    "An explicit save must materialise the current schema version");
 
     resonance::SongProject reopened;
     context.expect (reopened.loadFromFile (migratedFile).wasOk()
@@ -402,8 +402,17 @@ void testTwoTrackTopology (TestContext& context)
                         && project.getTrackMixerSettings (1).gainDecibels == -9.0
                         && project.getTrackMixerSettings (1).muted,
                     "Track mixer edits must not alias across identities");
-    context.expect (project.duplicateActiveTrack().failed() && project.getTrackCount() == 2,
-                    "A third project track must fail closed at the slice capacity");
+    // A third track is allowed from schema version 4 onward; testFourTrackCeiling owns
+    // the capacity contract. Remove it again so the reorder cases below stay two-track.
+    juce::String thirdTrackId;
+    context.expect (project.duplicateActiveTrack (&thirdTrackId).wasOk()
+                        && project.getTrackCount() == 3
+                        && thirdTrackId != firstTrackId && thirdTrackId != secondTrackId,
+                    "A third project track must be accepted with unique identity");
+    context.expect (project.removeTrack (thirdTrackId).wasOk() && project.getTrackCount() == 2,
+                    "Removing the third track must restore the two-track topology");
+    context.expect (project.setActiveTrackIndex (1),
+                    "The second track must be selectable after the third is removed");
 
     context.expect (project.moveTrack (secondTrackId, 0).wasOk()
                         && project.getTrackId (0) == secondTrackId,
@@ -435,7 +444,7 @@ void testTwoTrackTopology (TestContext& context)
                                                     ".resonance.json",
                                                     false);
     context.expect (project.saveToFile (file).wasOk(),
-                    "A valid two-track project must save as schema version 3");
+                    "A valid two-track project must save as the current schema version");
     const auto savedText = file.loadFileAsString();
     auto saved = juce::JSON::parse (savedText);
     auto* savedRoot = saved.getDynamicObject();
@@ -443,8 +452,9 @@ void testTwoTrackTopology (TestContext& context)
                             ? savedRoot->getProperty ("tracks").getArray()
                             : nullptr;
     context.expect (savedRoot != nullptr && savedTracks != nullptr && savedTracks->size() == 2
-                        && static_cast<int> (savedRoot->getProperty ("schemaVersion")) == 3,
-                    "The canonical writer must persist both tracks in schema version 3");
+                        && static_cast<int> (savedRoot->getProperty ("schemaVersion"))
+                               == resonance::SongProject::currentSchemaVersion,
+                    "The canonical writer must persist both tracks in the current schema version");
 
     resonance::SongProject reopened;
     context.expect (reopened.loadFromFile (file).wasOk() && reopened.getTrackCount() == 2
@@ -911,6 +921,135 @@ void testSeededVelocityVariation (TestContext& context,
                     "One Undo must restore every velocity changed by the transform");
 }
 
+void testPriorProjectMigration (TestContext& context,
+                                const juce::File& fixtureFile,
+                                juce::String& sourceSha256)
+{
+    context.expect (fixtureFile.existsAsFile(), "The version-3 migration fixture must exist");
+
+    juce::MemoryBlock sourceBytes;
+    context.expect (fixtureFile.loadFileAsData (sourceBytes),
+                    "The version-3 fixture bytes must be readable");
+    sourceSha256 = juce::SHA256 (sourceBytes).toHexString();
+
+    resonance::SongProject migrated;
+    context.expect (migrated.loadFromFile (fixtureFile).wasOk(),
+                    "A version-3 two-track project must load");
+    context.expect (migrated.getSchemaVersion() == resonance::SongProject::currentSchemaVersion,
+                    "A loaded version-3 project must become the current schema version in memory");
+    context.expect (migrated.getTrackCount() == 2,
+                    "Version-3 migration must preserve both persisted tracks");
+    context.expect (migrated.getTrackId (0) == "track-v3-alpha"
+                        && migrated.getTrackId (1) == "track-v3-beta"
+                        && migrated.getClipId (0) == "clip-v3-alpha"
+                        && migrated.getClipId (1) == "clip-v3-beta",
+                    "Version-3 migration must preserve stable track and clip identity");
+
+    // Non-default mixer and MIDI data must survive rather than resetting to neutral.
+    const auto firstMixer = migrated.getTrackMixerSettings (0);
+    const auto secondMixer = migrated.getTrackMixerSettings (1);
+    context.expect (firstMixer.gainDecibels == -5.5 && firstMixer.pan == -0.4 && firstMixer.solo
+                        && secondMixer.gainDecibels == -11.25 && secondMixer.pan == 0.7
+                        && secondMixer.muted,
+                    "Version-3 migration must preserve non-default mixer state");
+    context.expect (migrated.getTrackMidiRouting (0).inputChannel == 3
+                        && migrated.getTrackMidiRouting (0).outputChannel == 5
+                        && migrated.getTrackMidiRouting (1).outputChannel == 9,
+                    "Version-3 migration must preserve non-default MIDI routing");
+
+    juce::MemoryBlock sourceAfterLoad;
+    context.expect (fixtureFile.loadFileAsData (sourceAfterLoad)
+                        && juce::SHA256 (sourceAfterLoad).toHexString() == sourceSha256,
+                    "Loading a version-3 project must leave its source file byte-identical");
+}
+
+void testFourTrackCeiling (TestContext& context, bool& ceilingPassed)
+{
+    const auto before = context.assertions;
+    resonance::SongProject project;
+    juce::MemoryBlock state;
+    const juce::String payload ("four-track-ceiling-state");
+    state.append (payload.toRawUTF8(), payload.getNumBytesAsUTF8());
+    project.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    project.setPluginState (state);
+    context.expect (project.getPluginStateSha256().isNotEmpty(),
+                    "A ceiling fixture must accept accepted plug-in state");
+
+    context.expect (resonance::SongProject::maxProjectTracks == 4,
+                    "This editor version must publish a four-track ceiling");
+
+    auto grown = true;
+    for (int expected = 2; expected <= resonance::SongProject::maxProjectTracks; ++expected)
+        grown = grown && project.duplicateActiveTrack().wasOk()
+                && project.getTrackCount() == expected;
+    context.expect (grown, "Tracks must be addable up to the published ceiling");
+
+    context.expect (project.duplicateActiveTrack().failed()
+                        && project.getTrackCount() == resonance::SongProject::maxProjectTracks,
+                    "A track beyond the ceiling must fail closed");
+
+    // Every identity class must stay unique across all four tracks.
+    std::set<juce::String> trackIds;
+    std::set<juce::String> clipIds;
+    std::set<juce::String> noteIds;
+    auto identitiesUnique = true;
+    for (int index = 0; index < project.getTrackCount(); ++index)
+    {
+        identitiesUnique = identitiesUnique && trackIds.insert (project.getTrackId (index)).second
+                           && clipIds.insert (project.getClipId (index)).second;
+        for (const auto& note : project.getNotes (index))
+            identitiesUnique = identitiesUnique && noteIds.insert (note.id).second;
+    }
+    context.expect (identitiesUnique,
+                    "Four-track projects must keep track, clip, and note ids unique");
+
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getNonexistentChildFile ("resonance-four-track", ".resonance.json", false);
+    context.expect (project.saveToFile (file).wasOk(), "A four-track project must save");
+
+    resonance::SongProject reopened;
+    context.expect (reopened.loadFromFile (file).wasOk() && reopened.getTrackCount() == 4
+                        && reopened.getSchemaVersion()
+                               == resonance::SongProject::currentSchemaVersion,
+                    "A four-track project must reopen as four current-schema tracks");
+    context.expect (reopened.getContentSha256() == project.getContentSha256(),
+                    "A four-track round trip must preserve exact project content");
+
+    // A fifth persisted track must be refused at the loader, not only in the UI.
+    const auto overfullText = file.loadFileAsString()
+                                  .replace ("\"tracks\": [", "\"tracks\": [", false);
+    auto parsed = juce::JSON::parse (file.loadFileAsString());
+    auto* parsedRoot = parsed.getDynamicObject();
+    auto* parsedTracks = parsedRoot != nullptr ? parsedRoot->getProperty ("tracks").getArray()
+                                               : nullptr;
+    context.expect (parsedTracks != nullptr && parsedTracks->size() == 4,
+                    "The saved four-track document must contain four tracks");
+    if (parsedTracks != nullptr)
+    {
+        auto extra = parsedTracks->getReference (0).clone();
+        if (auto* extraObject = extra.getDynamicObject())
+        {
+            extraObject->setProperty ("id", "track-overflow");
+            if (auto* extraClips = extraObject->getProperty ("clips").getArray())
+                if (auto* extraClip = extraClips->getReference (0).getDynamicObject())
+                    extraClip->setProperty ("id", "clip-overflow");
+        }
+        parsedTracks->add (extra);
+    }
+    const auto overfull = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getNonexistentChildFile ("resonance-five-track", ".resonance.json", false);
+    context.expect (overfull.replaceWithText (juce::JSON::toString (parsed, false)),
+                    "An over-capacity fixture must be writable");
+    resonance::SongProject refused;
+    context.expect (refused.loadFromFile (overfull).failed(),
+                    "A five-track document must fail closed at the loader");
+
+    context.expect (file.deleteFile() && overfull.deleteFile(),
+                    "Four-track fixtures must be removable");
+    juce::ignoreUnused (overfullText);
+    ceilingPassed = context.assertions > before;
+}
+
 resonance::SoundShelfEntry makeShelfEntry (const juce::String& name, const juce::String& payload)
 {
     resonance::SoundShelfEntry entry;
@@ -1096,6 +1235,7 @@ int main (int argc, char* argv[])
     const auto editCommandFixturePath = argumentValue (args, "--edit-command-fixture");
     const auto legacyProjectFixturePath = argumentValue (args, "--legacy-project-fixture");
     const auto previousProjectFixturePath = argumentValue (args, "--previous-project-fixture");
+    const auto priorProjectFixturePath = argumentValue (args, "--prior-project-fixture");
     TestContext context;
     int savedBytes = 0;
     juce::String stateSha;
@@ -1111,6 +1251,9 @@ int main (int argc, char* argv[])
     bool previousMigrationPassed = false;
     bool twoTrackTopologyPassed = false;
     bool soundShelfPassed = false;
+    juce::String priorSourceSha;
+    bool priorMigrationPassed = false;
+    bool fourTrackCeilingPassed = false;
     int soundShelfBytes = 0;
 
     auto* reportObject = new juce::DynamicObject();
@@ -1123,6 +1266,9 @@ int main (int argc, char* argv[])
     reportObject->setProperty ("projectSchemaVersion", resonance::SongProject::currentSchemaVersion);
     reportObject->setProperty ("legacySchemaVersion", resonance::SongProject::legacySchemaVersion);
     reportObject->setProperty ("previousSchemaVersion", resonance::SongProject::previousSchemaVersion);
+    reportObject->setProperty ("priorSchemaVersion", resonance::SongProject::priorSchemaVersion);
+    reportObject->setProperty ("priorMigrationFixture",
+                               juce::File (priorProjectFixturePath).getFileName());
     reportObject->setProperty ("legacyMigrationFixture",
                                juce::File (legacyProjectFixturePath).getFileName());
     reportObject->setProperty ("previousMigrationFixture",
@@ -1147,8 +1293,13 @@ int main (int argc, char* argv[])
                                       juce::File (previousProjectFixturePath),
                                       previousSourceSha);
         previousMigrationPassed = true;
+        testPriorProjectMigration (context,
+                                   juce::File (priorProjectFixturePath),
+                                   priorSourceSha);
+        priorMigrationPassed = true;
         testTwoTrackTopology (context);
         twoTrackTopologyPassed = true;
+        testFourTrackCeiling (context, fourTrackCeilingPassed);
         testEditCommandFoundation (context,
                                    juce::File (editCommandFixturePath),
                                    editCommandCandidateSha);
@@ -1169,6 +1320,9 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("previousMigrationPassed", previousMigrationPassed);
         reportObject->setProperty ("previousSourceSha256", previousSourceSha);
         reportObject->setProperty ("twoTrackTopologyPassed", twoTrackTopologyPassed);
+        reportObject->setProperty ("priorMigrationPassed", priorMigrationPassed);
+        reportObject->setProperty ("priorSourceSha256", priorSourceSha);
+        reportObject->setProperty ("fourTrackCeilingPassed", fourTrackCeilingPassed);
         reportObject->setProperty ("soundShelfPassed", soundShelfPassed);
         reportObject->setProperty ("soundShelfBytes", soundShelfBytes);
         reportObject->setProperty ("migratedRoundTripBytes", migratedBytes);
@@ -1191,6 +1345,9 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("previousMigrationPassed", previousMigrationPassed);
         reportObject->setProperty ("previousSourceSha256", previousSourceSha);
         reportObject->setProperty ("twoTrackTopologyPassed", twoTrackTopologyPassed);
+        reportObject->setProperty ("priorMigrationPassed", priorMigrationPassed);
+        reportObject->setProperty ("priorSourceSha256", priorSourceSha);
+        reportObject->setProperty ("fourTrackCeilingPassed", fourTrackCeilingPassed);
         reportObject->setProperty ("soundShelfPassed", soundShelfPassed);
         reportObject->setProperty ("soundShelfBytes", soundShelfBytes);
         reportObject->setProperty ("migratedRoundTripBytes", migratedBytes);

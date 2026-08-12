@@ -34,38 +34,132 @@
     "assertions",
     "roundTripBytes",
     "stateSha256",
-    "passed"
+    "passed",
+    "priorSchemaVersion",
+    "priorMigrationFixture",
+    "priorMigrationPassed",
+    "priorSourceSha256",
+    "fourTrackCeilingPassed"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "testVersion": { "type": "string", "minLength": 1 },
-    "juceVersion": { "type": "string", "minLength": 1 },
-    "editCommandVersion": { "const": 1 },
-    "editCommandFixture": { "const": "edit-command-note-patch-v1.json" },
-    "projectSchemaVersion": { "const": 3 },
-    "legacySchemaVersion": { "const": 1 },
-    "previousSchemaVersion": { "const": 2 },
-    "legacyMigrationFixture": { "const": "song-project-v1-migration.resonance.json" },
-    "previousMigrationFixture": { "const": "song-project-v2-migration.resonance.json" },
-    "legacyMigrationPassed": { "const": true },
-    "legacySourceSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "previousMigrationPassed": { "const": true },
-    "previousSourceSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "maxProjectTracks": { "const": 2 },
-    "twoTrackTopologyPassed": { "const": true },
-    "soundShelfPassed": { "const": true },
-    "soundShelfBytes": { "type": "integer", "minimum": 0 },
-    "migratedRoundTripBytes": { "type": "integer", "minimum": 500 },
-    "stableTrackId": { "const": "track-migrated" },
-    "stableClipId": { "const": "clip-migrated" },
-    "editCommandCandidateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "seededVelocitySeed": { "const": 18421 },
-    "seededVelocityMaximumDelta": { "const": 8 },
-    "seededVelocityCommandSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "seededVelocityCandidateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "assertions": { "type": "integer", "minimum": 209 },
-    "roundTripBytes": { "type": "integer", "minimum": 500 },
-    "stateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "passed": { "const": true }
+    "schemaVersion": {
+      "const": 1
+    },
+    "testVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "juceVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "editCommandVersion": {
+      "const": 1
+    },
+    "editCommandFixture": {
+      "const": "edit-command-note-patch-v1.json"
+    },
+    "projectSchemaVersion": {
+      "const": 4
+    },
+    "legacySchemaVersion": {
+      "const": 1
+    },
+    "previousSchemaVersion": {
+      "const": 2
+    },
+    "legacyMigrationFixture": {
+      "const": "song-project-v1-migration.resonance.json"
+    },
+    "previousMigrationFixture": {
+      "const": "song-project-v2-migration.resonance.json"
+    },
+    "legacyMigrationPassed": {
+      "const": true
+    },
+    "legacySourceSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "previousMigrationPassed": {
+      "const": true
+    },
+    "previousSourceSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "maxProjectTracks": {
+      "const": 4
+    },
+    "twoTrackTopologyPassed": {
+      "const": true
+    },
+    "soundShelfPassed": {
+      "const": true
+    },
+    "soundShelfBytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "migratedRoundTripBytes": {
+      "type": "integer",
+      "minimum": 500
+    },
+    "stableTrackId": {
+      "const": "track-migrated"
+    },
+    "stableClipId": {
+      "const": "clip-migrated"
+    },
+    "editCommandCandidateSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "seededVelocitySeed": {
+      "const": 18421
+    },
+    "seededVelocityMaximumDelta": {
+      "const": 8
+    },
+    "seededVelocityCommandSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "seededVelocityCandidateSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "assertions": {
+      "type": "integer",
+      "minimum": 209
+    },
+    "roundTripBytes": {
+      "type": "integer",
+      "minimum": 500
+    },
+    "stateSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "passed": {
+      "const": true
+    },
+    "priorSchemaVersion": {
+      "const": 3
+    },
+    "priorMigrationFixture": {
+      "type": "string",
+      "minLength": 1
+    },
+    "priorMigrationPassed": {
+      "const": true
+    },
+    "priorSourceSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "fourTrackCeilingPassed": {
+      "const": true
+    }
   }
 }
