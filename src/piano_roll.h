@@ -29,8 +29,16 @@ public:
     const juce::String& getSelectedNote() const noexcept { return primarySelectedNoteId; }
     const std::vector<juce::String>& getSelectedNotes() const noexcept { return selectedNoteIds; }
     void setSelectionChangedCallback (std::function<void (const juce::String&)> callback);
+    void setStatusMessageCallback (std::function<void (const juce::String&)> callback);
     // Drops ids whose notes no longer exist, for example after Undo or a track change.
     void pruneSelection();
+
+    void copySelection();
+    juce::Result pasteAtInsertBeat();
+    juce::Result duplicateSelection();
+    void nudgeSelection (double beatDelta);
+    void transposeSelection (int semitones);
+    bool hasClipboardContent() const noexcept { return ! clipboard.empty(); }
 
     void paint (juce::Graphics& graphics) override;
     void mouseDown (const juce::MouseEvent& event) override;
@@ -65,9 +73,18 @@ private:
     void notifySelectionChanged();
     void removeSelected();
     void beginMoveDrag (const SongNote& anchor, const juce::MouseEvent& event);
+    juce::Result insertCopies (const std::vector<SongNote>& source,
+                               double targetBeat,
+                               const juce::String& transactionName);
+    void reportStatus (const juce::String& message) const;
 
     SongProject& project;
     std::function<void (const juce::String&)> selectionChanged;
+    std::function<void (const juce::String&)> statusChanged;
+    // Session-only note clipboard, normalised so the earliest note starts at beat 0.
+    std::vector<SongNote> clipboard;
+    // Where Paste places the clipboard: the last grid position pressed.
+    double insertBeat = 0.0;
     // Ordered; the back entry is the primary selection.
     std::vector<juce::String> selectedNoteIds;
     juce::String primarySelectedNoteId;

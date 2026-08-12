@@ -336,6 +336,18 @@ if (-not $selectionResult.velocityAppliedAcrossSelection -or
     throw "A selection-wide edit did not apply or undo as one transaction"
 }
 
+if (-not $selectionResult.copiedToClipboard -or -not $selectionResult.pasteAddedNewNotes -or
+    -not $selectionResult.pasteUndoneInOneStep -or
+    -not $selectionResult.duplicateLandedOnGrid -or
+    -not $selectionResult.duplicateUndoneInOneStep) {
+    throw "The note clipboard did not paste or duplicate correctly"
+}
+
+if (-not $selectionResult.octaveTransposeApplied -or -not $selectionResult.nudgeApplied -or
+    -not $selectionResult.keyboardEditsUndone) {
+    throw "Keyboard nudge or transpose did not apply or undo as one transaction"
+}
+
 if ($m5Result.seededVelocitySeed -ne 18421 -or
     $m5Result.seededVelocityMaximumDelta -ne 8 -or
     $m5Result.seededVelocityDiffCount -ne 8 -or

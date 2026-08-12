@@ -662,6 +662,11 @@ void MainEditorComponent::configureControls()
 
     pianoRoll = std::make_unique<PianoRoll> (project);
     pianoRoll->setSelectionChangedCallback ([this] (const juce::String& id) { selectedNoteChanged (id); });
+    pianoRoll->setStatusMessageCallback ([this] (const juce::String& message)
+                                         {
+                                             projectStatusMessage = message;
+                                             updateStatus();
+                                         });
     addAndMakeVisible (*pianoRoll);
 
     keyboard = std::make_unique<juce::MidiKeyboardComponent> (keyboardState,
@@ -1636,6 +1641,77 @@ juce::var MainEditorComponent::runSelectionSelfTest()
     const auto prunedAfterRemoval = pianoRoll->getSelectedNotes().size() == 2;
     performUndoRedo (false);
 
+    // Clipboard: copy three notes, paste them, and confirm the copies are new notes
+    // that carry the same pitches and relative rhythm.
+    pianoRoll->setSelectedNotes (chosen);
+    const auto noteCountBeforePaste = static_cast<int> (project.getNotes().size());
+    pianoRoll->copySelection();
+    const auto copiedToClipboard = pianoRoll->hasClipboardContent();
+    const auto pasted = pianoRoll->pasteAtInsertBeat().wasOk();
+    const auto pastedIds = pianoRoll->getSelectedNotes();
+    const auto pasteAddedNewNotes =
+        pasted
+        && static_cast<int> (project.getNotes().size()) == noteCountBeforePaste + 3
+        && pastedIds.size() == 3
+        && std::none_of (pastedIds.begin(),
+                         pastedIds.end(),
+                         [&chosen] (const juce::String& id)
+                         {
+                             return std::find (chosen.begin(), chosen.end(), id) != chosen.end();
+                         });
+    performUndoRedo (false);
+    const auto pasteUndoneInOneStep = project.getContentSha256() == beforeHash;
+
+    // Duplicate must land one selection span later, rounded up to the snap grid.
+    pianoRoll->setSelectedNotes (chosen);
+    auto sourceEarliest = notes[0].beat;
+    auto sourceLatestEnd = notes[0].beat + notes[0].lengthBeats;
+    for (const auto& id : chosen)
+    {
+        const auto note = project.findNote (id);
+        sourceEarliest = juce::jmin (sourceEarliest, note->beat);
+        sourceLatestEnd = juce::jmax (sourceLatestEnd, note->beat + note->lengthBeats);
+    }
+    const auto snapBeats = project.getSnapBeats();
+    const auto expectedOffset = juce::jmax (
+        snapBeats,
+        std::ceil ((sourceLatestEnd - sourceEarliest) / snapBeats - 1.0e-9) * snapBeats);
+    const auto duplicated = pianoRoll->duplicateSelection().wasOk();
+    auto duplicateLandedOnGrid = duplicated && pianoRoll->getSelectedNotes().size() == 3;
+    for (const auto& id : pianoRoll->getSelectedNotes())
+    {
+        const auto note = project.findNote (id);
+        duplicateLandedOnGrid = duplicateLandedOnGrid && note.has_value()
+                                && note->beat >= sourceEarliest + expectedOffset - 1.0e-6;
+    }
+    performUndoRedo (false);
+    const auto duplicateUndoneInOneStep = project.getContentSha256() == beforeHash;
+
+    // Arrow-key edits move the whole selection and stay one Undo step each.
+    pianoRoll->setSelectedNotes (chosen);
+    pianoRoll->transposeSelection (12);
+    auto octaveIterator = originalPitches.begin();
+    auto allRaisedAnOctave = true;
+    for (const auto& id : chosen)
+    {
+        const auto note = project.findNote (id);
+        allRaisedAnOctave = allRaisedAnOctave && note.has_value()
+                            && note->midiNote == *octaveIterator + 12;
+        ++octaveIterator;
+    }
+    performUndoRedo (false);
+    pianoRoll->setSelectedNotes (chosen);
+    pianoRoll->nudgeSelection (project.getSnapBeats());
+    const auto nudgedForward = std::all_of (chosen.begin(),
+                                            chosen.end(),
+                                            [this] (const juce::String& id)
+                                            {
+                                                return project.findNote (id).has_value();
+                                            })
+                               && project.getContentSha256() != beforeHash;
+    performUndoRedo (false);
+    const auto keyboardEditsUndone = project.getContentSha256() == beforeHash;
+
     pianoRoll->setSelectedNote ({});
     const auto clearedSelection = pianoRoll->getSelectedNotes().empty()
                                   && pianoRoll->getSelectedNote().isEmpty();
@@ -1647,6 +1723,9 @@ juce::var MainEditorComponent::runSelectionSelfTest()
                         && velocityUndoneInOneStep && transposePreviewCreated
                         && transposeDiffCount == 3 && activeUnchangedDuringPreview
                         && allTransposed && transposeUndoneInOneStep && prunedAfterRemoval
+                        && copiedToClipboard && pasteAddedNewNotes && pasteUndoneInOneStep
+                        && duplicateLandedOnGrid && duplicateUndoneInOneStep
+                        && allRaisedAnOctave && nudgedForward && keyboardEditsUndone
                         && clearedSelection;
 
     resultObject->setProperty ("selectedThree", selectedThree);
@@ -1659,6 +1738,14 @@ juce::var MainEditorComponent::runSelectionSelfTest()
     resultObject->setProperty ("transposeAppliedAcrossSelection", allTransposed);
     resultObject->setProperty ("transposeUndoneInOneStep", transposeUndoneInOneStep);
     resultObject->setProperty ("prunedAfterRemoval", prunedAfterRemoval);
+    resultObject->setProperty ("copiedToClipboard", copiedToClipboard);
+    resultObject->setProperty ("pasteAddedNewNotes", pasteAddedNewNotes);
+    resultObject->setProperty ("pasteUndoneInOneStep", pasteUndoneInOneStep);
+    resultObject->setProperty ("duplicateLandedOnGrid", duplicateLandedOnGrid);
+    resultObject->setProperty ("duplicateUndoneInOneStep", duplicateUndoneInOneStep);
+    resultObject->setProperty ("octaveTransposeApplied", allRaisedAnOctave);
+    resultObject->setProperty ("nudgeApplied", nudgedForward);
+    resultObject->setProperty ("keyboardEditsUndone", keyboardEditsUndone);
     resultObject->setProperty ("clearedSelection", clearedSelection);
     resultObject->setProperty ("passed", passed);
     if (! passed)

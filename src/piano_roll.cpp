@@ -30,7 +30,7 @@ PianoRoll::PianoRoll (SongProject& projectToEdit)
     setWantsKeyboardFocus (true);
     setMouseClickGrabsKeyboardFocus (true);
     setTitle ("Editable piano roll");
-    setDescription ("Click empty space to add a note, or drag across empty space to select a group. Shift-click or Ctrl-click a note to extend the selection, and press Ctrl+A to select every note. Drag notes to move the whole selection, drag the right edge of a single note to resize, and press Delete to remove the selection. Scroll to move through pitch, hold Ctrl while scrolling or press plus and minus to zoom vertically. Notes on the other track are shown dimmed and cannot be edited here.");
+    setDescription ("Click empty space to add a note, or drag across empty space to select a group. Shift-click or Ctrl-click a note to extend the selection, and press Ctrl+A to select every note. Drag notes to move the whole selection, drag the right edge of a single note to resize, and press Delete to remove the selection. Use Ctrl+C to copy, Ctrl+V to paste at the marker set by your last click, and Ctrl+D to duplicate the selection one span later. Arrow keys nudge by the snap value and transpose by a semitone, or by an octave with Shift. Scroll to move through pitch, hold Ctrl while scrolling or press plus and minus to zoom vertically. Notes on the other track are shown dimmed and cannot be edited here.");
 }
 
 void PianoRoll::frameAllTracks()
@@ -360,6 +360,18 @@ void PianoRoll::paint (juce::Graphics& graphics)
         }
     }
 
+    // The paste anchor is only meaningful once something has been copied, so it stays
+    // hidden until then rather than adding a permanent second vertical line.
+    if (! clipboard.empty())
+    {
+        const auto anchorX = grid.getX()
+                             + grid.getWidth() * static_cast<float> (insertBeat / loop);
+        graphics.setColour (warning.withAlpha (0.66f));
+        for (auto y = grid.getY(); y < grid.getBottom(); y += 6.0f)
+            graphics.fillRect (anchorX - 0.5f, y, 1.0f, 3.0f);
+        graphics.fillEllipse (anchorX - 3.0f, grid.getY() - 3.0f, 6.0f, 6.0f);
+    }
+
     if (dragMode == DragMode::marquee && ! marqueeBounds.isEmpty())
     {
         graphics.setColour (secondary.withAlpha (0.16f));
@@ -432,6 +444,16 @@ void PianoRoll::mouseDown (const juce::MouseEvent& event)
     grabKeyboardFocus();
     const auto hit = noteAt (event.position);
     const auto extending = event.mods.isShiftDown() || event.mods.isCtrlDown();
+
+    // Any press inside the grid moves the paste anchor, so Paste lands where the user
+    // last worked rather than at a hidden position.
+    if (gridBounds().contains (event.position))
+    {
+        const auto snap = project.getSnapBeats();
+        insertBeat = juce::jlimit (0.0,
+                                   juce::jmax (0.0, project.getLoopLengthBeats() - snap),
+                                   std::floor (beatAtX (event.position.x) / snap) * snap);
+    }
 
     if (hit.has_value())
     {
@@ -624,6 +646,38 @@ bool PianoRoll::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'C')
+    {
+        copySelection();
+        return true;
+    }
+
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'V')
+    {
+        pasteAtInsertBeat();
+        return true;
+    }
+
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'D')
+    {
+        duplicateSelection();
+        return true;
+    }
+
+    if (key == juce::KeyPress::leftKey || key == juce::KeyPress::rightKey)
+    {
+        const auto direction = key == juce::KeyPress::rightKey ? 1.0 : -1.0;
+        nudgeSelection (direction * project.getSnapBeats());
+        return true;
+    }
+
+    if (key == juce::KeyPress::upKey || key == juce::KeyPress::downKey)
+    {
+        const auto direction = key == juce::KeyPress::upKey ? 1 : -1;
+        transposeSelection (direction * (key.getModifiers().isShiftDown() ? 12 : 1));
+        return true;
+    }
+
     if (key == juce::KeyPress::escapeKey)
     {
         select ({});
@@ -658,6 +712,207 @@ bool PianoRoll::keyPressed (const juce::KeyPress& key)
     }
 
     return false;
+}
+
+void PianoRoll::setStatusMessageCallback (std::function<void (const juce::String&)> callback)
+{
+    statusChanged = std::move (callback);
+}
+
+void PianoRoll::reportStatus (const juce::String& message) const
+{
+    if (statusChanged)
+        statusChanged (message);
+}
+
+void PianoRoll::copySelection()
+{
+    std::vector<SongNote> copied;
+    for (const auto& id : selectedNoteIds)
+        if (const auto note = project.findNote (id))
+            copied.push_back (*note);
+
+    if (copied.empty())
+    {
+        reportStatus ("SELECT NOTES BEFORE COPYING");
+        return;
+    }
+
+    std::sort (copied.begin(),
+               copied.end(),
+               [] (const SongNote& first, const SongNote& second)
+               {
+                   return first.beat < second.beat;
+               });
+
+    // Normalise so the earliest note sits at beat 0; paste then only adds an offset.
+    const auto anchor = copied.front().beat;
+    for (auto& note : copied)
+        note.beat -= anchor;
+
+    clipboard = std::move (copied);
+    reportStatus ("COPIED " + juce::String (static_cast<int> (clipboard.size()))
+                  + (clipboard.size() == 1 ? " NOTE" : " NOTES"));
+}
+
+juce::Result PianoRoll::insertCopies (const std::vector<SongNote>& source,
+                                      double targetBeat,
+                                      const juce::String& transactionName)
+{
+    if (source.empty())
+        return juce::Result::fail ("Nothing has been copied yet");
+
+    const auto loop = project.getLoopLengthBeats();
+    const auto existing = static_cast<int> (project.getNotes().size());
+    if (existing + static_cast<int> (source.size()) > static_cast<int> (maxSequenceNotes))
+        return juce::Result::fail ("A clip holds at most "
+                                   + juce::String (static_cast<int> (maxSequenceNotes))
+                                   + " notes");
+
+    // Validate every placement before touching the project, so a paste that cannot
+    // fit is refused whole rather than landing partly inside the loop.
+    std::vector<SongNote> placed;
+    placed.reserve (source.size());
+    for (const auto& note : source)
+    {
+        auto copy = note;
+        copy.beat = targetBeat + note.beat;
+        if (copy.beat < 0.0 || copy.beat + copy.lengthBeats > loop + 1.0e-9)
+            return juce::Result::fail ("The notes do not fit inside the loop");
+        copy.id = "note-" + juce::Uuid().toString();
+        placed.push_back (copy);
+    }
+
+    project.beginUndoTransaction (transactionName);
+    std::vector<juce::String> insertedIds;
+    insertedIds.reserve (placed.size());
+    for (const auto& note : placed)
+    {
+        const auto result = project.insertNote (note);
+        if (result.failed())
+            return result;
+        insertedIds.push_back (note.id);
+    }
+
+    setSelection (std::move (insertedIds));
+    repaint();
+    return juce::Result::ok();
+}
+
+juce::Result PianoRoll::pasteAtInsertBeat()
+{
+    const auto result = insertCopies (clipboard,
+                                      insertBeat,
+                                      clipboard.size() > 1 ? "Paste notes" : "Paste note");
+    if (result.wasOk())
+        reportStatus ("PASTED " + juce::String (static_cast<int> (clipboard.size()))
+                      + (clipboard.size() == 1 ? " NOTE AT BEAT " : " NOTES AT BEAT ")
+                      + juce::String (insertBeat, 2));
+    else
+        reportStatus ("PASTE REFUSED  /  " + result.getErrorMessage().toUpperCase());
+
+    return result;
+}
+
+juce::Result PianoRoll::duplicateSelection()
+{
+    std::vector<SongNote> selected;
+    for (const auto& id : selectedNoteIds)
+        if (const auto note = project.findNote (id))
+            selected.push_back (*note);
+
+    if (selected.empty())
+    {
+        reportStatus ("SELECT NOTES BEFORE DUPLICATING");
+        return juce::Result::fail ("Nothing is selected");
+    }
+
+    auto earliest = selected.front().beat;
+    auto latestEnd = selected.front().beat + selected.front().lengthBeats;
+    for (const auto& note : selected)
+    {
+        earliest = juce::jmin (earliest, note.beat);
+        latestEnd = juce::jmax (latestEnd, note.beat + note.lengthBeats);
+    }
+
+    // Duplicate one selection-span later, rounded up to the snap grid. Detached notes
+    // end just short of the beat, so the raw span would place the copy slightly early.
+    const auto snap = project.getSnapBeats();
+    const auto span = latestEnd - earliest;
+    const auto offset = juce::jmax (snap, std::ceil (span / snap - 1.0e-9) * snap);
+
+    for (auto& note : selected)
+        note.beat -= earliest;
+
+    const auto result = insertCopies (selected,
+                                      earliest + offset,
+                                      selected.size() > 1 ? "Duplicate notes" : "Duplicate note");
+    if (result.wasOk())
+        reportStatus ("DUPLICATED " + juce::String (static_cast<int> (selected.size()))
+                      + (selected.size() == 1 ? " NOTE  /  +" : " NOTES  /  +")
+                      + juce::String (offset, 2) + " BEATS");
+    else
+        reportStatus ("DUPLICATE REFUSED  /  " + result.getErrorMessage().toUpperCase());
+
+    return result;
+}
+
+void PianoRoll::nudgeSelection (double beatDelta)
+{
+    std::vector<SongNote> selected;
+    for (const auto& id : selectedNoteIds)
+        if (const auto note = project.findNote (id))
+            selected.push_back (*note);
+
+    if (selected.empty())
+        return;
+
+    // Clamp the shared delta against every note, matching how a multi-note drag works.
+    const auto loop = project.getLoopLengthBeats();
+    auto delta = beatDelta;
+    for (const auto& note : selected)
+        delta = juce::jlimit (-note.beat, loop - note.lengthBeats - note.beat, delta);
+
+    if (std::abs (delta) < 1.0e-9)
+        return;
+
+    project.beginUndoTransaction (selected.size() > 1 ? "Nudge notes" : "Nudge note");
+    for (auto note : selected)
+    {
+        note.beat += delta;
+        project.updateNote (note);
+    }
+    repaint();
+}
+
+void PianoRoll::transposeSelection (int semitones)
+{
+    std::vector<SongNote> selected;
+    for (const auto& id : selectedNoteIds)
+        if (const auto note = project.findNote (id))
+            selected.push_back (*note);
+
+    if (selected.empty() || semitones == 0)
+        return;
+
+    // All or nothing: a selection that would push any note past the MIDI range is
+    // refused rather than silently flattening intervals at the edge.
+    for (const auto& note : selected)
+    {
+        if (note.midiNote + semitones < 0 || note.midiNote + semitones > 127)
+        {
+            reportStatus ("TRANSPOSE REFUSED  /  A SELECTED NOTE WOULD LEAVE THE MIDI RANGE");
+            return;
+        }
+    }
+
+    project.beginUndoTransaction (selected.size() > 1 ? "Transpose notes" : "Transpose note");
+    for (auto note : selected)
+    {
+        note.midiNote += semitones;
+        project.updateNote (note);
+    }
+    repaint();
 }
 
 void PianoRoll::removeSelected()
