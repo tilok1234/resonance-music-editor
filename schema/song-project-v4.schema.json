@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://resonance.local/schema/song-project-v5.json",
-  "title": "Resonance Song Project v5",
+  "$id": "https://resonance.local/schema/song-project-v4.json",
+  "title": "Resonance Song Project v4 (archived input contract)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,7 +16,7 @@
     "tracks"
   ],
   "properties": {
-    "schemaVersion": { "const": 5 },
+    "schemaVersion": { "const": 4 },
     "editorVersion": { "type": "string", "minLength": 1 },
     "title": { "type": "string", "minLength": 1 },
     "sampleRate": { "type": "integer", "enum": [44100, 48000, 88200, 96000] },
@@ -124,11 +124,11 @@
               "properties": {
                 "id": { "type": "string", "minLength": 1 },
                 "startTick": { "type": "integer", "const": 0 },
-                "lengthTicks": { "type": "integer", "minimum": 3840, "maximum": 245760 },
+                "lengthTicks": { "type": "integer", "minimum": 3840, "maximum": 30720 },
                 "loopEnabled": { "const": true },
                 "notes": {
                   "type": "array",
-                  "maxItems": 1024,
+                  "maxItems": 512,
                   "items": {
                     "type": "object",
                     "additionalProperties": false,

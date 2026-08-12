@@ -1,10 +1,10 @@
 # Resonance song project format
 
-Status: implemented schema version 4 with version-1, version-2, and version-3 migration
+Status: implemented schema version 5 with version-1 through version-4 migration
 
 ## Overview
 
-Resonance songs use the `.resonance.json` suffix and a versioned JSON document. The canonical writer contract is [`schema/song-project.schema.json`](../schema/song-project.schema.json). Editor 0.5.0 reads schema versions 1 through 4 and writes schema version 4. The archived input contracts are [`schema/song-project-v1.schema.json`](../schema/song-project-v1.schema.json), [`schema/song-project-v2.schema.json`](../schema/song-project-v2.schema.json), and [`schema/song-project-v3.schema.json`](../schema/song-project-v3.schema.json).
+Resonance songs use the `.resonance.json` suffix and a versioned JSON document. The canonical writer contract is [`schema/song-project.schema.json`](../schema/song-project.schema.json). Editor 0.5.0 reads schema versions 1 through 5 and writes schema version 5. The archived input contracts are [`schema/song-project-v1.schema.json`](../schema/song-project-v1.schema.json), [`schema/song-project-v2.schema.json`](../schema/song-project-v2.schema.json), [`schema/song-project-v3.schema.json`](../schema/song-project-v3.schema.json), and [`schema/song-project-v4.schema.json`](../schema/song-project-v4.schema.json).
 
 The file stores symbolic music and enough VST3 identity and state to reopen one through four implemented instrument tracks. It never embeds the VST3 binary, factory content, sample library, or a machine's plug-in inventory. Active-track selection is editor session state and is not serialized.
 
@@ -40,7 +40,7 @@ project
 
 | Field | Version 3 meaning |
 | --- | --- |
-| `schemaVersion` | integer `4`; selects the persistence contract |
+| `schemaVersion` | integer `5`; selects the persistence contract |
 | `editorVersion` | application version that wrote the file; currently `0.5.0` |
 | `title` | non-empty song title |
 | `sampleRate` | one of 44,100, 48,000, 88,200, or 96,000 Hz |
@@ -86,7 +86,7 @@ The state hash is an integrity check, not a signature, semantic sound fingerprin
 
 ## Clip and notes
 
-Each current clip starts at tick 0, loops, and uses the shared project loop length of 4 through 32 beats. At 960 PPQ this is 3,840 through 30,720 ticks. Different per-track loop lengths are rejected.
+Each current clip starts at tick 0, loops, and uses the shared project loop length of 4 through 256 beats, that is one through 64 bars of 4/4. At 960 PPQ this is 3,840 through 245,760 ticks. These bounds are defined once in `src/loop_scheduler.h` and used by the model, the realtime snapshot sanitiser, and the command parser. Different per-track loop lengths are rejected.
 
 | Note field | Constraint |
 | --- | --- |
@@ -96,7 +96,7 @@ Each current clip starts at tick 0, loops, and uses the shared project loop leng
 | `midiNote` | integer 0 through 127 |
 | `velocity` | integer 1 through 127 |
 
-The current schemas accept at most 512 notes per track. Beats are converted to integer ticks when saved:
+The current schemas accept at most 1,024 notes per track. Beats are converted to integer ticks when saved:
 
 ```text
 tick = round(beat * 960)
@@ -111,7 +111,7 @@ This shortened example explains the shape but is not loadable because the placeh
 
 ```json
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "editorVersion": "0.5.0",
   "title": "Untitled",
   "sampleRate": 48000,

@@ -30,7 +30,7 @@ PianoRoll::PianoRoll (SongProject& projectToEdit)
     setWantsKeyboardFocus (true);
     setMouseClickGrabsKeyboardFocus (true);
     setTitle ("Editable piano roll");
-    setDescription ("Click empty space to add a note, or drag across empty space to select a group. Shift-click or Ctrl-click a note to extend the selection, and press Ctrl+A to select every note. Drag notes to move the whole selection, drag the right edge of a single note to resize, and press Delete to remove the selection. Use Ctrl+C to copy, Ctrl+V to paste at the marker set by your last click, and Ctrl+D to duplicate the selection one span later. Arrow keys nudge by the snap value and transpose by a semitone, or by an octave with Shift. Scroll to move through pitch, hold Ctrl while scrolling or press plus and minus to zoom vertically. Notes on the other track are shown dimmed and cannot be edited here.");
+    setDescription ("Click empty space to add a note, or drag across empty space to select a group. Shift-click or Ctrl-click a note to extend the selection, and press Ctrl+A to select every note. Drag notes to move the whole selection, drag the right edge of a single note to resize, and press Delete to remove the selection. Use Ctrl+C to copy, Ctrl+V to paste at the marker set by your last click, and Ctrl+D to duplicate the selection one span later. Arrow keys nudge by the snap value and transpose by a semitone, or by an octave with Shift. Scroll to move through pitch, hold Shift while scrolling to move through time, hold Ctrl to zoom vertically or Ctrl and Shift to zoom horizontally, and press Home or End to jump to the start or end of the song. Notes on the other track are shown dimmed and cannot be edited here.");
 }
 
 void PianoRoll::frameAllTracks()
@@ -59,6 +59,8 @@ void PianoRoll::frameAllTracks()
                                     highest - lowest + 5);
     const auto centrePitch = (lowest + highest) / 2;
     lowestVisibleNote = juce::jlimit (0, 128 - visibleNoteRows, centrePitch - visibleNoteRows / 2);
+    visibleBeats = 0.0;
+    firstVisibleBeat = 0.0;
     repaint();
 }
 
@@ -203,17 +205,29 @@ juce::Rectangle<float> PianoRoll::gridBounds() const
     return bounds;
 }
 
+double PianoRoll::visibleBeatSpan() const
+{
+    const auto loop = juce::jmax (1.0, project.getLoopLengthBeats());
+    return visibleBeats > 0.0 ? juce::jmin (visibleBeats, loop) : loop;
+}
+
 juce::Rectangle<float> PianoRoll::boundsForNote (const SongNote& note) const
 {
     const auto grid = gridBounds();
-    const auto loop = project.getLoopLengthBeats();
+    const auto span = visibleBeatSpan();
     const auto topNote = lowestVisibleNote + visibleNoteRows - 1;
     if (note.midiNote < lowestVisibleNote || note.midiNote > topNote)
         return {};
 
+    // Cull anything entirely outside the visible beat window so a long song does not
+    // pay for notes it cannot show.
+    if (note.beat + note.lengthBeats < firstVisibleBeat || note.beat > firstVisibleBeat + span)
+        return {};
+
     const auto rowHeight = grid.getHeight() / static_cast<float> (visibleNoteRows);
-    const auto x = grid.getX() + grid.getWidth() * static_cast<float> (note.beat / loop);
-    const auto width = grid.getWidth() * static_cast<float> (note.lengthBeats / loop);
+    const auto x = grid.getX()
+                   + grid.getWidth() * static_cast<float> ((note.beat - firstVisibleBeat) / span);
+    const auto width = grid.getWidth() * static_cast<float> (note.lengthBeats / span);
     const auto row = topNote - note.midiNote;
     const auto y = grid.getY() + rowHeight * static_cast<float> (row);
     return { x + 1.0f, y + 1.0f, juce::jmax (5.0f, width - 2.0f), juce::jmax (3.0f, rowHeight - 2.0f) };
@@ -232,10 +246,42 @@ std::optional<SongNote> PianoRoll::noteAt (juce::Point<float> point) const
 double PianoRoll::beatAtX (float x) const
 {
     const auto grid = gridBounds();
+    const auto span = visibleBeatSpan();
     return juce::jlimit (0.0,
                          project.getLoopLengthBeats(),
-                         static_cast<double> ((x - grid.getX()) / grid.getWidth())
-                             * project.getLoopLengthBeats());
+                         firstVisibleBeat
+                             + static_cast<double> ((x - grid.getX()) / grid.getWidth()) * span);
+}
+
+void PianoRoll::clampHorizontalView()
+{
+    const auto loop = juce::jmax (1.0, project.getLoopLengthBeats());
+    if (visibleBeats > 0.0)
+        visibleBeats = juce::jlimit (minimumVisibleBeats, loop, visibleBeats);
+    firstVisibleBeat = juce::jlimit (0.0, juce::jmax (0.0, loop - visibleBeatSpan()), firstVisibleBeat);
+}
+
+void PianoRoll::adjustHorizontalZoom (double factor)
+{
+    const auto loop = juce::jmax (1.0, project.getLoopLengthBeats());
+    const auto previousSpan = visibleBeatSpan();
+    const auto requested = juce::jlimit (minimumVisibleBeats, loop, previousSpan * factor);
+    if (std::abs (requested - previousSpan) < 1.0e-9)
+        return;
+
+    // Hold the centre beat steady, matching how vertical zoom anchors on centre pitch.
+    const auto centreBeat = firstVisibleBeat + previousSpan * 0.5;
+    visibleBeats = requested;
+    firstVisibleBeat = centreBeat - requested * 0.5;
+    clampHorizontalView();
+    repaint();
+}
+
+void PianoRoll::scrollHorizontally (double beatDelta)
+{
+    firstVisibleBeat += beatDelta;
+    clampHorizontalView();
+    repaint();
 }
 
 int PianoRoll::noteAtY (float y) const
@@ -293,12 +339,30 @@ void PianoRoll::paint (juce::Graphics& graphics)
         }
     }
 
+    // Grid density follows the zoom: sub-beat lines only appear once they are far
+    // enough apart to read, and bar labels thin out on a long song.
     const auto snap = project.getSnapBeats();
-    const auto steps = juce::roundToInt (loop / snap);
-    for (int step = 0; step <= steps; ++step)
+    const auto span = visibleBeatSpan();
+    const auto pixelsPerBeat = grid.getWidth() / static_cast<float> (span);
+    const auto gridStep = pixelsPerBeat * static_cast<float> (snap) >= 6.0f ? snap
+                          : pixelsPerBeat >= 6.0f                          ? 1.0
+                                                                           : 4.0;
+    const auto pixelsPerBar = pixelsPerBeat * 4.0f;
+    const auto barLabelStride = pixelsPerBar >= 54.0f ? 1
+                                : pixelsPerBar >= 27.0f ? 2
+                                : pixelsPerBar >= 14.0f ? 4
+                                                        : 8;
+
+    const auto firstStep = static_cast<int> (std::floor (firstVisibleBeat / gridStep));
+    const auto lastStep = static_cast<int> (std::ceil ((firstVisibleBeat + span) / gridStep));
+    for (int step = firstStep; step <= lastStep; ++step)
     {
-        const auto beat = static_cast<double> (step) * snap;
-        const auto x = grid.getX() + grid.getWidth() * static_cast<float> (beat / loop);
+        const auto beat = static_cast<double> (step) * gridStep;
+        if (beat < -1.0e-9 || beat > loop + 1.0e-9)
+            continue;
+
+        const auto x = grid.getX()
+                       + grid.getWidth() * static_cast<float> ((beat - firstVisibleBeat) / span);
         const auto roundedBeat = juce::roundToInt (beat);
         const auto onBeat = std::abs (beat - roundedBeat) < 1.0e-8;
         const auto onBar = onBeat && roundedBeat % 4 == 0;
@@ -307,10 +371,14 @@ void PianoRoll::paint (juce::Graphics& graphics)
 
         if (onBar && beat < loop)
         {
-            graphics.setColour (textMuted);
-            graphics.drawText ("BAR " + juce::String (roundedBeat / 4 + 1),
-                               juce::Rectangle<float> (x + 5.0f, 5.0f, 62.0f, 15.0f).toNearestInt(),
-                               juce::Justification::centredLeft);
+            const auto barNumber = roundedBeat / 4 + 1;
+            if ((barNumber - 1) % barLabelStride == 0)
+            {
+                graphics.setColour (textMuted);
+                graphics.drawText ("BAR " + juce::String (barNumber),
+                                   juce::Rectangle<float> (x + 5.0f, 5.0f, 62.0f, 15.0f).toNearestInt(),
+                                   juce::Justification::centredLeft);
+            }
         }
     }
 
@@ -350,12 +418,12 @@ void PianoRoll::paint (juce::Graphics& graphics)
 
         if (isSelected (note.id))
         {
-            const auto primary = note.id == primarySelectedNoteId;
-            graphics.setColour (juce::Colours::white.withAlpha (primary ? 0.96f : 0.66f));
-            graphics.drawRoundedRectangle (bounds.reduced (0.5f), 3.0f, primary ? 1.5f : 1.1f);
+            const auto isPrimary = note.id == primarySelectedNoteId;
+            graphics.setColour (juce::Colours::white.withAlpha (isPrimary ? 0.96f : 0.66f));
+            graphics.drawRoundedRectangle (bounds.reduced (0.5f), 3.0f, isPrimary ? 1.5f : 1.1f);
             // Only the primary selection shows the resize grip, because resizing is a
             // single-note gesture.
-            if (primary && selectedNoteIds.size() <= 1)
+            if (isPrimary && selectedNoteIds.size() <= 1)
                 graphics.fillRect (bounds.getRight() - 4.0f, bounds.getY() + 1.0f, 2.0f, bounds.getHeight() - 2.0f);
         }
     }
@@ -365,7 +433,9 @@ void PianoRoll::paint (juce::Graphics& graphics)
     if (! clipboard.empty())
     {
         const auto anchorX = grid.getX()
-                             + grid.getWidth() * static_cast<float> (insertBeat / loop);
+                             + grid.getWidth()
+                                   * static_cast<float> ((insertBeat - firstVisibleBeat)
+                                                         / visibleBeatSpan());
         graphics.setColour (warning.withAlpha (0.66f));
         for (auto y = grid.getY(); y < grid.getBottom(); y += 6.0f)
             graphics.fillRect (anchorX - 0.5f, y, 1.0f, 3.0f);
@@ -416,8 +486,10 @@ void PianoRoll::paint (juce::Graphics& graphics)
         }
     }
 
-    const auto playheadX = grid.getX() + grid.getWidth()
-                                         * static_cast<float> (playheadBeat / juce::jmax (1.0, loop));
+    const auto playheadX = grid.getX()
+                           + grid.getWidth()
+                                 * static_cast<float> ((playheadBeat - firstVisibleBeat)
+                                                       / visibleBeatSpan());
     graphics.setColour (juce::Colours::white.withAlpha (0.88f));
     graphics.fillRect (playheadX - 1.0f, grid.getY(), 2.0f, grid.getHeight());
     graphics.setColour (primary);
@@ -620,10 +692,22 @@ void PianoRoll::mouseWheelMove (const juce::MouseEvent& event, const juce::Mouse
     if (direction == 0)
         return;
 
+    if (event.mods.isCommandDown() && event.mods.isShiftDown())
+    {
+        adjustHorizontalZoom (direction > 0 ? 0.8 : 1.25);
+        return;
+    }
+
     if (event.mods.isCommandDown())
     {
         // Scrolling up shows fewer, taller rows.
         adjustVerticalZoom (-direction * 2);
+        return;
+    }
+
+    if (event.mods.isShiftDown())
+    {
+        scrollHorizontally (-direction * visibleBeatSpan() * 0.12);
         return;
     }
 
@@ -661,6 +745,22 @@ bool PianoRoll::keyPressed (const juce::KeyPress& key)
     if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'D')
     {
         duplicateSelection();
+        return true;
+    }
+
+    if (key == juce::KeyPress::homeKey)
+    {
+        firstVisibleBeat = 0.0;
+        clampHorizontalView();
+        repaint();
+        return true;
+    }
+
+    if (key == juce::KeyPress::endKey)
+    {
+        firstVisibleBeat = project.getLoopLengthBeats();
+        clampHorizontalView();
+        repaint();
         return true;
     }
 

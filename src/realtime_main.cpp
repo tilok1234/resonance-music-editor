@@ -131,14 +131,16 @@ int runM6RuntimeTest (const juce::StringArray& args)
         const auto secondParameterCount = secondPlugin->getParameters().size();
         const auto distinctInstances = firstPlugin.get() != secondPlugin.get();
 
-        RealtimeEngine engine;
+        const auto engineStorage = std::make_unique<RealtimeEngine>();
+        auto& engine = *engineStorage;
         const auto firstInstall = engine.setPluginForTrack (0, std::move (firstPlugin));
         const auto secondInstall = engine.setPluginForTrack (1, std::move (secondPlugin));
         if (firstInstall.failed() || secondInstall.failed())
             throw std::runtime_error ((firstInstall.getErrorMessage() + " "
                                       + secondInstall.getErrorMessage()).toStdString());
 
-        MixerSnapshot mixer;
+        const auto mixerStorage = std::make_unique<MixerSnapshot>();
+        auto& mixer = *mixerStorage;
         mixer.trackCount = 2;
         mixer.tracks[0].enabled = true;
         mixer.tracks[0].gainLinear = 0.02f;
@@ -620,9 +622,9 @@ public:
         return editor != nullptr ? editor->runAudioProbeSelfTest (projectFile) : juce::var {};
     }
 
-    bool openProjectForSnapshot (const juce::File& projectFile)
+    bool openProjectFromCommandLine (const juce::File& projectFile)
     {
-        return editor != nullptr && editor->openProjectForSnapshot (projectFile);
+        return editor != nullptr && editor->openProjectFromCommandLine (projectFile);
     }
 
     void prepareM5PreviewForSnapshot()
@@ -693,6 +695,20 @@ public:
                                                    && ! soundShelfTestMode
                                                    && ! audioProbeMode);
 
+        const auto interactive = ! snapshotMode && ! idleTestMode && ! m4WorkflowTestMode
+                                 && ! m5WorkflowTestMode && ! m6AuthoringTestMode
+                                 && ! commandLoadTestMode && ! selectionTestMode
+                                 && ! soundShelfTestMode && ! audioProbeMode;
+
+        // Opening a song from the command line so the editor starts on it, rather than
+        // starting on the starter project and making the user find the file.
+        if (interactive && args.contains ("--project") && window != nullptr)
+        {
+            const auto launchProject = resolvePathArgument (args, "--project", "");
+            if (! window->openProjectFromCommandLine (launchProject))
+                std::cerr << "Could not open " << launchProject.getFullPathName() << std::endl;
+        }
+
         if (snapshotMode)
         {
             const auto snapshotFile = resolvePathArgument (args, "--snapshot", "realtime-ui-snapshot.png");
@@ -708,7 +724,7 @@ public:
 
                 if (content != nullptr
                     && (snapshotProject == juce::File()
-                        || window->openProjectForSnapshot (snapshotProject)))
+                        || window->openProjectFromCommandLine (snapshotProject)))
                 {
                     if (snapshotProject == juce::File())
                         window->prepareM5PreviewForSnapshot();

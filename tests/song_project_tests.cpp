@@ -963,6 +963,88 @@ void testPriorProjectMigration (TestContext& context,
                     "Loading a version-3 project must leave its source file byte-identical");
 }
 
+void testLastArchivedProjectMigration (TestContext& context,
+                                       const juce::File& fixtureFile,
+                                       juce::String& sourceSha256)
+{
+    context.expect (fixtureFile.existsAsFile(), "The version-4 migration fixture must exist");
+
+    juce::MemoryBlock sourceBytes;
+    context.expect (fixtureFile.loadFileAsData (sourceBytes),
+                    "The version-4 fixture bytes must be readable");
+    sourceSha256 = juce::SHA256 (sourceBytes).toHexString();
+
+    resonance::SongProject migrated;
+    context.expect (migrated.loadFromFile (fixtureFile).wasOk(),
+                    "A version-4 four-track project must load");
+    context.expect (migrated.getSchemaVersion() == resonance::SongProject::currentSchemaVersion
+                        && migrated.getTrackCount() == 4,
+                    "Version-4 migration must yield four current-schema tracks");
+    context.expect (migrated.getTrackId (0) == "track-v4-1"
+                        && migrated.getTrackId (3) == "track-v4-4"
+                        && migrated.getClipId (3) == "clip-v4-4",
+                    "Version-4 migration must preserve stable identity across four tracks");
+    const auto firstMixer = migrated.getTrackMixerSettings (0);
+    context.expect (firstMixer.gainDecibels == -2.25 && firstMixer.pan == -0.8 && firstMixer.solo,
+                    "Version-4 migration must preserve non-default mixer state");
+    context.expect (migrated.getTrackMidiRouting (3).inputChannel == 7
+                        && migrated.getTrackMidiRouting (3).outputChannel == 11,
+                    "Version-4 migration must preserve non-default MIDI routing");
+
+    juce::MemoryBlock sourceAfterLoad;
+    context.expect (fixtureFile.loadFileAsData (sourceAfterLoad)
+                        && juce::SHA256 (sourceAfterLoad).toHexString() == sourceSha256,
+                    "Loading a version-4 project must leave its source file byte-identical");
+}
+
+void testLongSongCanvas (TestContext& context, bool& canvasPassed)
+{
+    const auto before = context.assertions;
+    resonance::SongProject project;
+    juce::MemoryBlock state;
+    const juce::String payload ("long-canvas-state");
+    state.append (payload.toRawUTF8(), payload.getNumBytesAsUTF8());
+    project.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    project.setPluginState (state);
+
+    context.expect (resonance::maximumLoopBeats == 256.0 && resonance::minimumLoopBeats == 4.0,
+                    "The shared clip-length bounds must publish the widened canvas");
+
+    project.setLoopLengthBeats (256.0);
+    context.expect (project.getLoopLengthBeats() == 256.0,
+                    "A project must accept the full 64-bar canvas");
+    project.setLoopLengthBeats (400.0);
+    context.expect (project.getLoopLengthBeats() == 256.0,
+                    "A clip longer than the ceiling must clamp rather than fail open");
+
+    project.setLoopLengthBeats (256.0);
+    // A note deep into the canvas is the case the engine used to discard when it
+    // clamped published loop lengths back to the old ceiling.
+    resonance::SongNote late { "note-late", 200.0, 1.0, 72, 100 };
+    context.expect (project.insertNote (late).wasOk(),
+                    "A note beyond the old 32-beat ceiling must be insertable");
+
+    const auto snapshot = project.createSequenceSnapshotForTrack (0);
+    context.expect (snapshot.loopBeats == 256.0,
+                    "The published sequence must carry the full canvas length");
+    auto foundLate = false;
+    for (std::size_t index = 0; index < snapshot.noteCount; ++index)
+        foundLate = foundLate || std::abs (snapshot.notes[index].beat - 200.0) < 1.0e-9;
+    context.expect (foundLate, "The published sequence must retain a note late in the canvas");
+
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getNonexistentChildFile ("resonance-long-canvas", ".resonance.json", false);
+    context.expect (project.saveToFile (file).wasOk(), "A 64-bar project must save");
+    resonance::SongProject reopened;
+    context.expect (reopened.loadFromFile (file).wasOk()
+                        && reopened.getLoopLengthBeats() == 256.0
+                        && reopened.findNote ("note-late").has_value(),
+                    "A 64-bar project must reopen with its late notes intact");
+    context.expect (file.deleteFile(), "The long-canvas fixture must be removable");
+
+    canvasPassed = context.assertions > before;
+}
+
 void testFourTrackCeiling (TestContext& context, bool& ceilingPassed)
 {
     const auto before = context.assertions;
@@ -1236,6 +1318,7 @@ int main (int argc, char* argv[])
     const auto legacyProjectFixturePath = argumentValue (args, "--legacy-project-fixture");
     const auto previousProjectFixturePath = argumentValue (args, "--previous-project-fixture");
     const auto priorProjectFixturePath = argumentValue (args, "--prior-project-fixture");
+    const auto archivedProjectFixturePath = argumentValue (args, "--archived-project-fixture");
     TestContext context;
     int savedBytes = 0;
     juce::String stateSha;
@@ -1254,6 +1337,9 @@ int main (int argc, char* argv[])
     juce::String priorSourceSha;
     bool priorMigrationPassed = false;
     bool fourTrackCeilingPassed = false;
+    juce::String archivedSourceSha;
+    bool archivedMigrationPassed = false;
+    bool longCanvasPassed = false;
     int soundShelfBytes = 0;
 
     auto* reportObject = new juce::DynamicObject();
@@ -1267,6 +1353,8 @@ int main (int argc, char* argv[])
     reportObject->setProperty ("legacySchemaVersion", resonance::SongProject::legacySchemaVersion);
     reportObject->setProperty ("previousSchemaVersion", resonance::SongProject::previousSchemaVersion);
     reportObject->setProperty ("priorSchemaVersion", resonance::SongProject::priorSchemaVersion);
+    reportObject->setProperty ("lastArchivedSchemaVersion",
+                               resonance::SongProject::lastArchivedSchemaVersion);
     reportObject->setProperty ("priorMigrationFixture",
                                juce::File (priorProjectFixturePath).getFileName());
     reportObject->setProperty ("legacyMigrationFixture",
@@ -1299,7 +1387,12 @@ int main (int argc, char* argv[])
         priorMigrationPassed = true;
         testTwoTrackTopology (context);
         twoTrackTopologyPassed = true;
+        testLastArchivedProjectMigration (context,
+                                          juce::File (archivedProjectFixturePath),
+                                          archivedSourceSha);
+        archivedMigrationPassed = true;
         testFourTrackCeiling (context, fourTrackCeilingPassed);
+        testLongSongCanvas (context, longCanvasPassed);
         testEditCommandFoundation (context,
                                    juce::File (editCommandFixturePath),
                                    editCommandCandidateSha);
@@ -1323,6 +1416,10 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("priorMigrationPassed", priorMigrationPassed);
         reportObject->setProperty ("priorSourceSha256", priorSourceSha);
         reportObject->setProperty ("fourTrackCeilingPassed", fourTrackCeilingPassed);
+        reportObject->setProperty ("archivedMigrationPassed", archivedMigrationPassed);
+        reportObject->setProperty ("archivedSourceSha256", archivedSourceSha);
+        reportObject->setProperty ("longCanvasPassed", longCanvasPassed);
+        reportObject->setProperty ("maximumLoopBeats", static_cast<int> (resonance::maximumLoopBeats));
         reportObject->setProperty ("soundShelfPassed", soundShelfPassed);
         reportObject->setProperty ("soundShelfBytes", soundShelfBytes);
         reportObject->setProperty ("migratedRoundTripBytes", migratedBytes);
@@ -1348,6 +1445,10 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("priorMigrationPassed", priorMigrationPassed);
         reportObject->setProperty ("priorSourceSha256", priorSourceSha);
         reportObject->setProperty ("fourTrackCeilingPassed", fourTrackCeilingPassed);
+        reportObject->setProperty ("archivedMigrationPassed", archivedMigrationPassed);
+        reportObject->setProperty ("archivedSourceSha256", archivedSourceSha);
+        reportObject->setProperty ("longCanvasPassed", longCanvasPassed);
+        reportObject->setProperty ("maximumLoopBeats", static_cast<int> (resonance::maximumLoopBeats));
         reportObject->setProperty ("soundShelfPassed", soundShelfPassed);
         reportObject->setProperty ("soundShelfBytes", soundShelfBytes);
         reportObject->setProperty ("migratedRoundTripBytes", migratedBytes);

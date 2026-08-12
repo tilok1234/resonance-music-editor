@@ -37,6 +37,7 @@ Read [the product vision](docs/PRODUCT_VISION.md) before changing product scope.
 - Play/Pause, Stop/Rewind, Panic, master gain, meters, and diagnostics.
 - Native Surge window with Resonance audition transport and keyboard.
 - One or two editable piano-roll clips with selected-track add, move, resize, delete, velocity, snap, and shared loop length.
+- Song canvas up to 64 bars with up to 1,024 notes per clip, and a horizontally scrollable and zoomable piano roll with zoom-adaptive grid density.
 - Piano-roll vertical zoom from 12 to 72 rows, dim non-interactive ghost notes for the inactive track, and automatic pitch-range fitting on Open and New.
 - Multiple note selection by shift/Ctrl-click, marquee drag, and Ctrl+A, with selection-wide delete, move, velocity, and transpose proposals as single Undo transactions.
 - Session note clipboard with Ctrl+C copy, Ctrl+V paste at a drawn insert marker, Ctrl+D duplicate one snapped span later, and arrow-key nudge and semitone/octave transpose.
@@ -82,10 +83,10 @@ The latest machine-local reports available when this handoff was prepared showed
 | Gate | Result |
 | --- | --- |
 | Scheduler/mixer/runtime assertions | 124 passed |
-| Project/migration/ceiling/shelf/round-trip/command assertions | 253 passed |
-| Schema-validated artifacts and fixtures | 24 passed |
+| Project/migration/ceiling/canvas/shelf/command assertions | 270 passed |
+| Schema-validated artifacts and fixtures | 25 passed |
 | Packaged external command load | passed; 6 refusal paths, 1-diff preview, Apply, replay-after-Apply refused, one-step Undo |
-| Song project schemas | canonical writer `4`; accepted previous inputs `3`, `2`, and `1` |
+| Song project schemas | canonical writer `5`; accepted previous inputs `4`, `3`, `2`, and `1` |
 | Version-1 migration fixture | passed; source SHA-256 `4725dd74075981ceb6ecd605db270954deafb7743b98190d090eb42dd677c0f7`; `track-migrated` / `clip-migrated` preserved |
 | Version-2 migration fixture | passed; source SHA-256 `4b15956b981e085602e3e000f94bd08992ff7ea9ba53669d67a0be917406f21b`; non-default mixer/MIDI and exact state preserved |
 | Fixed runtime/mixer contract | 8 stable slots/lanes; double-buffered publication; two-slot scheduling, mix, meters, safety, state, failure, and shutdown cases passed |
@@ -115,7 +116,7 @@ The latest machine-local reports available when this handoff was prepared showed
 | Exact saved-B packaged workflow | passed; A/B `91ED214E`, clean Reject and Close |
 | Packaged UI snapshot | 104,046 bytes; SHA-256 `0f57c461b102795052f1f5481b7a7c0f00b683b963c643e3a0b6d7b20d8ede89`; includes the selected-track topology/mixer row and the command-load row |
 | UI idle gate | passed at 1,796.9 ms with four preloaded Surge instances, below the 3,000 ms process-CPU threshold |
-| Packaged editor SHA-256 | `fd8dfa0c5dae0db981acb9451d9dc98f1bbb88bef090f54ba88dc298889d6179` |
+| Packaged editor SHA-256 | `1d9e1a662146cc338fb02bd8bb3b3a95ed77830d7e5637f6235aa51f6525ffbd` |
 
 Device name, sample rate, block size, latency, full path-derived identifier, and bundle fingerprint are machine observations. Regenerate rather than copying them to another machine.
 

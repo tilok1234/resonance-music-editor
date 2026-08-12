@@ -83,6 +83,7 @@ An ADR records a durable decision and its consequences. Add a new ADR when a cha
 - [M6 sound shelf](M6_SOUND_SHELF_CHECKPOINT_2026-08-12.md)
 - [M6 four-track schema version 4](M6_FOUR_TRACK_SCHEMA_V4_CHECKPOINT_2026-08-12.md)
 - [Per-track audio probe and mix diagnosis](AUDIO_PROBE_AND_MIX_DIAGNOSIS_2026-08-13.md)
+- [M7.1 song-length canvas](M7_SONG_LENGTH_CANVAS_CHECKPOINT_2026-08-13.md)
 
 The acceptance files distinguish implementation proof from musical approval. A passing scheduler, schema, or audio-device test does not mean that a preset, loop, mix, or composition has passed a listening review.
 

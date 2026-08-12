@@ -58,6 +58,10 @@ private:
     };
 
     void adjustVerticalZoom (int rowDelta);
+    void adjustHorizontalZoom (double factor);
+    void scrollHorizontally (double beatDelta);
+    void clampHorizontalView();
+    double visibleBeatSpan() const;
     juce::Rectangle<float> gridBounds() const;
     juce::Rectangle<float> boundsForNote (const SongNote& note) const;
     std::optional<SongNote> noteAt (juce::Point<float> point) const;
@@ -94,6 +98,11 @@ private:
     int visibleNoteRows = 29;
     static constexpr int minimumVisibleRows = 12;
     static constexpr int maximumVisibleRows = 72;
+    // Horizontal view state. visibleBeats <= 0 means "fit the whole song", which is the
+    // default so a project always opens showing all of itself.
+    double firstVisibleBeat = 0.0;
+    double visibleBeats = 0.0;
+    static constexpr double minimumVisibleBeats = 2.0;
     DragMode dragMode = DragMode::none;
     std::optional<SongNote> dragOrigin;
     // Pre-drag state of every selected note, so a move applies to the whole selection.

@@ -29,7 +29,7 @@ MixerSnapshot sanitiseMixerSnapshot (const MixerSnapshot& source)
         auto& track = result.tracks[index];
         track.sequence.noteCount = juce::jmin (track.sequence.noteCount, maxSequenceNotes);
         track.sequence.loopBeats = std::isfinite (track.sequence.loopBeats)
-                                       ? juce::jlimit (4.0, 32.0, track.sequence.loopBeats)
+                                       ? juce::jlimit (minimumLoopBeats, maximumLoopBeats, track.sequence.loopBeats)
                                        : loopLengthBeats;
         track.gainLinear = std::isfinite (track.gainLinear)
                                ? juce::jlimit (0.0f, maximumTrackGain, track.gainLinear)

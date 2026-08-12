@@ -115,10 +115,13 @@ juce::Result parseNote (const juce::var& value, SongNote& destination)
     int velocity = 0;
     if (id.isEmpty())
         return juce::Result::fail ("A command note id is required");
-    if (! readInt (*object, "startTick", startTick) || startTick < 0 || startTick >= 32 * projectPpq)
-        return juce::Result::fail ("Command note startTick must be from 0 through 30719");
-    if (! readInt (*object, "lengthTicks", lengthTicks) || lengthTicks < 1 || lengthTicks > 32 * projectPpq)
-        return juce::Result::fail ("Command note lengthTicks must be from 1 through 30720");
+    const auto maximumTicks = static_cast<int> (maximumLoopBeats) * projectPpq;
+    if (! readInt (*object, "startTick", startTick) || startTick < 0 || startTick >= maximumTicks)
+        return juce::Result::fail ("Command note startTick must be from 0 through "
+                                   + juce::String (maximumTicks - 1));
+    if (! readInt (*object, "lengthTicks", lengthTicks) || lengthTicks < 1 || lengthTicks > maximumTicks)
+        return juce::Result::fail ("Command note lengthTicks must be from 1 through "
+                                   + juce::String (maximumTicks));
     if (! readInt (*object, "midiNote", midiNote) || midiNote < 0 || midiNote > 127)
         return juce::Result::fail ("Command note midiNote must be from 0 through 127");
     if (! readInt (*object, "velocity", velocity) || velocity < 1 || velocity > 127)

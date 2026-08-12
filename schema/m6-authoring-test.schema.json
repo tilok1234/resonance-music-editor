@@ -57,7 +57,7 @@
     "runtimeStateAlignedAfterReorder": { "const": true },
     "undoReorderRestored": { "const": true },
     "saveSucceeded": { "const": true },
-    "reopenedSchemaVersion": { "const": 4 },
+    "reopenedSchemaVersion": { "const": 5 },
     "reopenedTrackCount": { "const": 2 },
     "reopenedOrderPreserved": { "const": true },
     "reopenedMixerPreserved": { "const": true },

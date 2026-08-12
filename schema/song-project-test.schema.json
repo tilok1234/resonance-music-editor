@@ -39,7 +39,12 @@
     "priorMigrationFixture",
     "priorMigrationPassed",
     "priorSourceSha256",
-    "fourTrackCeilingPassed"
+    "fourTrackCeilingPassed",
+    "lastArchivedSchemaVersion",
+    "archivedMigrationPassed",
+    "archivedSourceSha256",
+    "longCanvasPassed",
+    "maximumLoopBeats"
   ],
   "properties": {
     "schemaVersion": {
@@ -60,7 +65,7 @@
       "const": "edit-command-note-patch-v1.json"
     },
     "projectSchemaVersion": {
-      "const": 4
+      "const": 5
     },
     "legacySchemaVersion": {
       "const": 1
@@ -160,6 +165,22 @@
     },
     "fourTrackCeilingPassed": {
       "const": true
+    },
+    "lastArchivedSchemaVersion": {
+      "const": 4
+    },
+    "archivedMigrationPassed": {
+      "const": true
+    },
+    "archivedSourceSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "longCanvasPassed": {
+      "const": true
+    },
+    "maximumLoopBeats": {
+      "const": 256
     }
   }
 }

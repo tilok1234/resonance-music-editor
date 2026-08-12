@@ -48,7 +48,10 @@ public:
     // Versions 1 and 2 hold exactly one track; 3 was the first to persist more.
     static constexpr int multiTrackSchemaVersion = 3;
     static constexpr int priorSchemaVersion = 3;
-    static constexpr int currentSchemaVersion = 4;
+    // Version 4 is the newest archived input contract; version 5 widened the clip
+    // ceiling from 8 to 64 bars of 4/4.
+    static constexpr int lastArchivedSchemaVersion = 4;
+    static constexpr int currentSchemaVersion = 5;
     static constexpr int maxProjectTracks = 4;
 
     SongProject();

@@ -317,7 +317,8 @@ void testFixedCapacityMixerContract (TestContext& context)
 {
     static_assert (resonance::maxMixerTracks == 8);
 
-    resonance::MixerSnapshot snapshot;
+    const auto snapshotStorage = std::make_unique<resonance::MixerSnapshot>();
+    auto& snapshot = *snapshotStorage;
     snapshot.trackCount = 3;
     snapshot.tracks[0].enabled = true;
     snapshot.tracks[1].enabled = true;
@@ -376,7 +377,8 @@ void testTwoTrackRuntime (TestContext& context)
 {
     auto firstStats = std::make_shared<FakePluginStats>();
     auto secondStats = std::make_shared<FakePluginStats>();
-    resonance::RealtimeEngine engine;
+    const auto engineStorage = std::make_unique<resonance::RealtimeEngine>();
+    auto& engine = *engineStorage;
 
     context.expect (engine.setPluginForTrack (
                               0, std::make_unique<FakeInstrument> (0.2f, 101, firstStats)).wasOk(),
@@ -392,7 +394,8 @@ void testTwoTrackRuntime (TestContext& context)
                                                                 std::make_shared<FakePluginStats>())).failed(),
                     "Topology changes beyond the fixed eight-slot capacity must fail closed");
 
-    resonance::MixerSnapshot mixer;
+    const auto mixerStorage = std::make_unique<resonance::MixerSnapshot>();
+    auto& mixer = *mixerStorage;
     mixer.trackCount = 2;
     mixer.tracks[0].enabled = true;
     mixer.tracks[0].gainLinear = 1.0f;

@@ -182,7 +182,7 @@ double SongProject::getLoopLengthBeats() const
 
 void SongProject::setLoopLengthBeats (double beats)
 {
-    const auto safeLength = juce::jlimit (4.0, 32.0, beats);
+    const auto safeLength = juce::jlimit (minimumLoopBeats, maximumLoopBeats, beats);
     root.setProperty ("loopLengthBeats", safeLength, &undoManager);
 
     const auto minimumLength = getSnapBeats();
@@ -1141,7 +1141,8 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
         || ! readInt (*clipObject, "startTick", clipStartTick) || clipStartTick != 0
         || ! readBool (*clipObject, "loopEnabled", loopEnabled) || ! loopEnabled
         || ! readInt (*clipObject, "lengthTicks", loopTicks)
-        || loopTicks < projectPpq * 4 || loopTicks > projectPpq * 32)
+        || loopTicks < projectPpq * static_cast<int> (minimumLoopBeats)
+        || loopTicks > projectPpq * static_cast<int> (maximumLoopBeats))
         return juce::Result::fail ("Loop clip id, start, enabled state, and length are invalid");
 
     const auto notesValue = clipObject->getProperty ("notes");

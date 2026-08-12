@@ -63,10 +63,13 @@ double snapForComboId (int id)
 
 int loopComboId (double beats)
 {
-    if (beats <= 4.0)  return 1;
-    if (beats <= 8.0)  return 2;
-    if (beats <= 16.0) return 3;
-    return 4;
+    if (beats <= 4.0)   return 1;
+    if (beats <= 8.0)   return 2;
+    if (beats <= 16.0)  return 3;
+    if (beats <= 32.0)  return 4;
+    if (beats <= 64.0)  return 5;
+    if (beats <= 128.0) return 6;
+    return 7;
 }
 
 double loopForComboId (int id)
@@ -76,7 +79,10 @@ double loopForComboId (int id)
         case 1:  return 4.0;
         case 2:  return 8.0;
         case 3:  return 16.0;
-        default: return 32.0;
+        case 4:  return 32.0;
+        case 5:  return 64.0;
+        case 6:  return 128.0;
+        default: return 256.0;
     }
 }
 
@@ -650,6 +656,9 @@ void MainEditorComponent::configureControls()
     loopLengthCombo.addItem ("2 bars", 2);
     loopLengthCombo.addItem ("4 bars", 3);
     loopLengthCombo.addItem ("8 bars", 4);
+    loopLengthCombo.addItem ("16 bars", 5);
+    loopLengthCombo.addItem ("32 bars", 6);
+    loopLengthCombo.addItem ("64 bars", 7);
     loopLengthCombo.onChange = [this]
     {
         if (! refreshingProjectControls)
@@ -1096,7 +1105,9 @@ juce::Result MainEditorComponent::synchronisePluginSlotsFromProject (bool forceR
 void MainEditorComponent::publishProjectMixerSnapshot (
     const SequenceSnapshot* activeTrackOverride)
 {
-    MixerSnapshot mixer;
+    // Heap-allocated: a MixerSnapshot is far too large for a stack local.
+    const auto mixerStorage = std::make_unique<MixerSnapshot>();
+    auto& mixer = *mixerStorage;
     mixer.trackCount = static_cast<std::size_t> (
         juce::jlimit (0, SongProject::maxProjectTracks, project.getTrackCount()));
 
@@ -2094,7 +2105,7 @@ juce::var MainEditorComponent::runAudioProbeSelfTest (const juce::File& projectF
         return result;
     };
 
-    if (projectFile != juce::File() && ! openProjectForSnapshot (projectFile))
+    if (projectFile != juce::File() && ! openProjectFromCommandLine (projectFile))
         return fail ("The probe project could not be opened");
 
     const auto trackCount = project.getTrackCount();
@@ -2209,7 +2220,7 @@ juce::var MainEditorComponent::runAudioProbeSelfTest (const juce::File& projectF
     return result;
 }
 
-bool MainEditorComponent::openProjectForSnapshot (const juce::File& projectFile)
+bool MainEditorComponent::openProjectFromCommandLine (const juce::File& projectFile)
 {
     if (! projectFile.existsAsFile())
         return false;
