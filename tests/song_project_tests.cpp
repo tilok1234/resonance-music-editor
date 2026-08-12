@@ -3,6 +3,7 @@
 #include "../src/edit_command.h"
 #include "../src/plugin_identity.h"
 #include "../src/song_project.h"
+#include "../src/sound_shelf.h"
 
 #include <algorithm>
 #include <array>
@@ -910,6 +911,106 @@ void testSeededVelocityVariation (TestContext& context,
                     "One Undo must restore every velocity changed by the transform");
 }
 
+resonance::SoundShelfEntry makeShelfEntry (const juce::String& name, const juce::String& payload)
+{
+    resonance::SoundShelfEntry entry;
+    entry.name = name;
+    entry.pluginIdentifier = "VST3-Surge XT-b793f78b-190e4fbd";
+    entry.pluginName = "Surge XT";
+    entry.vendor = "Surge Synth Team";
+    entry.version = "1.3.4";
+    entry.state.append (payload.toRawUTF8(), payload.getNumBytesAsUTF8());
+    entry.stateSha256 = juce::SHA256 (entry.state).toHexString();
+    return entry;
+}
+
+void testSoundShelf (TestContext& context, bool& shelfPassed, int& shelfBytes)
+{
+    const auto before = context.assertions;
+    resonance::SoundShelf shelf;
+
+    const auto missing = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                             .getNonexistentChildFile ("resonance-shelf-absent", ".json", false);
+    context.expect (shelf.loadFrom (missing).wasOk() && shelf.getEntryCount() == 0,
+                    "A missing shelf file must load as an empty shelf rather than fail");
+
+    context.expect (shelf.add (makeShelfEntry ("Warm pluck", "state-one")).wasOk()
+                        && shelf.add (makeShelfEntry ("Deep kick", "state-two")).wasOk()
+                        && shelf.getEntryCount() == 2,
+                    "Distinct named sounds must be accepted");
+    context.expect (shelf.add (makeShelfEntry ("  warm PLUCK  ", "state-three")).failed()
+                        && shelf.getEntryCount() == 2,
+                    "Shelf names must be unique ignoring case and surrounding space");
+    context.expect (shelf.add (makeShelfEntry ("", "state-four")).failed(),
+                    "A shelf sound must be named");
+    context.expect (shelf.add (makeShelfEntry (juce::String::repeatedString ("x", 81),
+                                               "state-five"))
+                        .failed(),
+                    "A shelf name longer than 80 characters must be refused");
+
+    auto corrupt = makeShelfEntry ("Corrupt", "state-six");
+    corrupt.stateSha256 = juce::String::repeatedString ("0", 64);
+    context.expect (shelf.add (corrupt).failed() && shelf.getEntryCount() == 2,
+                    "A shelf sound whose hash does not match its state must be refused");
+
+    const auto* found = shelf.find ("deep KICK");
+    context.expect (found != nullptr && found->name == "Deep kick",
+                    "Shelf lookup must ignore case");
+
+    const auto shelfFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getNonexistentChildFile ("resonance-shelf", ".json", false);
+    context.expect (shelf.saveTo (shelfFile).wasOk() && shelfFile.existsAsFile(),
+                    "A shelf must be writable");
+    shelfBytes = static_cast<int> (shelfFile.getSize());
+
+    resonance::SoundShelf reloaded;
+    context.expect (reloaded.loadFrom (shelfFile).wasOk() && reloaded.getEntryCount() == 2,
+                    "A saved shelf must reload");
+    const auto* reloadedEntry = reloaded.find ("Warm pluck");
+    const auto* originalEntry = shelf.find ("Warm pluck");
+    context.expect (reloadedEntry != nullptr && originalEntry != nullptr
+                        && reloadedEntry->state == originalEntry->state
+                        && reloadedEntry->stateSha256.equalsIgnoreCase (originalEntry->stateSha256)
+                        && reloadedEntry->pluginIdentifier == originalEntry->pluginIdentifier,
+                    "Reloaded shelf sounds must carry exact state, hash, and identity");
+
+    // A shelf that fails validation must not replace entries already in memory.
+    const auto corruptFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getNonexistentChildFile ("resonance-shelf-bad", ".json", false);
+    context.expect (corruptFile.replaceWithText ("{ \"schemaVersion\": 99, \"sounds\": [] }"),
+                    "An unsupported shelf fixture must be writable");
+    context.expect (reloaded.loadFrom (corruptFile).failed() && reloaded.getEntryCount() == 2,
+                    "An unsupported shelf version must fail closed and preserve loaded sounds");
+    context.expect (corruptFile.replaceWithText ("{ \"schemaVersion\": 1 }"),
+                    "A shelf fixture without sounds must be writable");
+    context.expect (reloaded.loadFrom (corruptFile).failed() && reloaded.getEntryCount() == 2,
+                    "A shelf without a sounds array must fail closed");
+
+    context.expect (shelf.remove ("DEEP kick").wasOk() && shelf.getEntryCount() == 1
+                        && shelf.find ("Deep kick") == nullptr,
+                    "Removing a shelf sound must ignore case and drop exactly one entry");
+    context.expect (shelf.remove ("Deep kick").failed(),
+                    "Removing an absent shelf sound must fail");
+
+    resonance::SoundShelf full;
+    auto capacityHeld = true;
+    for (std::size_t index = 0; index < resonance::SoundShelf::maximumEntries; ++index)
+        capacityHeld = capacityHeld
+                       && full.add (makeShelfEntry ("Sound " + juce::String (static_cast<int> (index)),
+                                                    "payload " + juce::String (static_cast<int> (index))))
+                              .wasOk();
+    context.expect (capacityHeld
+                        && full.add (makeShelfEntry ("One too many", "overflow")).failed()
+                        && full.getEntryCount()
+                               == static_cast<int> (resonance::SoundShelf::maximumEntries),
+                    "The shelf must fail closed at its capacity");
+
+    context.expect (shelfFile.deleteFile() && corruptFile.deleteFile(),
+                    "Shelf fixtures must be removable");
+
+    shelfPassed = context.assertions > before;
+}
+
 void testRoundTrip (TestContext& context, int& savedBytes, juce::String& stateSha)
 {
     resonance::SongProject project;
@@ -1009,6 +1110,8 @@ int main (int argc, char* argv[])
     juce::String previousSourceSha;
     bool previousMigrationPassed = false;
     bool twoTrackTopologyPassed = false;
+    bool soundShelfPassed = false;
+    int soundShelfBytes = 0;
 
     auto* reportObject = new juce::DynamicObject();
     juce::var report (reportObject);
@@ -1032,6 +1135,7 @@ int main (int argc, char* argv[])
         testSequenceSnapshot (context);
         testRelocatedPluginIdentity (context);
         testSoundSnapshotAndUndo (context);
+        testSoundShelf (context, soundShelfPassed, soundShelfBytes);
         testLegacyProjectMigration (context,
                                     juce::File (legacyProjectFixturePath),
                                     migratedBytes,
@@ -1065,6 +1169,8 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("previousMigrationPassed", previousMigrationPassed);
         reportObject->setProperty ("previousSourceSha256", previousSourceSha);
         reportObject->setProperty ("twoTrackTopologyPassed", twoTrackTopologyPassed);
+        reportObject->setProperty ("soundShelfPassed", soundShelfPassed);
+        reportObject->setProperty ("soundShelfBytes", soundShelfBytes);
         reportObject->setProperty ("migratedRoundTripBytes", migratedBytes);
         reportObject->setProperty ("stableTrackId", stableTrackId);
         reportObject->setProperty ("stableClipId", stableClipId);
@@ -1085,6 +1191,8 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("previousMigrationPassed", previousMigrationPassed);
         reportObject->setProperty ("previousSourceSha256", previousSourceSha);
         reportObject->setProperty ("twoTrackTopologyPassed", twoTrackTopologyPassed);
+        reportObject->setProperty ("soundShelfPassed", soundShelfPassed);
+        reportObject->setProperty ("soundShelfBytes", soundShelfBytes);
         reportObject->setProperty ("migratedRoundTripBytes", migratedBytes);
         reportObject->setProperty ("stableTrackId", stableTrackId);
         reportObject->setProperty ("stableClipId", stableClipId);

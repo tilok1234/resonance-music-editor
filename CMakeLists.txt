@@ -126,7 +126,9 @@ target_sources(ResonanceMusicEditor PRIVATE
     src/realtime_engine.h
     src/realtime_main.cpp
     src/song_project.cpp
-    src/song_project.h)
+    src/song_project.h
+    src/sound_shelf.cpp
+    src/sound_shelf.h)
 
 target_compile_definitions(ResonanceMusicEditor PRIVATE
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:ResonanceMusicEditor,JUCE_PRODUCT_NAME>"
@@ -191,6 +193,8 @@ target_sources(SongProjectTests PRIVATE
     src/loop_scheduler.h
     src/song_project.cpp
     src/song_project.h
+    src/sound_shelf.cpp
+    src/sound_shelf.h
     tests/song_project_tests.cpp)
 
 target_compile_definitions(SongProjectTests PRIVATE

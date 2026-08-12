@@ -91,6 +91,10 @@ VALIDATION_GROUPS = (
         PROJECT_ROOT / "schema" / "selection-test.schema.json",
         (PROJECT_ROOT / "artifacts" / "selection-test-report.json",),
     ),
+    (
+        PROJECT_ROOT / "schema" / "sound-shelf-test.schema.json",
+        (PROJECT_ROOT / "artifacts" / "sound-shelf-test-report.json",),
+    ),
 )
 
 

@@ -609,6 +609,12 @@ public:
         return editor != nullptr ? editor->runSelectionSelfTest() : juce::var {};
     }
 
+    juce::var runSoundShelfSelfTest (const juce::File& alternateProjectFile)
+    {
+        return editor != nullptr ? editor->runSoundShelfSelfTest (alternateProjectFile)
+                                 : juce::var {};
+    }
+
     bool openProjectForSnapshot (const juce::File& projectFile)
     {
         return editor != nullptr && editor->openProjectForSnapshot (projectFile);
@@ -669,6 +675,7 @@ public:
         const auto m6AuthoringTestMode = args.contains ("--m6-authoring-test");
         const auto commandLoadTestMode = args.contains ("--command-load-test");
         const auto selectionTestMode = args.contains ("--selection-test");
+        const auto soundShelfTestMode = args.contains ("--sound-shelf-test");
         window = std::make_unique<MainWindow> (inventory,
                                                quarantine,
                                                properties.getUserSettings(),
@@ -676,7 +683,8 @@ public:
                                                    && ! m4WorkflowTestMode && ! m5WorkflowTestMode
                                                    && ! m6AuthoringTestMode
                                                    && ! commandLoadTestMode
-                                                   && ! selectionTestMode);
+                                                   && ! selectionTestMode
+                                                   && ! soundShelfTestMode);
 
         if (snapshotMode)
         {
@@ -809,6 +817,25 @@ public:
                                     && static_cast<bool> (object->getProperty ("passed"));
                 const auto reportWritten = writeReport (reportFile, report);
                 setApplicationReturnValue (passed && reportWritten ? 0 : 9);
+                quit();
+            });
+        }
+        else if (soundShelfTestMode)
+        {
+            const auto alternateProject = resolvePathArgument (
+                args, "--alternate-project", "m4-accepted-candidate-b.resonance.json");
+            const auto reportFile = resolvePathArgument (
+                args, "--report", "sound-shelf-test-report.json");
+            juce::Timer::callAfterDelay (750, [this, alternateProject, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runSoundShelfSelfTest (alternateProject)
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 10);
                 quit();
             });
         }

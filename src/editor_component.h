@@ -7,6 +7,7 @@
 #include "piano_roll.h"
 #include "realtime_engine.h"
 #include "song_project.h"
+#include "sound_shelf.h"
 
 #include <array>
 #include <functional>
@@ -34,6 +35,7 @@ public:
     juce::var runM6AuthoringSelfTest (const juce::File& projectFile);
     juce::var runCommandLoadSelfTest();
     juce::var runSelectionSelfTest();
+    juce::var runSoundShelfSelfTest (const juce::File& alternateProjectFile);
     bool openProjectForSnapshot (const juce::File& projectFile);
     void prepareM5PreviewForSnapshot();
 
@@ -70,6 +72,10 @@ private:
     bool hasUncapturedLiveSoundState();
     void clearSoundCandidate();
     void refreshSoundControls();
+    void refreshShelfControls();
+    void saveSoundToShelf();
+    juce::Result loadSoundFromShelf (bool reportFailure = true);
+    void removeSoundFromShelf();
     void previewSelectedNoteEdit();
     void previewVelocityVariation();
     juce::Result readVelocityVariationControls (SeededVelocityVariation& variation) const;
@@ -125,6 +131,8 @@ private:
     std::array<juce::MemoryBlock, SongProject::maxProjectTracks> initialPluginStates;
     std::array<juce::String, SongProject::maxProjectTracks> slotProjectStateSha256;
     std::array<juce::String, SongProject::maxProjectTracks> slotAcceptedLiveSoundSha256;
+    SoundShelf soundShelf;
+    juce::File soundShelfPath;
     std::optional<PluginSoundSnapshot> soundCandidate;
     std::optional<EditCommandPreview> editPreview;
     juce::String acceptedLiveSoundSha256;
@@ -170,6 +178,11 @@ private:
     juce::TextButton previewDynamicsButton { "Preview dynamics" };
     juce::TextButton loadCommandButton { "Load command" };
     juce::TextButton copyHashButton { "Copy hash" };
+    juce::TextButton loadShelfButton { "Load sound" };
+    juce::TextButton saveShelfButton { "Save to shelf" };
+    juce::TextButton removeShelfButton { "Remove" };
+    juce::ComboBox shelfCombo;
+    juce::Label shelfLabel;
     juce::TextButton auditionEditProjectButton { "Audition A" };
     juce::TextButton auditionEditCandidateButton { "Audition B" };
     juce::TextButton applyEditButton { "Apply" };

@@ -40,6 +40,7 @@ Read [the product vision](docs/PRODUCT_VISION.md) before changing product scope.
 - Piano-roll vertical zoom from 12 to 72 rows, dim non-interactive ghost notes for the inactive track, and automatic pitch-range fitting on Open and New.
 - Multiple note selection by shift/Ctrl-click, marquee drag, and Ctrl+A, with selection-wide delete, move, velocity, and transpose proposals as single Undo transactions.
 - Session note clipboard with Ctrl+C copy, Ctrl+V paste at a drawn insert marker, Ctrl+D duplicate one snapped span later, and arrow-key nudge and semitone/octave transpose.
+- Named sound shelf stored beside the settings file, holding up to 32 identity-checked snapshots that load as candidate B through the accepted A/B lane, so sound work survives New, Open, and restart.
 - Gesture-level Undo/Redo for project edits.
 - Versioned `.resonance.json` project with 960 PPQ and stable track, clip, and note IDs.
 - Canonical song-project schema version 3 with lossless, non-rewriting version-1 and version-2 migration.
@@ -80,8 +81,8 @@ The latest machine-local reports available when this handoff was prepared showed
 | Gate | Result |
 | --- | --- |
 | Scheduler/mixer/runtime assertions | 124 passed |
-| Project/migration/topology/round-trip/command assertions | 212 passed |
-| Schema-validated artifacts and fixtures | 21 passed |
+| Project/migration/topology/shelf/round-trip/command assertions | 230 passed |
+| Schema-validated artifacts and fixtures | 22 passed |
 | Packaged external command load | passed; 6 refusal paths, 1-diff preview, Apply, replay-after-Apply refused, one-step Undo |
 | Song project schemas | canonical writer `3`; accepted previous inputs `2` and `1` |
 | Version-1 migration fixture | passed; source SHA-256 `4725dd74075981ceb6ecd605db270954deafb7743b98190d090eb42dd677c0f7`; `track-migrated` / `clip-migrated` preserved |
@@ -111,9 +112,9 @@ The latest machine-local reports available when this handoff was prepared showed
 | Host-owned real-Surge sound name | `Self-test Surge state`; exact round trip |
 | Latest captured real Surge state | 67,345 bytes; SHA-256 `a771b28878606e1b830c9c5f02a46686328cc690e03153d2bd141cf0eee8ea40` |
 | Exact saved-B packaged workflow | passed; A/B `91ED214E`, clean Reject and Close |
-| Packaged UI snapshot | 99,152 bytes; SHA-256 `000d8796edc4686030a7e4db5c634cd49a6ff8f2259be605370fe2db1fbf9339`; includes the selected-track topology/mixer row and the command-load row |
+| Packaged UI snapshot | 104,046 bytes; SHA-256 `0f57c461b102795052f1f5481b7a7c0f00b683b963c643e3a0b6d7b20d8ede89`; includes the selected-track topology/mixer row and the command-load row |
 | UI idle gate | passed at 1,296.9 ms, below the 3,000 ms process-CPU threshold |
-| Packaged editor SHA-256 | `a84d18d113f8e795d7da6165bf2f89d6dbc2708a2f6db289256964033258a437` |
+| Packaged editor SHA-256 | `1aad107f41bc3bd92c7521c75e56d34810714b627fa2bc35af62f545bca6ea46` |
 
 Device name, sample rate, block size, latency, full path-derived identifier, and bundle fingerprint are machine observations. Regenerate rather than copying them to another machine.
 

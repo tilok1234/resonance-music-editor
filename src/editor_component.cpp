@@ -236,8 +236,22 @@ MainEditorComponent::MainEditorComponent (juce::File inventoryFile,
     setOpaque (true);
     setWantsKeyboardFocus (true);
     setLookAndFeel (&lookAndFeel);
+    // The shelf is user data, so it sits beside the settings file rather than in the
+    // repository or a project folder.
+    soundShelfPath = settingsFile != nullptr
+                         ? settingsFile->getFile().getSiblingFile ("sound-shelf.json")
+                         : juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                               .getChildFile ("ResonanceMusicEditor")
+                               .getChildFile ("sound-shelf.json");
     configureControls();
     initialiseAudioAndPlugin();
+    // A corrupt shelf must not stop the editor from starting; it starts empty and says so.
+    const auto shelfLoaded = soundShelf.loadFrom (soundShelfPath);
+    if (shelfLoaded.failed())
+    {
+        soundShelf.clear();
+        projectStatusMessage = "SOUND SHELF IGNORED  /  " + shelfLoaded.getErrorMessage().toUpperCase();
+    }
     projectChanged();
     startTimerHz (30);
 }
@@ -384,6 +398,7 @@ void MainEditorComponent::configureControls()
                           &auditionCandidateButton, &applySoundButton, &rejectSoundButton,
                           &previewSelectedEditButton, &previewDynamicsButton,
                           &loadCommandButton, &copyHashButton,
+                          &loadShelfButton, &saveShelfButton, &removeShelfButton,
                           &auditionEditProjectButton,
                           &auditionEditCandidateButton, &applyEditButton, &rejectEditButton,
                           &addTrackButton, &removeTrackButton,
@@ -450,6 +465,28 @@ void MainEditorComponent::configureControls()
 
     previewSelectedEditButton.setTooltip ("Preview the selected note one semitone higher");
     previewDynamicsButton.setTooltip ("Resolve the target, maximum velocity change, and seed into candidate B");
+    loadShelfButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.55f));
+    saveShelfButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.65f));
+    removeShelfButton.setColour (juce::TextButton::buttonColourId, danger.darker (0.72f));
+    loadShelfButton.onClick = [this] { loadSoundFromShelf(); };
+    saveShelfButton.onClick = [this] { saveSoundToShelf(); };
+    removeShelfButton.onClick = [this] { removeSoundFromShelf(); };
+    loadShelfButton.setTooltip ("Load the chosen shelf sound as candidate B without changing the accepted sound");
+    saveShelfButton.setTooltip ("Save candidate B, or the accepted sound when no candidate is pending, to the shelf");
+    removeShelfButton.setTooltip ("Delete the chosen sound from the shelf");
+    shelfLabel.setText ("SHELF", juce::dontSendNotification);
+    shelfLabel.setFont (uiFont (10.0f, juce::Font::bold));
+    shelfLabel.setColour (juce::Label::textColourId, textMuted);
+    addAndMakeVisible (shelfLabel);
+    shelfCombo.setTextWhenNoChoicesAvailable ("No saved sounds");
+    shelfCombo.setTextWhenNothingSelected ("Choose a saved sound");
+    shelfCombo.onChange = [this]
+    {
+        if (! refreshingProjectControls)
+            refreshShelfControls();
+    };
+    addAndMakeVisible (shelfCombo);
+
     loadCommandButton.setTooltip ("Preview a version-1 edit-command file as candidate B without applying it");
     copyHashButton.setTooltip ("Copy this project's content SHA-256, track id, and clip id for authoring a command");
 
@@ -1417,6 +1454,162 @@ bool MainEditorComponent::hasPendingEditPreview() const noexcept
     return editPreview.has_value() && editPreview->isPending();
 }
 
+void MainEditorComponent::refreshShelfControls()
+{
+    const juce::ScopedValueSetter<bool> refreshing (refreshingProjectControls, true);
+    const auto previous = shelfCombo.getText();
+    shelfCombo.clear (juce::dontSendNotification);
+
+    int itemId = 1;
+    for (const auto& entry : soundShelf.getEntries())
+        shelfCombo.addItem (entry.name, itemId++);
+
+    if (previous.isNotEmpty())
+        for (int index = 0; index < shelfCombo.getNumItems(); ++index)
+            if (shelfCombo.getItemText (index) == previous)
+                shelfCombo.setSelectedItemIndex (index, juce::dontSendNotification);
+
+    if (shelfCombo.getSelectedId() == 0 && shelfCombo.getNumItems() > 0)
+        shelfCombo.setSelectedItemIndex (0, juce::dontSendNotification);
+
+    shelfLabel.setText (soundShelf.getEntryCount() > 0
+                            ? "SHELF " + juce::String (soundShelf.getEntryCount())
+                            : "SHELF",
+                        juce::dontSendNotification);
+
+    const auto ready = getActivePlugin() != nullptr;
+    const auto laneClear = ! hasPendingEditPreview();
+    const auto hasSelection = shelfCombo.getSelectedId() != 0;
+    shelfCombo.setEnabled (ready && soundShelf.getEntryCount() > 0);
+    loadShelfButton.setEnabled (ready && laneClear && hasSelection);
+    removeShelfButton.setEnabled (ready && hasSelection);
+    saveShelfButton.setEnabled (ready && laneClear
+                                && soundShelf.getEntryCount()
+                                       < static_cast<int> (SoundShelf::maximumEntries));
+}
+
+void MainEditorComponent::saveSoundToShelf()
+{
+    if (getActivePlugin() == nullptr)
+        return;
+
+    SoundShelfEntry entry;
+    // A pending candidate is what the user is auditioning, so it is the sound they
+    // mean to keep. Otherwise the accepted project sound is shelved.
+    if (soundCandidate.has_value())
+    {
+        entry.name = soundCandidate->name;
+        entry.state = soundCandidate->state;
+        entry.stateSha256 = soundCandidate->stateSha256;
+    }
+    else
+    {
+        PluginSoundSnapshot accepted;
+        const auto acceptedResult = project.getPluginSoundSnapshot (accepted);
+        if (acceptedResult.failed())
+        {
+            showError ("Could not read the project sound", acceptedResult.getErrorMessage());
+            return;
+        }
+        entry.name = accepted.name;
+        entry.state = accepted.state;
+        entry.stateSha256 = accepted.stateSha256;
+    }
+
+    const auto typedName = soundNameEditor.getText().trim().substring (0, SoundShelf::maximumNameLength);
+    if (typedName.isNotEmpty())
+        entry.name = typedName;
+
+    entry.pluginIdentifier = pluginRecord.identifier;
+    entry.pluginName = pluginRecord.description.name;
+    entry.vendor = pluginRecord.description.manufacturerName;
+    entry.version = pluginRecord.description.version;
+
+    const auto source = soundCandidate.has_value() ? juce::String ("B") : juce::String ("A");
+    const auto added = soundShelf.add (entry);
+    if (added.failed())
+    {
+        projectStatusMessage = "SHELF SAVE REFUSED  /  " + added.getErrorMessage().toUpperCase();
+        updateStatus();
+        showError ("Could not save to the shelf", added.getErrorMessage());
+        return;
+    }
+
+    const auto written = soundShelf.saveTo (soundShelfPath);
+    if (written.failed())
+    {
+        soundShelf.remove (entry.name);
+        projectStatusMessage = "SHELF WRITE FAILED";
+        updateStatus();
+        showError ("Could not write the shelf", written.getErrorMessage());
+        return;
+    }
+
+    shelfCombo.setText (entry.name, juce::dontSendNotification);
+    projectStatusMessage = "SHELVED SOUND " + source + "  /  " + entry.name.toUpperCase();
+    refreshProjectControls();
+}
+
+juce::Result MainEditorComponent::loadSoundFromShelf (bool reportFailure)
+{
+    if (getActivePlugin() == nullptr || hasPendingEditPreview())
+        return juce::Result::fail ("The sound lane is not available");
+
+    const auto* entry = soundShelf.find (shelfCombo.getText());
+    if (entry == nullptr)
+        return juce::Result::fail ("No shelf sound is chosen");
+
+    // Loading a shelf sound produces candidate B, never a direct change to the
+    // accepted sound, so it flows through the accepted Audition/Apply/Reject lane.
+    const auto identifierMatches = vst3IdentifiersAreCompatible (entry->pluginIdentifier,
+                                                                 pluginRecord.identifier,
+                                                                 pluginRecord.description.uniqueId);
+    if (! identifierMatches || ! entry->pluginName.equalsIgnoreCase (pluginRecord.description.name))
+    {
+        const auto detail = "Shelf sound '" + entry->name + "' was captured from "
+                            + entry->pluginIdentifier + ", not the accepted "
+                            + pluginRecord.identifier + ".";
+        projectStatusMessage = "SHELF SOUND REJECTED  /  DIFFERENT INSTRUMENT";
+        updateStatus();
+        if (reportFailure)
+            showError ("Different instrument", detail);
+        return juce::Result::fail (detail);
+    }
+
+    PluginSoundSnapshot candidate { entry->name, entry->state, entry->stateSha256 };
+    if (! restoreSoundSnapshot (candidate, "LOADING SHELF SOUND", &candidateLiveSoundSha256))
+        return juce::Result::fail ("The shelf sound could not be restored");
+
+    const auto activeTrack = project.getActiveTrackIndex();
+    soundCandidate = std::move (candidate);
+    soundCandidateTrackId = project.getTrackId();
+    slotProjectStateSha256[activeTrack].clear();
+    soundNameEditor.setText (soundCandidate->name, false);
+    projectStatusMessage = "SHELF SOUND B READY  /  " + soundCandidate->name.toUpperCase()
+                           + "  /  AUDITION A-B BEFORE APPLY";
+    refreshProjectControls();
+    return juce::Result::ok();
+}
+
+void MainEditorComponent::removeSoundFromShelf()
+{
+    const auto name = shelfCombo.getText();
+    const auto removed = soundShelf.remove (name);
+    if (removed.failed())
+        return;
+
+    const auto written = soundShelf.saveTo (soundShelfPath);
+    if (written.failed())
+    {
+        showError ("Could not write the shelf", written.getErrorMessage());
+        return;
+    }
+
+    shelfCombo.setText ({}, juce::dontSendNotification);
+    projectStatusMessage = "REMOVED SHELF SOUND  /  " + name.toUpperCase();
+    refreshProjectControls();
+}
+
 void MainEditorComponent::previewSelectedNoteEdit()
 {
     if (soundCandidate.has_value())
@@ -1750,6 +1943,138 @@ juce::var MainEditorComponent::runSelectionSelfTest()
     resultObject->setProperty ("passed", passed);
     if (! passed)
         resultObject->setProperty ("error", "One or more selection expectations failed");
+
+    return result;
+}
+
+juce::var MainEditorComponent::runSoundShelfSelfTest (const juce::File& alternateProjectFile)
+{
+    auto* resultObject = new juce::DynamicObject();
+    juce::var result (resultObject);
+    resultObject->setProperty ("schemaVersion", 1);
+    resultObject->setProperty ("testVersion", JUCE_APPLICATION_VERSION_STRING);
+    resultObject->setProperty ("shelfSchemaVersion", SoundShelf::supportedSchemaVersion);
+
+    clearEditPreview (true);
+    clearSoundCandidate();
+    project.markClean();
+
+    if (getActivePlugin() == nullptr)
+    {
+        resultObject->setProperty ("passed", false);
+        resultObject->setProperty ("error", "The active track has no instrument");
+        return result;
+    }
+
+    // Never touch the user's real shelf; this test owns a temporary file.
+    const auto realShelfPath = soundShelfPath;
+    soundShelfPath = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                         .getNonexistentChildFile ("resonance-shelf-selftest", ".json", false);
+    soundShelf.clear();
+
+    // A genuinely different accepted Surge state, so "two sounds" is not a fiction.
+    SongProject alternate;
+    const auto alternateLoaded = alternate.loadFromFile (alternateProjectFile);
+    PluginSoundSnapshot alternateSound;
+    const auto alternateRead = alternateLoaded.wasOk()
+                               && alternate.getPluginSoundSnapshot (alternateSound).wasOk();
+
+    PluginSoundSnapshot acceptedBefore;
+    const auto acceptedRead = project.getPluginSoundSnapshot (acceptedBefore).wasOk();
+    const auto acceptedHashBefore = project.getPluginStateSha256();
+    const auto contentBefore = project.getContentSha256();
+    const auto soundsDiffer = alternateRead && acceptedRead
+                              && ! alternateSound.stateSha256.equalsIgnoreCase (
+                                     acceptedBefore.stateSha256);
+
+    soundNameEditor.setText ("Shelf test A", false);
+    saveSoundToShelf();
+    const auto savedAccepted = soundShelf.getEntryCount() == 1
+                               && soundShelf.find ("Shelf test A") != nullptr
+                               && soundShelfPath.existsAsFile();
+
+    SoundShelfEntry alternateEntry;
+    alternateEntry.name = "Shelf test B";
+    alternateEntry.pluginIdentifier = pluginRecord.identifier;
+    alternateEntry.pluginName = pluginRecord.description.name;
+    alternateEntry.vendor = pluginRecord.description.manufacturerName;
+    alternateEntry.version = pluginRecord.description.version;
+    alternateEntry.state = alternateSound.state;
+    alternateEntry.stateSha256 = alternateSound.stateSha256;
+    const auto addedAlternate = alternateRead && soundShelf.add (alternateEntry).wasOk()
+                                && soundShelf.saveTo (soundShelfPath).wasOk();
+
+    SoundShelf reloaded;
+    const auto shelfSurvivesReload = reloaded.loadFrom (soundShelfPath).wasOk()
+                                     && reloaded.getEntryCount() == 2
+                                     && reloaded.find ("Shelf test B") != nullptr
+                                     && reloaded.find ("Shelf test B")->state == alternateSound.state;
+
+    // Loading must produce candidate B and leave the accepted sound untouched.
+    shelfCombo.setText ("Shelf test B", juce::dontSendNotification);
+    const auto loadedAsCandidate = loadSoundFromShelf (false).wasOk()
+                                   && soundCandidate.has_value()
+                                   && soundCandidate->stateSha256.equalsIgnoreCase (
+                                          alternateSound.stateSha256);
+    const auto acceptedUnchangedByLoad = project.getPluginStateSha256() == acceptedHashBefore
+                                         && project.getContentSha256() == contentBefore
+                                         && ! project.isDirty();
+
+    rejectSoundCandidate();
+    const auto rejectRestoredAccepted = ! soundCandidate.has_value()
+                                        && project.getPluginStateSha256() == acceptedHashBefore
+                                        && ! project.isDirty();
+
+    shelfCombo.setText ("Shelf test B", juce::dontSendNotification);
+    const auto reloadedForApply = loadSoundFromShelf (false).wasOk();
+    applySoundCandidate();
+    const auto appliedShelfSound = reloadedForApply && ! soundCandidate.has_value()
+                                   && project.getPluginStateSha256().equalsIgnoreCase (
+                                          alternateSound.stateSha256)
+                                   && project.isDirty();
+    performUndoRedo (false);
+    const auto undoRestoredAccepted = project.getPluginStateSha256() == acceptedHashBefore
+                                      && project.getContentSha256() == contentBefore;
+
+    // A shelf sound captured from a different plug-in must fail closed.
+    SoundShelfEntry foreign = alternateEntry;
+    foreign.name = "Shelf test foreign";
+    foreign.pluginIdentifier = "VST3-Some Other Synth-00000000-00000000";
+    foreign.pluginName = "Some Other Synth";
+    const auto foreignAdded = soundShelf.add (foreign).wasOk();
+    shelfCombo.setText ("Shelf test foreign", juce::dontSendNotification);
+    const auto foreignRefused = foreignAdded && loadSoundFromShelf (false).failed()
+                                && ! soundCandidate.has_value()
+                                && project.getPluginStateSha256() == acceptedHashBefore;
+
+    soundShelfPath.deleteFile();
+    soundShelfPath = realShelfPath;
+    soundShelf.clear();
+    soundShelf.loadFrom (soundShelfPath);
+    clearSoundCandidate();
+    clearEditPreview (true);
+    project.markClean();
+    refreshProjectControls();
+
+    const auto passed = soundsDiffer && savedAccepted && addedAlternate && shelfSurvivesReload
+                        && loadedAsCandidate && acceptedUnchangedByLoad && rejectRestoredAccepted
+                        && appliedShelfSound && undoRestoredAccepted && foreignRefused;
+
+    resultObject->setProperty ("acceptedSoundSha256", acceptedBefore.stateSha256);
+    resultObject->setProperty ("shelfSoundSha256", alternateSound.stateSha256);
+    resultObject->setProperty ("soundsDiffer", soundsDiffer);
+    resultObject->setProperty ("savedAcceptedToShelf", savedAccepted);
+    resultObject->setProperty ("addedSecondSound", addedAlternate);
+    resultObject->setProperty ("shelfSurvivesReload", shelfSurvivesReload);
+    resultObject->setProperty ("loadedAsCandidate", loadedAsCandidate);
+    resultObject->setProperty ("acceptedUnchangedByLoad", acceptedUnchangedByLoad);
+    resultObject->setProperty ("rejectRestoredAccepted", rejectRestoredAccepted);
+    resultObject->setProperty ("appliedShelfSound", appliedShelfSound);
+    resultObject->setProperty ("undoRestoredAccepted", undoRestoredAccepted);
+    resultObject->setProperty ("foreignInstrumentRefused", foreignRefused);
+    resultObject->setProperty ("passed", passed);
+    if (! passed)
+        resultObject->setProperty ("error", "One or more sound shelf expectations failed");
 
     return result;
 }
@@ -2383,6 +2708,7 @@ void MainEditorComponent::refreshProjectControls()
         velocitySlider.setValue (selected->velocity, juce::dontSendNotification);
 
     refreshSoundControls();
+    refreshShelfControls();
     refreshEditPreviewControls();
     if (pianoRoll != nullptr)
         pianoRoll->repaint();
@@ -3677,7 +4003,7 @@ void MainEditorComponent::resized()
     auto body = area;
     deviceCardBounds = body.removeFromRight (326);
     body.removeFromRight (12);
-    trackCardBounds = body.removeFromTop (188);
+    trackCardBounds = body.removeFromTop (221);
     body.removeFromTop (12);
     keyboardCardBounds = body.removeFromBottom (154);
     body.removeFromBottom (12);
@@ -3754,6 +4080,17 @@ void MainEditorComponent::resized()
     applySoundButton.setBounds (soundControls.removeFromLeft (72));
     soundControls.removeFromLeft (7);
     rejectSoundButton.setBounds (soundControls.removeFromLeft (76));
+
+    track.removeFromTop (5);
+    auto shelfControls = track.removeFromTop (28);
+    shelfLabel.setBounds (shelfControls.removeFromLeft (46));
+    shelfCombo.setBounds (shelfControls.removeFromLeft (180).reduced (0, 1));
+    shelfControls.removeFromLeft (7);
+    loadShelfButton.setBounds (shelfControls.removeFromLeft (88));
+    shelfControls.removeFromLeft (7);
+    saveShelfButton.setBounds (shelfControls.removeFromLeft (104));
+    shelfControls.removeFromLeft (7);
+    removeShelfButton.setBounds (shelfControls.removeFromLeft (76));
 
     auto loop = loopCardBounds.reduced (12);
     loop.removeFromTop (21);

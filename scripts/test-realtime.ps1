@@ -16,6 +16,7 @@ $m6AuthoringReport = Join-Path $artifacts "m6-authoring-test-report.json"
 $m5WorkflowReport = Join-Path $artifacts "m5-workflow-test-report.json"
 $commandLoadReport = Join-Path $artifacts "command-load-test-report.json"
 $selectionReport = Join-Path $artifacts "selection-test-report.json"
+$soundShelfReport = Join-Path $artifacts "sound-shelf-test-report.json"
 $songProjectArtifact = Join-Path $artifacts "realtime-song-project.resonance.json"
 $m6AuthoringProject = Join-Path $artifacts "m6-two-track-authoring.resonance.json"
 $uiSnapshot = Join-Path $artifacts "realtime-ui-snapshot.png"
@@ -46,7 +47,7 @@ if (-not (Test-Path -LiteralPath $editor)) {
 }
 
 New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
-Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m6AuthoringReport,$m5WorkflowReport,$commandLoadReport,$selectionReport,$songProjectArtifact,$m6AuthoringProject,$uiSnapshot -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m6AuthoringReport,$m5WorkflowReport,$commandLoadReport,$selectionReport,$soundShelfReport,$songProjectArtifact,$m6AuthoringProject,$uiSnapshot -Force -ErrorAction SilentlyContinue
 
 if (-not (Test-Path -LiteralPath $m4AcceptedFixture) -or
     (Get-FileHash -Algorithm SHA256 -LiteralPath $m4AcceptedFixture).Hash -ne
@@ -348,6 +349,31 @@ if (-not $selectionResult.octaveTransposeApplied -or -not $selectionResult.nudge
     throw "Keyboard nudge or transpose did not apply or undo as one transaction"
 }
 
+$soundShelfTest = Start-Process -FilePath $editor -ArgumentList "--sound-shelf-test","--alternate-project",$m4AcceptedFixture,"--report",$soundShelfReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($soundShelfTest.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $soundShelfReport) {
+        Get-Content -LiteralPath $soundShelfReport
+    }
+    throw "Sound shelf test failed with exit code $($soundShelfTest.ExitCode)"
+}
+
+$soundShelfResult = Get-Content -LiteralPath $soundShelfReport -Raw | ConvertFrom-Json
+if (-not $soundShelfResult.soundsDiffer -or -not $soundShelfResult.savedAcceptedToShelf -or
+    -not $soundShelfResult.addedSecondSound -or -not $soundShelfResult.shelfSurvivesReload) {
+    throw "The sound shelf did not persist two distinct sounds"
+}
+
+if (-not $soundShelfResult.loadedAsCandidate -or -not $soundShelfResult.acceptedUnchangedByLoad -or
+    -not $soundShelfResult.rejectRestoredAccepted -or -not $soundShelfResult.appliedShelfSound -or
+    -not $soundShelfResult.undoRestoredAccepted) {
+    throw "A shelf sound did not flow through the accepted candidate B lane"
+}
+
+if (-not $soundShelfResult.foreignInstrumentRefused) {
+    throw "A shelf sound from a different plug-in was not refused"
+}
+
 if ($m5Result.seededVelocitySeed -ne 18421 -or
     $m5Result.seededVelocityMaximumDelta -ne 8 -or
     $m5Result.seededVelocityDiffCount -ne 8 -or
@@ -471,6 +497,12 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     ParameterizedDynamicsCandidateSha256 = $m5Result.parameterizedCandidateSha256
     ParameterizedDynamicsDiffs = $m5Result.parameterizedDiffCount
     InvalidDynamicsSettingsBlocked = $m5Result.invalidDynamicsSettingsBlocked
+    SoundShelfAcceptedSha256 = $soundShelfResult.acceptedSoundSha256
+    SoundShelfLoadedSha256 = $soundShelfResult.shelfSoundSha256
+    SoundShelfLanePassed = ($soundShelfResult.loadedAsCandidate -and
+        $soundShelfResult.acceptedUnchangedByLoad -and $soundShelfResult.appliedShelfSound -and
+        $soundShelfResult.undoRestoredAccepted -and $soundShelfResult.foreignInstrumentRefused)
+    SoundShelfBytes = $projectResult.soundShelfBytes
     SelectionTransposeDiffs = $selectionResult.transposeDiffCount
     SelectionEditsPassed = ($selectionResult.velocityAppliedAcrossSelection -and
         $selectionResult.velocityUndoneInOneStep -and
