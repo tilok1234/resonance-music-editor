@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resonance.local/schema/selection-test-v1.json",
+  "title": "Resonance Multiple Note Selection Test Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "testVersion",
+    "selectedThree",
+    "rejectedUnknownAndDuplicate",
+    "velocityAppliedAcrossSelection",
+    "velocityUndoneInOneStep",
+    "transposePreviewCreated",
+    "transposeDiffCount",
+    "activeUnchangedDuringPreview",
+    "transposeAppliedAcrossSelection",
+    "transposeUndoneInOneStep",
+    "prunedAfterRemoval",
+    "clearedSelection",
+    "passed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "testVersion": { "type": "string", "minLength": 1 },
+    "selectedThree": { "const": true },
+    "rejectedUnknownAndDuplicate": { "const": true },
+    "velocityAppliedAcrossSelection": { "const": true },
+    "velocityUndoneInOneStep": { "const": true },
+    "transposePreviewCreated": { "const": true },
+    "transposeDiffCount": { "type": "integer", "minimum": 1, "maximum": 128 },
+    "activeUnchangedDuringPreview": { "const": true },
+    "transposeAppliedAcrossSelection": { "const": true },
+    "transposeUndoneInOneStep": { "const": true },
+    "prunedAfterRemoval": { "const": true },
+    "clearedSelection": { "const": true },
+    "passed": { "const": true },
+    "error": { "type": "string" }
+  }
+}

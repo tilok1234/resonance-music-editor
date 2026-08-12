@@ -33,6 +33,7 @@ public:
     juce::var runM5WorkflowSelfTest();
     juce::var runM6AuthoringSelfTest (const juce::File& projectFile);
     juce::var runCommandLoadSelfTest();
+    juce::var runSelectionSelfTest();
     bool openProjectForSnapshot (const juce::File& projectFile);
     void prepareM5PreviewForSnapshot();
 
@@ -92,6 +93,7 @@ private:
     void projectChanged();
     void refreshProjectControls();
     void selectedNoteChanged (const juce::String& noteId);
+    juce::String velocityTransactionName() const;
     void startNewProject();
     void chooseProjectToOpen();
     void openProjectFile (const juce::File& file);

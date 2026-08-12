@@ -87,6 +87,10 @@ VALIDATION_GROUPS = (
         PROJECT_ROOT / "schema" / "command-load-test.schema.json",
         (PROJECT_ROOT / "artifacts" / "command-load-test-report.json",),
     ),
+    (
+        PROJECT_ROOT / "schema" / "selection-test.schema.json",
+        (PROJECT_ROOT / "artifacts" / "selection-test-report.json",),
+    ),
 )
 
 

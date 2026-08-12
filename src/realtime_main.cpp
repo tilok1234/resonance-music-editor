@@ -604,6 +604,11 @@ public:
         return editor != nullptr ? editor->runCommandLoadSelfTest() : juce::var {};
     }
 
+    juce::var runSelectionSelfTest()
+    {
+        return editor != nullptr ? editor->runSelectionSelfTest() : juce::var {};
+    }
+
     bool openProjectForSnapshot (const juce::File& projectFile)
     {
         return editor != nullptr && editor->openProjectForSnapshot (projectFile);
@@ -663,13 +668,15 @@ public:
         const auto m5WorkflowTestMode = args.contains ("--m5-workflow-test");
         const auto m6AuthoringTestMode = args.contains ("--m6-authoring-test");
         const auto commandLoadTestMode = args.contains ("--command-load-test");
+        const auto selectionTestMode = args.contains ("--selection-test");
         window = std::make_unique<MainWindow> (inventory,
                                                quarantine,
                                                properties.getUserSettings(),
                                                ! snapshotMode && ! idleTestMode
                                                    && ! m4WorkflowTestMode && ! m5WorkflowTestMode
                                                    && ! m6AuthoringTestMode
-                                                   && ! commandLoadTestMode);
+                                                   && ! commandLoadTestMode
+                                                   && ! selectionTestMode);
 
         if (snapshotMode)
         {
@@ -785,6 +792,23 @@ public:
                                     && static_cast<bool> (object->getProperty ("passed"));
                 const auto reportWritten = writeReport (reportFile, report);
                 setApplicationReturnValue (passed && reportWritten ? 0 : 8);
+                quit();
+            });
+        }
+        else if (selectionTestMode)
+        {
+            const auto reportFile = resolvePathArgument (
+                args, "--report", "selection-test-report.json");
+            juce::Timer::callAfterDelay (750, [this, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runSelectionSelfTest()
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 9);
                 quit();
             });
         }

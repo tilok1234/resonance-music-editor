@@ -23,6 +23,7 @@ constexpr int velocityScopeSelectedNote = 2;
 constexpr std::int64_t maximumVelocityVariationSeed = 2147483647;
 constexpr int maximumVelocityVariationDelta = 32;
 constexpr juce::int64 maximumEditCommandBytes = 256 * 1024;
+constexpr std::size_t maximumEditCommandChanges = 128;
 
 juce::Font uiFont (float height, int style = juce::Font::plain)
 {
@@ -345,7 +346,7 @@ void MainEditorComponent::configureControls()
     }
 
     dynamicsScopeCombo.addItem ("Whole loop", velocityScopeWholeLoop);
-    dynamicsScopeCombo.addItem ("Selected note", velocityScopeSelectedNote);
+    dynamicsScopeCombo.addItem ("Selected notes", velocityScopeSelectedNote);
     dynamicsScopeCombo.setSelectedId (velocityScopeWholeLoop, juce::dontSendNotification);
     dynamicsScopeCombo.setTooltip ("Choose whether dynamics targets every loop note or only the selected note");
     dynamicsScopeCombo.onChange = [this] { refreshEditPreviewControls(); };
@@ -630,7 +631,7 @@ void MainEditorComponent::configureControls()
     velocitySlider.onDragStart = [this]
     {
         velocityGestureActive = true;
-        project.beginUndoTransaction ("Change note velocity");
+        project.beginUndoTransaction (velocityTransactionName());
     };
     velocitySlider.onDragEnd = [this] { velocityGestureActive = false; };
     velocitySlider.onValueChange = [this]
@@ -638,13 +639,23 @@ void MainEditorComponent::configureControls()
         if (refreshingProjectControls || pianoRoll == nullptr)
             return;
 
-        auto selected = project.findNote (pianoRoll->getSelectedNote());
-        if (selected.has_value())
+        const auto selectedIds = pianoRoll->getSelectedNotes();
+        if (selectedIds.empty())
+            return;
+
+        if (! velocityGestureActive)
+            project.beginUndoTransaction (velocityTransactionName());
+
+        // The slider sets one absolute velocity across the whole selection, so a
+        // multi-note gesture stays one Undo step.
+        const auto velocity = juce::roundToInt (velocitySlider.getValue());
+        for (const auto& id : selectedIds)
         {
-            if (! velocityGestureActive)
-                project.beginUndoTransaction ("Change note velocity");
-            selected->velocity = juce::roundToInt (velocitySlider.getValue());
-            project.updateNote (*selected);
+            auto note = project.findNote (id);
+            if (! note.has_value())
+                continue;
+            note->velocity = velocity;
+            project.updateNote (*note);
         }
     };
     addAndMakeVisible (velocitySlider);
@@ -1410,31 +1421,50 @@ void MainEditorComponent::previewSelectedNoteEdit()
         return;
     }
 
-    const auto selected = pianoRoll != nullptr
-                              ? project.findNote (pianoRoll->getSelectedNote())
-                              : std::nullopt;
-    if (! selected.has_value())
+    std::vector<SongNote> selected;
+    if (pianoRoll != nullptr)
+        for (const auto& id : pianoRoll->getSelectedNotes())
+            if (const auto note = project.findNote (id))
+                selected.push_back (*note);
+
+    if (selected.empty())
     {
         projectStatusMessage = "SELECT A NOTE BEFORE CREATING A PROPOSAL";
         updateStatus();
         return;
     }
-    if (selected->midiNote >= 127)
+    if (selected.size() > maximumEditCommandChanges)
     {
-        projectStatusMessage = "THE SELECTED NOTE IS ALREADY AT THE HIGHEST MIDI PITCH";
+        projectStatusMessage = "SELECT AT MOST " + juce::String (maximumEditCommandChanges)
+                               + " NOTES FOR ONE PROPOSAL";
         updateStatus();
         return;
     }
-
-    auto after = *selected;
-    ++after.midiNote;
+    // Transposing the whole selection must be all or nothing, so a selection that
+    // contains the top MIDI pitch is refused rather than silently partly applied.
+    if (std::any_of (selected.begin(),
+                     selected.end(),
+                     [] (const SongNote& note) { return note.midiNote >= 127; }))
+    {
+        projectStatusMessage = "A SELECTED NOTE IS ALREADY AT THE HIGHEST MIDI PITCH";
+        updateStatus();
+        return;
+    }
 
     EditCommand command;
     command.projectContentSha256 = project.getContentSha256();
     command.trackId = project.getTrackId();
     command.clipId = project.getClipId();
-    command.summary = "Transpose " + selected->id + " up one semitone";
-    command.changes.push_back ({ NoteEditAction::update, selected->id, after });
+    command.summary = selected.size() == 1
+                          ? "Transpose " + selected.front().id + " up one semitone"
+                          : "Transpose " + juce::String (static_cast<int> (selected.size()))
+                                + " notes up one semitone";
+    for (const auto& note : selected)
+    {
+        auto after = note;
+        ++after.midiNote;
+        command.changes.push_back ({ NoteEditAction::update, note.id, after });
+    }
 
     installEditPreview (std::move (command),
                         "NOTE B READY  /  AUDITION A-B BEFORE APPLY");
@@ -1471,11 +1501,13 @@ juce::Result MainEditorComponent::readVelocityVariationControls (
     }
     else if (dynamicsScopeCombo.getSelectedId() == velocityScopeSelectedNote)
     {
-        const auto selectedId = pianoRoll != nullptr ? pianoRoll->getSelectedNote()
-                                                     : juce::String {};
-        if (selectedId.isEmpty() || ! project.findNote (selectedId).has_value())
-            return juce::Result::fail ("Select a note or choose Whole loop");
-        requested.noteIds.push_back (selectedId);
+        if (pianoRoll != nullptr)
+            for (const auto& id : pianoRoll->getSelectedNotes())
+                if (project.findNote (id).has_value())
+                    requested.noteIds.push_back (id);
+
+        if (requested.noteIds.empty())
+            return juce::Result::fail ("Select one or more notes or choose Whole loop");
     }
     else
     {
@@ -1526,6 +1558,113 @@ void MainEditorComponent::previewVelocityVariation()
                             + "  /  SEED "
                             + juce::String::formatted ("%lld",
                                                        static_cast<long long> (variation.seed)));
+}
+
+juce::var MainEditorComponent::runSelectionSelfTest()
+{
+    auto* resultObject = new juce::DynamicObject();
+    juce::var result (resultObject);
+    resultObject->setProperty ("schemaVersion", 1);
+    resultObject->setProperty ("testVersion", JUCE_APPLICATION_VERSION_STRING);
+
+    clearEditPreview (true);
+    clearSoundCandidate();
+    project.markClean();
+
+    const auto notes = project.getNotes();
+    if (getActivePlugin() == nullptr || pianoRoll == nullptr || notes.size() < 3)
+    {
+        resultObject->setProperty ("passed", false);
+        resultObject->setProperty ("error", "The starter project needs an instrument and three notes");
+        return result;
+    }
+
+    const std::vector<juce::String> chosen { notes[0].id, notes[1].id, notes[2].id };
+    pianoRoll->setSelectedNotes (chosen);
+    const auto selectedThree = pianoRoll->getSelectedNotes().size() == 3
+                               && pianoRoll->getSelectedNote() == chosen.back();
+
+    // Ids that name no live note must be dropped rather than carried as dead weight.
+    auto withGhost = chosen;
+    withGhost.push_back ("note-does-not-exist");
+    withGhost.push_back (chosen.front());
+    pianoRoll->setSelectedNotes (withGhost);
+    const auto rejectedUnknownAndDuplicate = pianoRoll->getSelectedNotes().size() == 3;
+
+    pianoRoll->setSelectedNotes (chosen);
+    const auto beforeHash = project.getContentSha256();
+
+    // One slider gesture must write one absolute velocity across the whole selection
+    // and collapse into exactly one Undo step.
+    velocitySlider.setValue (41.0, juce::sendNotificationSync);
+    const auto allVelocitiesSet = std::all_of (chosen.begin(),
+                                               chosen.end(),
+                                               [this] (const juce::String& id)
+                                               {
+                                                   const auto note = project.findNote (id);
+                                                   return note.has_value() && note->velocity == 41;
+                                               });
+    performUndoRedo (false);
+    const auto velocityUndoneInOneStep = project.getContentSha256() == beforeHash;
+
+    pianoRoll->setSelectedNotes (chosen);
+    const auto originalPitches = { notes[0].midiNote, notes[1].midiNote, notes[2].midiNote };
+    previewSelectedNoteEdit();
+    const auto transposePreviewCreated = hasPendingEditPreview();
+    const auto transposeDiffCount = transposePreviewCreated
+                                        ? static_cast<int> (editPreview->noteDiffs.size())
+                                        : 0;
+    const auto activeUnchangedDuringPreview = project.getContentSha256() == beforeHash;
+    applyEditPreview();
+    auto pitchIterator = originalPitches.begin();
+    auto allTransposed = true;
+    for (const auto& id : chosen)
+    {
+        const auto note = project.findNote (id);
+        allTransposed = allTransposed && note.has_value()
+                        && note->midiNote == *pitchIterator + 1;
+        ++pitchIterator;
+    }
+    performUndoRedo (false);
+    const auto transposeUndoneInOneStep = project.getContentSha256() == beforeHash;
+
+    // Removing a selected note must not leave a dangling id behind.
+    pianoRoll->setSelectedNotes (chosen);
+    project.beginUndoTransaction ("Selection self test removal");
+    project.removeNote (chosen.front());
+    pianoRoll->pruneSelection();
+    const auto prunedAfterRemoval = pianoRoll->getSelectedNotes().size() == 2;
+    performUndoRedo (false);
+
+    pianoRoll->setSelectedNote ({});
+    const auto clearedSelection = pianoRoll->getSelectedNotes().empty()
+                                  && pianoRoll->getSelectedNote().isEmpty();
+
+    clearEditPreview (true);
+    project.markClean();
+
+    const auto passed = selectedThree && rejectedUnknownAndDuplicate && allVelocitiesSet
+                        && velocityUndoneInOneStep && transposePreviewCreated
+                        && transposeDiffCount == 3 && activeUnchangedDuringPreview
+                        && allTransposed && transposeUndoneInOneStep && prunedAfterRemoval
+                        && clearedSelection;
+
+    resultObject->setProperty ("selectedThree", selectedThree);
+    resultObject->setProperty ("rejectedUnknownAndDuplicate", rejectedUnknownAndDuplicate);
+    resultObject->setProperty ("velocityAppliedAcrossSelection", allVelocitiesSet);
+    resultObject->setProperty ("velocityUndoneInOneStep", velocityUndoneInOneStep);
+    resultObject->setProperty ("transposePreviewCreated", transposePreviewCreated);
+    resultObject->setProperty ("transposeDiffCount", transposeDiffCount);
+    resultObject->setProperty ("activeUnchangedDuringPreview", activeUnchangedDuringPreview);
+    resultObject->setProperty ("transposeAppliedAcrossSelection", allTransposed);
+    resultObject->setProperty ("transposeUndoneInOneStep", transposeUndoneInOneStep);
+    resultObject->setProperty ("prunedAfterRemoval", prunedAfterRemoval);
+    resultObject->setProperty ("clearedSelection", clearedSelection);
+    resultObject->setProperty ("passed", passed);
+    if (! passed)
+        resultObject->setProperty ("error", "One or more selection expectations failed");
+
+    return result;
 }
 
 bool MainEditorComponent::openProjectForSnapshot (const juce::File& projectFile)
@@ -2014,8 +2153,23 @@ void MainEditorComponent::refreshEditPreviewControls()
     dynamicsScopeCombo.setEnabled (controlsEnabled);
     dynamicsStrengthEditor.setEnabled (controlsEnabled);
     dynamicsSeedEditor.setEnabled (controlsEnabled);
+    // Transposing is all or nothing, so the whole selection must be below the top pitch
+    // and must fit one version-1 command.
+    auto selectionCanTranspose = false;
+    if (pianoRoll != nullptr)
+    {
+        const auto& selectedIds = pianoRoll->getSelectedNotes();
+        selectionCanTranspose = ! selectedIds.empty()
+                                && selectedIds.size() <= maximumEditCommandChanges;
+        for (const auto& id : selectedIds)
+        {
+            const auto note = project.findNote (id);
+            selectionCanTranspose = selectionCanTranspose && note.has_value()
+                                    && note->midiNote < 127;
+        }
+    }
     previewSelectedEditButton.setEnabled (ready && ! pending && ! soundCandidate.has_value()
-                                          && selected.has_value() && selected->midiNote < 127);
+                                          && selectionCanTranspose);
     previewDynamicsButton.setEnabled (controlsEnabled && velocitySettings.wasOk());
     loadCommandButton.setEnabled (controlsEnabled);
     copyHashButton.setEnabled (ready);
@@ -2033,6 +2187,10 @@ void MainEditorComponent::projectChanged()
 {
     if (applyingEditPreview || suppressProjectChanges)
         return;
+
+    // Undo, Redo, and command Apply can delete notes that are still selected.
+    if (pianoRoll != nullptr)
+        pianoRoll->pruneSelection();
 
 
     if (pluginEditorWindow != nullptr
@@ -2124,8 +2282,16 @@ void MainEditorComponent::refreshProjectControls()
     redoButton.setTooltip (project.canRedo() ? "Redo " + project.getRedoDescription() : "Nothing to redo");
 
     auto selected = pianoRoll != nullptr ? project.findNote (pianoRoll->getSelectedNote()) : std::nullopt;
+    const auto selectionCount = pianoRoll != nullptr
+                                    ? static_cast<int> (pianoRoll->getSelectedNotes().size())
+                                    : 0;
     velocitySlider.setEnabled (selected.has_value());
-    velocityLabel.setText (selected.has_value() ? "VELOCITY" : "SELECT NOTE", juce::dontSendNotification);
+    velocityLabel.setText (selectionCount > 1
+                               ? juce::String (selectionCount) + " NOTES"
+                               : selected.has_value() ? "VELOCITY" : "SELECT NOTE",
+                           juce::dontSendNotification);
+    // The slider shows the primary selection's velocity and writes one absolute value
+    // across the whole selection.
     if (selected.has_value())
         velocitySlider.setValue (selected->velocity, juce::dontSendNotification);
 
@@ -2133,6 +2299,12 @@ void MainEditorComponent::refreshProjectControls()
     refreshEditPreviewControls();
     if (pianoRoll != nullptr)
         pianoRoll->repaint();
+}
+
+juce::String MainEditorComponent::velocityTransactionName() const
+{
+    const auto count = pianoRoll != nullptr ? pianoRoll->getSelectedNotes().size() : 0;
+    return count > 1 ? "Change note velocities" : "Change note velocity";
 }
 
 void MainEditorComponent::selectedNoteChanged (const juce::String&)

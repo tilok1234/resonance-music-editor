@@ -1,5 +1,6 @@
 #include "piano_roll.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace resonance
@@ -29,7 +30,7 @@ PianoRoll::PianoRoll (SongProject& projectToEdit)
     setWantsKeyboardFocus (true);
     setMouseClickGrabsKeyboardFocus (true);
     setTitle ("Editable piano roll");
-    setDescription ("Click empty space to add a note. Drag notes to move them, drag the right edge to resize, and press Delete to remove the selection. Scroll to move through pitch, hold Ctrl while scrolling or press plus and minus to zoom vertically. Notes on the other track are shown dimmed and cannot be edited here.");
+    setDescription ("Click empty space to add a note, or drag across empty space to select a group. Shift-click or Ctrl-click a note to extend the selection, and press Ctrl+A to select every note. Drag notes to move the whole selection, drag the right edge of a single note to resize, and press Delete to remove the selection. Scroll to move through pitch, hold Ctrl while scrolling or press plus and minus to zoom vertically. Notes on the other track are shown dimmed and cannot be edited here.");
 }
 
 void PianoRoll::frameAllTracks()
@@ -89,6 +90,83 @@ void PianoRoll::setSelectedNote (const juce::String& id)
         select ({});
     else
         select (id);
+}
+
+void PianoRoll::setSelectedNotes (std::vector<juce::String> ids)
+{
+    std::vector<juce::String> live;
+    live.reserve (ids.size());
+    for (const auto& id : ids)
+        if (project.findNote (id).has_value()
+            && std::find (live.begin(), live.end(), id) == live.end())
+            live.push_back (id);
+
+    setSelection (std::move (live));
+}
+
+bool PianoRoll::isSelected (const juce::String& id) const
+{
+    return std::find (selectedNoteIds.begin(), selectedNoteIds.end(), id) != selectedNoteIds.end();
+}
+
+void PianoRoll::setSelection (std::vector<juce::String> ids)
+{
+    if (ids == selectedNoteIds)
+        return;
+
+    selectedNoteIds = std::move (ids);
+    primarySelectedNoteId = selectedNoteIds.empty() ? juce::String {} : selectedNoteIds.back();
+    repaint();
+    notifySelectionChanged();
+}
+
+void PianoRoll::select (const juce::String& id)
+{
+    if (id.isEmpty())
+        setSelection ({});
+    else
+        setSelection ({ id });
+}
+
+void PianoRoll::toggleSelection (const juce::String& id)
+{
+    if (id.isEmpty())
+        return;
+
+    auto updated = selectedNoteIds;
+    const auto existing = std::find (updated.begin(), updated.end(), id);
+    if (existing != updated.end())
+        updated.erase (existing);
+    else
+        updated.push_back (id);
+
+    setSelection (std::move (updated));
+}
+
+void PianoRoll::selectAll()
+{
+    std::vector<juce::String> ids;
+    for (const auto& note : project.getNotes())
+        ids.push_back (note.id);
+
+    setSelection (std::move (ids));
+}
+
+void PianoRoll::pruneSelection()
+{
+    std::vector<juce::String> surviving;
+    surviving.reserve (selectedNoteIds.size());
+    for (const auto& id : selectedNoteIds)
+        if (project.findNote (id).has_value())
+            surviving.push_back (id);
+
+    setSelection (std::move (surviving));
+}
+
+void PianoRoll::notifySelectionChanged()
+{
+    if (selectionChanged)
+        selectionChanged (primarySelectedNoteId);
 }
 
 void PianoRoll::setEditPreview (const std::vector<NoteEditDiff>& diffs,
@@ -270,12 +348,24 @@ void PianoRoll::paint (juce::Graphics& graphics)
         graphics.setGradientFill (gradient);
         graphics.fillRoundedRectangle (bounds, 3.0f);
 
-        if (note.id == selectedNoteId)
+        if (isSelected (note.id))
         {
-            graphics.setColour (juce::Colours::white.withAlpha (0.96f));
-            graphics.drawRoundedRectangle (bounds.reduced (0.5f), 3.0f, 1.5f);
-            graphics.fillRect (bounds.getRight() - 4.0f, bounds.getY() + 1.0f, 2.0f, bounds.getHeight() - 2.0f);
+            const auto primary = note.id == primarySelectedNoteId;
+            graphics.setColour (juce::Colours::white.withAlpha (primary ? 0.96f : 0.66f));
+            graphics.drawRoundedRectangle (bounds.reduced (0.5f), 3.0f, primary ? 1.5f : 1.1f);
+            // Only the primary selection shows the resize grip, because resizing is a
+            // single-note gesture.
+            if (primary && selectedNoteIds.size() <= 1)
+                graphics.fillRect (bounds.getRight() - 4.0f, bounds.getY() + 1.0f, 2.0f, bounds.getHeight() - 2.0f);
         }
+    }
+
+    if (dragMode == DragMode::marquee && ! marqueeBounds.isEmpty())
+    {
+        graphics.setColour (secondary.withAlpha (0.16f));
+        graphics.fillRect (marqueeBounds);
+        graphics.setColour (secondary.withAlpha (0.72f));
+        graphics.drawRect (marqueeBounds, 1.0f);
     }
 
     for (const auto& diff : editPreviewDiffs)
@@ -325,27 +415,61 @@ void PianoRoll::paint (juce::Graphics& graphics)
     graphics.drawRoundedRectangle (outer, 9.0f, 1.0f);
 }
 
+void PianoRoll::beginMoveDrag (const SongNote& anchor, const juce::MouseEvent& event)
+{
+    dragOrigin = anchor;
+    dragOrigins.clear();
+    for (const auto& id : selectedNoteIds)
+        if (const auto note = project.findNote (id))
+            dragOrigins.push_back (*note);
+
+    dragBeatOffset = beatAtX (event.position.x) - anchor.beat;
+    dragPitchOffset = anchor.midiNote - noteAtY (event.position.y);
+}
+
 void PianoRoll::mouseDown (const juce::MouseEvent& event)
 {
     grabKeyboardFocus();
     const auto hit = noteAt (event.position);
+    const auto extending = event.mods.isShiftDown() || event.mods.isCtrlDown();
 
     if (hit.has_value())
     {
-        select (hit->id);
         if (event.mods.isPopupMenu())
         {
-            project.beginUndoTransaction ("Delete note");
+            if (! isSelected (hit->id))
+                select (hit->id);
+            project.beginUndoTransaction (selectedNoteIds.size() > 1 ? "Delete notes" : "Delete note");
             removeSelected();
             return;
         }
 
-        dragOrigin = hit;
+        if (extending)
+        {
+            toggleSelection (hit->id);
+            if (! isSelected (hit->id))
+                return;
+        }
+        else if (! isSelected (hit->id))
+        {
+            select (hit->id);
+        }
+
         const auto noteBounds = boundsForNote (*hit);
-        dragMode = event.position.x >= noteBounds.getRight() - 7.0f ? DragMode::resize : DragMode::move;
-        dragBeatOffset = beatAtX (event.position.x) - hit->beat;
-        dragPitchOffset = hit->midiNote - noteAtY (event.position.y);
-        project.beginUndoTransaction (dragMode == DragMode::resize ? "Resize note" : "Move note");
+        // Resizing stays a single-note gesture; moving carries the whole selection.
+        if (event.position.x >= noteBounds.getRight() - 7.0f && selectedNoteIds.size() <= 1)
+        {
+            dragMode = DragMode::resize;
+            dragOrigin = hit;
+            dragBeatOffset = beatAtX (event.position.x) - hit->beat;
+            dragPitchOffset = hit->midiNote - noteAtY (event.position.y);
+            project.beginUndoTransaction ("Resize note");
+            return;
+        }
+
+        dragMode = DragMode::move;
+        beginMoveDrag (*hit, event);
+        project.beginUndoTransaction (dragOrigins.size() > 1 ? "Move notes" : "Move note");
         return;
     }
 
@@ -355,49 +479,117 @@ void PianoRoll::mouseDown (const juce::MouseEvent& event)
         return;
     }
 
-    project.beginUndoTransaction ("Add note");
-    const auto snap = project.getSnapBeats();
-    const auto beat = juce::jlimit (0.0,
-                                    project.getLoopLengthBeats() - snap,
-                                    std::floor (beatAtX (event.position.x) / snap) * snap);
-    const auto id = project.addNote (beat,
-                                     juce::jmax (0.5, snap),
-                                     noteAtY (event.position.y),
-                                     96);
-    select (id);
+    // An empty-space press starts a marquee. It only becomes an added note if the
+    // press is released without ever turning into a drag, which preserves the
+    // documented click-to-add behavior.
+    dragMode = DragMode::marquee;
+    marqueeAnchor = event.position;
+    marqueeBounds = { marqueeAnchor, marqueeAnchor };
+    marqueeBaseSelection = extending ? selectedNoteIds : std::vector<juce::String> {};
+    pendingAddOnRelease = ! extending;
+    if (! extending)
+        select ({});
     repaint();
 }
 
 void PianoRoll::mouseDrag (const juce::MouseEvent& event)
 {
+    if (dragMode == DragMode::marquee)
+    {
+        if (event.getDistanceFromDragStart() > 2)
+            pendingAddOnRelease = false;
+
+        marqueeBounds = juce::Rectangle<float>::leftTopRightBottom (
+            juce::jmin (marqueeAnchor.x, event.position.x),
+            juce::jmin (marqueeAnchor.y, event.position.y),
+            juce::jmax (marqueeAnchor.x, event.position.x),
+            juce::jmax (marqueeAnchor.y, event.position.y));
+
+        auto updated = marqueeBaseSelection;
+        for (const auto& note : project.getNotes())
+        {
+            const auto bounds = boundsForNote (note);
+            if (bounds.isEmpty() || ! marqueeBounds.intersects (bounds))
+                continue;
+            if (std::find (updated.begin(), updated.end(), note.id) == updated.end())
+                updated.push_back (note.id);
+        }
+
+        setSelection (std::move (updated));
+        repaint();
+        return;
+    }
+
     if (! dragOrigin.has_value() || dragMode == DragMode::none)
         return;
 
-    auto edited = *dragOrigin;
     const auto loop = project.getLoopLengthBeats();
     const auto snap = project.getSnapBeats();
 
-    if (dragMode == DragMode::move)
+    if (dragMode == DragMode::resize)
     {
-        edited.beat = juce::jlimit (0.0,
-                                    loop - edited.lengthBeats,
-                                    snapBeat (beatAtX (event.position.x) - dragBeatOffset));
-        edited.midiNote = juce::jlimit (0, 127, noteAtY (event.position.y) + dragPitchOffset);
-    }
-    else
-    {
+        auto edited = *dragOrigin;
         const auto snappedEnd = snapBeat (beatAtX (event.position.x));
         edited.lengthBeats = juce::jlimit (snap, loop - edited.beat, snappedEnd - edited.beat);
+        project.updateNote (edited);
+        repaint();
+        return;
     }
 
-    project.updateNote (edited);
+    // Resolve the anchor's requested position, then shift the whole selection by the
+    // same delta so relative rhythm and intervals survive the drag. Clamping is applied
+    // to the delta rather than per note, so no note collapses onto the loop edge.
+    const auto requestedBeat = snapBeat (beatAtX (event.position.x) - dragBeatOffset);
+    const auto requestedPitch = noteAtY (event.position.y) + dragPitchOffset;
+    auto beatDelta = requestedBeat - dragOrigin->beat;
+    auto pitchDelta = requestedPitch - dragOrigin->midiNote;
+
+    for (const auto& origin : dragOrigins)
+    {
+        beatDelta = juce::jlimit (-origin.beat,
+                                  loop - origin.lengthBeats - origin.beat,
+                                  beatDelta);
+        pitchDelta = juce::jlimit (-origin.midiNote, 127 - origin.midiNote, pitchDelta);
+    }
+
+    for (const auto& origin : dragOrigins)
+    {
+        auto edited = origin;
+        edited.beat = origin.beat + beatDelta;
+        edited.midiNote = origin.midiNote + pitchDelta;
+        project.updateNote (edited);
+    }
+
     repaint();
 }
 
-void PianoRoll::mouseUp (const juce::MouseEvent&)
+void PianoRoll::mouseUp (const juce::MouseEvent& event)
 {
+    if (dragMode == DragMode::marquee)
+    {
+        if (pendingAddOnRelease && gridBounds().contains (event.position))
+        {
+            project.beginUndoTransaction ("Add note");
+            const auto snap = project.getSnapBeats();
+            const auto beat = juce::jlimit (0.0,
+                                            project.getLoopLengthBeats() - snap,
+                                            std::floor (beatAtX (marqueeAnchor.x) / snap) * snap);
+            const auto id = project.addNote (beat,
+                                             juce::jmax (0.5, snap),
+                                             noteAtY (marqueeAnchor.y),
+                                             96);
+            select (id);
+        }
+
+        marqueeBounds = {};
+        marqueeBaseSelection.clear();
+        pendingAddOnRelease = false;
+    }
+
     dragMode = DragMode::none;
     dragOrigin.reset();
+    dragOrigins.clear();
+    repaint();
 }
 
 void PianoRoll::mouseWheelMove (const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
@@ -421,8 +613,14 @@ bool PianoRoll::keyPressed (const juce::KeyPress& key)
 {
     if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
     {
-        project.beginUndoTransaction ("Delete note");
+        project.beginUndoTransaction (selectedNoteIds.size() > 1 ? "Delete notes" : "Delete note");
         removeSelected();
+        return true;
+    }
+
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'A')
+    {
+        selectAll();
         return true;
     }
 
@@ -462,25 +660,15 @@ bool PianoRoll::keyPressed (const juce::KeyPress& key)
     return false;
 }
 
-void PianoRoll::select (const juce::String& id)
-{
-    if (selectedNoteId == id)
-        return;
-
-    selectedNoteId = id;
-    repaint();
-    if (selectionChanged)
-        selectionChanged (selectedNoteId);
-}
-
 void PianoRoll::removeSelected()
 {
-    if (selectedNoteId.isEmpty())
+    if (selectedNoteIds.empty())
         return;
 
-    const auto toRemove = selectedNoteId;
-    select ({});
-    project.removeNote (toRemove);
+    const auto toRemove = selectedNoteIds;
+    setSelection ({});
+    for (const auto& id : toRemove)
+        project.removeNote (id);
     repaint();
 }
 } // namespace resonance

@@ -38,6 +38,7 @@ Read [the product vision](docs/PRODUCT_VISION.md) before changing product scope.
 - Native Surge window with Resonance audition transport and keyboard.
 - One or two editable piano-roll clips with selected-track add, move, resize, delete, velocity, snap, and shared loop length.
 - Piano-roll vertical zoom from 12 to 72 rows, dim non-interactive ghost notes for the inactive track, and automatic pitch-range fitting on Open and New.
+- Multiple note selection by shift/Ctrl-click, marquee drag, and Ctrl+A, with selection-wide delete, move, velocity, and transpose proposals as single Undo transactions.
 - Gesture-level Undo/Redo for project edits.
 - Versioned `.resonance.json` project with 960 PPQ and stable track, clip, and note IDs.
 - Canonical song-project schema version 3 with lossless, non-rewriting version-1 and version-2 migration.
@@ -79,7 +80,7 @@ The latest machine-local reports available when this handoff was prepared showed
 | --- | --- |
 | Scheduler/mixer/runtime assertions | 124 passed |
 | Project/migration/topology/round-trip/command assertions | 212 passed |
-| Schema-validated artifacts and fixtures | 20 passed |
+| Schema-validated artifacts and fixtures | 21 passed |
 | Packaged external command load | passed; 6 refusal paths, 1-diff preview, Apply, replay-after-Apply refused, one-step Undo |
 | Song project schemas | canonical writer `3`; accepted previous inputs `2` and `1` |
 | Version-1 migration fixture | passed; source SHA-256 `4725dd74075981ceb6ecd605db270954deafb7743b98190d090eb42dd677c0f7`; `track-migrated` / `clip-migrated` preserved |
@@ -111,7 +112,7 @@ The latest machine-local reports available when this handoff was prepared showed
 | Exact saved-B packaged workflow | passed; A/B `91ED214E`, clean Reject and Close |
 | Packaged UI snapshot | 99,152 bytes; SHA-256 `000d8796edc4686030a7e4db5c634cd49a6ff8f2259be605370fe2db1fbf9339`; includes the selected-track topology/mixer row and the command-load row |
 | UI idle gate | passed at 1,296.9 ms, below the 3,000 ms process-CPU threshold |
-| Packaged editor SHA-256 | `f9ad5b99f9abd994375268efb0afd5de211a6cfa3454aee152fb2573524baccb` |
+| Packaged editor SHA-256 | `941a3c851e7eae2f5efecb3ec8910c7c85dc0a5b9385f16d87d2c6cb46fc2798` |
 
 Device name, sample rate, block size, latency, full path-derived identifier, and bundle fingerprint are machine observations. Regenerate rather than copying them to another machine.
 

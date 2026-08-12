@@ -15,6 +15,7 @@ $m6RuntimeReport = Join-Path $artifacts "m6-runtime-test-report.json"
 $m6AuthoringReport = Join-Path $artifacts "m6-authoring-test-report.json"
 $m5WorkflowReport = Join-Path $artifacts "m5-workflow-test-report.json"
 $commandLoadReport = Join-Path $artifacts "command-load-test-report.json"
+$selectionReport = Join-Path $artifacts "selection-test-report.json"
 $songProjectArtifact = Join-Path $artifacts "realtime-song-project.resonance.json"
 $m6AuthoringProject = Join-Path $artifacts "m6-two-track-authoring.resonance.json"
 $uiSnapshot = Join-Path $artifacts "realtime-ui-snapshot.png"
@@ -45,7 +46,7 @@ if (-not (Test-Path -LiteralPath $editor)) {
 }
 
 New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
-Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m6AuthoringReport,$m5WorkflowReport,$commandLoadReport,$songProjectArtifact,$m6AuthoringProject,$uiSnapshot -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m6AuthoringReport,$m5WorkflowReport,$commandLoadReport,$selectionReport,$songProjectArtifact,$m6AuthoringProject,$uiSnapshot -Force -ErrorAction SilentlyContinue
 
 if (-not (Test-Path -LiteralPath $m4AcceptedFixture) -or
     (Get-FileHash -Algorithm SHA256 -LiteralPath $m4AcceptedFixture).Hash -ne
@@ -312,6 +313,29 @@ if (-not $commandLoadResult.appliedAsOneTransaction -or -not $commandLoadResult.
     throw "The external command Apply/Undo contract failed"
 }
 
+$selectionTest = Start-Process -FilePath $editor -ArgumentList "--selection-test","--report",$selectionReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($selectionTest.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $selectionReport) {
+        Get-Content -LiteralPath $selectionReport
+    }
+    throw "Multiple note selection test failed with exit code $($selectionTest.ExitCode)"
+}
+
+$selectionResult = Get-Content -LiteralPath $selectionReport -Raw | ConvertFrom-Json
+if (-not $selectionResult.selectedThree -or -not $selectionResult.rejectedUnknownAndDuplicate -or
+    -not $selectionResult.prunedAfterRemoval -or -not $selectionResult.clearedSelection) {
+    throw "The multiple note selection model failed"
+}
+
+if (-not $selectionResult.velocityAppliedAcrossSelection -or
+    -not $selectionResult.velocityUndoneInOneStep -or
+    -not $selectionResult.transposeAppliedAcrossSelection -or
+    -not $selectionResult.transposeUndoneInOneStep -or
+    -not $selectionResult.activeUnchangedDuringPreview) {
+    throw "A selection-wide edit did not apply or undo as one transaction"
+}
+
 if ($m5Result.seededVelocitySeed -ne 18421 -or
     $m5Result.seededVelocityMaximumDelta -ne 8 -or
     $m5Result.seededVelocityDiffCount -ne 8 -or
@@ -435,6 +459,11 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     ParameterizedDynamicsCandidateSha256 = $m5Result.parameterizedCandidateSha256
     ParameterizedDynamicsDiffs = $m5Result.parameterizedDiffCount
     InvalidDynamicsSettingsBlocked = $m5Result.invalidDynamicsSettingsBlocked
+    SelectionTransposeDiffs = $selectionResult.transposeDiffCount
+    SelectionEditsPassed = ($selectionResult.velocityAppliedAcrossSelection -and
+        $selectionResult.velocityUndoneInOneStep -and
+        $selectionResult.transposeAppliedAcrossSelection -and
+        $selectionResult.transposeUndoneInOneStep)
     CommandLoadCandidateSha256 = $commandLoadResult.candidateContentSha256
     CommandLoadDiffs = $commandLoadResult.noteDiffCount
     CommandLoadRefusalsPassed = ($commandLoadResult.staleHashRefused -and
