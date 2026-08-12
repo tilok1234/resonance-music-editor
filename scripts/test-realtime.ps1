@@ -17,6 +17,7 @@ $m5WorkflowReport = Join-Path $artifacts "m5-workflow-test-report.json"
 $commandLoadReport = Join-Path $artifacts "command-load-test-report.json"
 $selectionReport = Join-Path $artifacts "selection-test-report.json"
 $soundShelfReport = Join-Path $artifacts "sound-shelf-test-report.json"
+$audioProbeReport = Join-Path $artifacts "audio-probe-report.json"
 $songProjectArtifact = Join-Path $artifacts "realtime-song-project.resonance.json"
 $m6AuthoringProject = Join-Path $artifacts "m6-two-track-authoring.resonance.json"
 $uiSnapshot = Join-Path $artifacts "realtime-ui-snapshot.png"
@@ -48,7 +49,7 @@ if (-not (Test-Path -LiteralPath $editor)) {
 }
 
 New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
-Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m6AuthoringReport,$m5WorkflowReport,$commandLoadReport,$selectionReport,$soundShelfReport,$songProjectArtifact,$m6AuthoringProject,$uiSnapshot -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m6AuthoringReport,$m5WorkflowReport,$commandLoadReport,$selectionReport,$soundShelfReport,$audioProbeReport,$songProjectArtifact,$m6AuthoringProject,$uiSnapshot -Force -ErrorAction SilentlyContinue
 
 if (-not (Test-Path -LiteralPath $m4AcceptedFixture) -or
     (Get-FileHash -Algorithm SHA256 -LiteralPath $m4AcceptedFixture).Hash -ne
@@ -379,6 +380,27 @@ if (-not $soundShelfResult.foreignInstrumentRefused) {
     throw "A shelf sound from a different plug-in was not refused"
 }
 
+# The only gate that renders signal. Every other packaged test is deliberately
+# silent, so a track that produces no audio would otherwise reach a listener first.
+$audioProbe = Start-Process -FilePath $editor -ArgumentList "--audio-probe","--project",$m6AuthoringProject,"--report",$audioProbeReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($audioProbe.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $audioProbeReport) {
+        Get-Content -LiteralPath $audioProbeReport
+    }
+    throw "Per-track audio probe failed with exit code $($audioProbe.ExitCode)"
+}
+
+$audioProbeResult = Get-Content -LiteralPath $audioProbeReport -Raw | ConvertFrom-Json
+if ($audioProbeResult.audibleTrackCount -ne $audioProbeResult.expectedAudibleTrackCount) {
+    throw "A track that should have produced signal was silent"
+}
+
+if ($audioProbeResult.clipped -or $audioProbeResult.invalidSampleCount -ne 0 -or
+    $audioProbeResult.masterPeak -le 0) {
+    throw "The rendered probe clipped, produced invalid samples, or produced silence"
+}
+
 if ($m5Result.seededVelocitySeed -ne 18421 -or
     $m5Result.seededVelocityMaximumDelta -ne 8 -or
     $m5Result.seededVelocityDiffCount -ne 8 -or
@@ -502,6 +524,8 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     ParameterizedDynamicsCandidateSha256 = $m5Result.parameterizedCandidateSha256
     ParameterizedDynamicsDiffs = $m5Result.parameterizedDiffCount
     InvalidDynamicsSettingsBlocked = $m5Result.invalidDynamicsSettingsBlocked
+    AudioProbeAudibleTracks = "$($audioProbeResult.audibleTrackCount)/$($audioProbeResult.expectedAudibleTrackCount)"
+    AudioProbeMasterPeak = [math]::Round($audioProbeResult.masterPeak, 4)
     SoundShelfAcceptedSha256 = $soundShelfResult.acceptedSoundSha256
     SoundShelfLoadedSha256 = $soundShelfResult.shelfSoundSha256
     SoundShelfLanePassed = ($soundShelfResult.loadedAsCandidate -and

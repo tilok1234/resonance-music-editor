@@ -2079,6 +2079,136 @@ juce::var MainEditorComponent::runSoundShelfSelfTest (const juce::File& alternat
     return result;
 }
 
+juce::var MainEditorComponent::runAudioProbeSelfTest (const juce::File& projectFile)
+{
+    auto* resultObject = new juce::DynamicObject();
+    juce::var result (resultObject);
+    resultObject->setProperty ("schemaVersion", 1);
+    resultObject->setProperty ("testVersion", JUCE_APPLICATION_VERSION_STRING);
+    resultObject->setProperty ("projectPath", projectFile.getFileName());
+
+    const auto fail = [resultObject, &result] (const juce::String& message)
+    {
+        resultObject->setProperty ("passed", false);
+        resultObject->setProperty ("error", message);
+        return result;
+    };
+
+    if (projectFile != juce::File() && ! openProjectForSnapshot (projectFile))
+        return fail ("The probe project could not be opened");
+
+    const auto trackCount = project.getTrackCount();
+    resultObject->setProperty ("trackCount", trackCount);
+    if (trackCount < 1)
+        return fail ("The probe project has no tracks");
+
+    clearEditPreview (true);
+    clearSoundCandidate();
+    publishProjectMixerSnapshot();
+
+    constexpr double probeSampleRate = 44100.0;
+    constexpr int probeBlockSize = 441;
+    const auto prepared = engine.prepareForOfflineRender (probeSampleRate, probeBlockSize);
+    if (prepared.failed())
+        return fail ("Offline render preparation failed: " + prepared.getErrorMessage());
+
+    // Master gain is forced to unity so a track's silence cannot be an artefact of the
+    // session's monitoring level.
+    engine.setMasterGainDecibels (0.0f);
+    engine.stopAndRewind();
+    engine.setPlaying (true);
+
+    const auto loopSeconds = project.getLoopLengthBeats() * 60.0 / project.getTempoBpm();
+    const auto blockCount = juce::jmax (64,
+                                        static_cast<int> (std::ceil (probeSampleRate * loopSeconds
+                                                                     / probeBlockSize)));
+
+    juce::AudioBuffer<float> output (2, probeBlockSize);
+    juce::AudioIODeviceCallbackContext callbackContext;
+    std::array<float, SongProject::maxProjectTracks> trackPeaks {};
+    float masterPeak = 0.0f;
+
+    for (int block = 0; block < blockCount; ++block)
+    {
+        output.clear();
+        auto* outputs = output.getArrayOfWritePointers();
+        engine.audioDeviceIOCallbackWithContext (nullptr, 0, outputs, 2, probeBlockSize,
+                                                 callbackContext);
+        masterPeak = juce::jmax (masterPeak, output.getMagnitude (0, probeBlockSize));
+        for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
+        {
+            const auto slot = static_cast<std::size_t> (trackIndex);
+            trackPeaks[slot] = juce::jmax (trackPeaks[slot],
+                                           juce::jmax (engine.getTrackLeftPeak (slot),
+                                                       engine.getTrackRightPeak (slot)));
+        }
+    }
+
+    engine.setPlaying (false);
+    engine.stopAndRewind();
+
+    // A muted track, or any track while another is soloed, is expected to be silent;
+    // only tracks that should be heard are required to produce signal.
+    auto anySolo = false;
+    for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
+        anySolo = anySolo || project.getTrackMixerSettings (trackIndex).solo;
+
+    juce::Array<juce::var> trackReports;
+    auto audibleTracks = 0;
+    auto expectedAudibleTracks = 0;
+    auto expectationsMet = true;
+    for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
+    {
+        const auto slot = static_cast<std::size_t> (trackIndex);
+        const auto peak = trackPeaks[slot];
+        const auto settings = project.getTrackMixerSettings (trackIndex);
+        const auto shouldSound = ! settings.muted && (! anySolo || settings.solo);
+        // -60 dBFS is the project's own lower mixer bound, so anything below it is
+        // treated as silence rather than a quiet part.
+        const auto audible = peak > 0.001f;
+        audibleTracks += audible ? 1 : 0;
+        expectedAudibleTracks += shouldSound ? 1 : 0;
+        expectationsMet = expectationsMet && (audible == shouldSound);
+
+        auto* trackObject = new juce::DynamicObject();
+        juce::var trackReport (trackObject);
+        trackObject->setProperty ("index", trackIndex);
+        trackObject->setProperty ("name", project.getTrackName (trackIndex));
+        trackObject->setProperty ("noteCount",
+                                  static_cast<int> (project.getNotes (trackIndex).size()));
+        trackObject->setProperty ("midiOutputChannel",
+                                  project.getTrackMidiRouting (trackIndex).outputChannel);
+        trackObject->setProperty ("gainDb", project.getTrackMixerSettings (trackIndex).gainDecibels);
+        trackObject->setProperty ("peak", peak);
+        trackObject->setProperty ("processedBlocks",
+                                  static_cast<int> (engine.getTrackProcessedBlockCount (slot)));
+        trackObject->setProperty ("muted", settings.muted);
+        trackObject->setProperty ("shouldSound", shouldSound);
+        trackObject->setProperty ("audible", audible);
+        trackReports.add (trackReport);
+    }
+
+    resultObject->setProperty ("blockCount", blockCount);
+    resultObject->setProperty ("tracks", trackReports);
+    resultObject->setProperty ("audibleTrackCount", audibleTracks);
+    resultObject->setProperty ("expectedAudibleTrackCount", expectedAudibleTracks);
+    resultObject->setProperty ("masterPeak", masterPeak);
+    resultObject->setProperty ("clipped", masterPeak > 1.0f);
+    resultObject->setProperty ("invalidSampleCount",
+                               static_cast<int> (engine.getInvalidSampleCount()));
+
+    const auto passed = expectationsMet && masterPeak > 0.001f && masterPeak <= 1.0f
+                        && engine.getInvalidSampleCount() == 0;
+    resultObject->setProperty ("passed", passed);
+    if (! passed)
+        resultObject->setProperty ("error",
+                                   juce::String (audibleTracks) + " of "
+                                       + juce::String (expectedAudibleTracks)
+                                       + " expected-audible tracks produced signal");
+
+    return result;
+}
+
 bool MainEditorComponent::openProjectForSnapshot (const juce::File& projectFile)
 {
     if (! projectFile.existsAsFile())

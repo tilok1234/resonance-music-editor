@@ -36,6 +36,7 @@ public:
     juce::var runCommandLoadSelfTest();
     juce::var runSelectionSelfTest();
     juce::var runSoundShelfSelfTest (const juce::File& alternateProjectFile);
+    juce::var runAudioProbeSelfTest (const juce::File& projectFile);
     bool openProjectForSnapshot (const juce::File& projectFile);
     void prepareM5PreviewForSnapshot();
 

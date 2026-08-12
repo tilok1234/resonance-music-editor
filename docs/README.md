@@ -1,6 +1,6 @@
 # Resonance Music Editor documentation
 
-This index is the entry point for product, architecture, development, and handoff information. Resonance is an early but working Windows-native game-music editor: version 0.5.0 edits one or two visible looping Surge XT tracks, plays through WASAPI, persists independent accepted states and mixer settings in song-project schema version 3, and migrates versions 1 and 2 without source rewrite. M4's sound A/B workflow and M5's version-1 command/proposal workflow remain accepted, with the current sound's subtle velocity response recorded honestly. M6 is still in progress because the bounded two-track authoring slice has technical but not listening approval, and user-facing missing-plug-in recovery remains open.
+This index is the entry point for product, architecture, development, and handoff information. Resonance is an early but working Windows-native game-music editor: version 0.5.0 edits one through four visible looping Surge XT tracks, plays through WASAPI, persists independent accepted states and mixer settings in song-project schema version 4, and migrates versions 1, 2, and 3 without source rewrite. Authoring throughput was widened on 2026-08-12 with external command loading, piano-roll visibility, multiple selection, a note clipboard, and a named sound shelf. M4's sound A/B workflow and M5's version-1 command/proposal workflow remain accepted, with the current sound's subtle velocity response recorded honestly. M6 is still in progress: the authoring slices have technical but not listening approval, and user-facing missing-plug-in recovery remains open. The first user listen, on 2026-08-13, found a mix defect that every silent gate had passed, which is what the per-track audio probe now guards against.
 
 ## Read this first
 
@@ -82,6 +82,7 @@ An ADR records a durable decision and its consequences. Add a new ADR when a cha
 - [M6 note clipboard](M6_NOTE_CLIPBOARD_CHECKPOINT_2026-08-12.md)
 - [M6 sound shelf](M6_SOUND_SHELF_CHECKPOINT_2026-08-12.md)
 - [M6 four-track schema version 4](M6_FOUR_TRACK_SCHEMA_V4_CHECKPOINT_2026-08-12.md)
+- [Per-track audio probe and mix diagnosis](AUDIO_PROBE_AND_MIX_DIAGNOSIS_2026-08-13.md)
 
 The acceptance files distinguish implementation proof from musical approval. A passing scheduler, schema, or audio-device test does not mean that a preset, loop, mix, or composition has passed a listening review.
 

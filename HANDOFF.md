@@ -67,6 +67,7 @@ Read [the product vision](docs/PRODUCT_VISION.md) before changing product scope.
 - Save isolation: unapplied note or sound previews never silently replace accepted A.
 - Mutually exclusive sound and note candidate lanes plus pending-preview discard warnings.
 - Separate exact saved-state integrity from the live-equivalent hash observed after Surge restore.
+- Per-track audio probe that renders a project through the production callback and fails when a track that should sound is silent, the master clips, or samples go invalid. It is the only non-silent gate.
 - Silent packaged self-test, M4/M5 native workflow modes, M6 two-instance runtime and authoring modes, external command-load mode, UI snapshot mode, and idle CPU regression mode.
 - Fixed-capacity eight-lane `MixerSnapshot` contract with native-tested gain, balance, mute, solo, and capacity semantics.
 - Eight stable prepared runtime slots with preallocated per-slot scratch, indexed state, separate scheduling/MIDI channels, bounded meters, load/safety diagnostics, and clean missing-slot/shutdown behavior.
@@ -82,7 +83,7 @@ The latest machine-local reports available when this handoff was prepared showed
 | --- | --- |
 | Scheduler/mixer/runtime assertions | 124 passed |
 | Project/migration/ceiling/shelf/round-trip/command assertions | 253 passed |
-| Schema-validated artifacts and fixtures | 23 passed |
+| Schema-validated artifacts and fixtures | 24 passed |
 | Packaged external command load | passed; 6 refusal paths, 1-diff preview, Apply, replay-after-Apply refused, one-step Undo |
 | Song project schemas | canonical writer `4`; accepted previous inputs `3`, `2`, and `1` |
 | Version-1 migration fixture | passed; source SHA-256 `4725dd74075981ceb6ecd605db270954deafb7743b98190d090eb42dd677c0f7`; `track-migrated` / `clip-migrated` preserved |

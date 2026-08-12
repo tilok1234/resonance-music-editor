@@ -615,6 +615,11 @@ public:
                                  : juce::var {};
     }
 
+    juce::var runAudioProbeSelfTest (const juce::File& projectFile)
+    {
+        return editor != nullptr ? editor->runAudioProbeSelfTest (projectFile) : juce::var {};
+    }
+
     bool openProjectForSnapshot (const juce::File& projectFile)
     {
         return editor != nullptr && editor->openProjectForSnapshot (projectFile);
@@ -676,6 +681,7 @@ public:
         const auto commandLoadTestMode = args.contains ("--command-load-test");
         const auto selectionTestMode = args.contains ("--selection-test");
         const auto soundShelfTestMode = args.contains ("--sound-shelf-test");
+        const auto audioProbeMode = args.contains ("--audio-probe");
         window = std::make_unique<MainWindow> (inventory,
                                                quarantine,
                                                properties.getUserSettings(),
@@ -684,7 +690,8 @@ public:
                                                    && ! m6AuthoringTestMode
                                                    && ! commandLoadTestMode
                                                    && ! selectionTestMode
-                                                   && ! soundShelfTestMode);
+                                                   && ! soundShelfTestMode
+                                                   && ! audioProbeMode);
 
         if (snapshotMode)
         {
@@ -836,6 +843,24 @@ public:
                                     && static_cast<bool> (object->getProperty ("passed"));
                 const auto reportWritten = writeReport (reportFile, report);
                 setApplicationReturnValue (passed && reportWritten ? 0 : 10);
+                quit();
+            });
+        }
+        else if (audioProbeMode)
+        {
+            const auto projectFile = resolvePathArgument (args, "--project", "");
+            const auto reportFile = resolvePathArgument (
+                args, "--report", "audio-probe-report.json");
+            juce::Timer::callAfterDelay (750, [this, projectFile, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runAudioProbeSelfTest (projectFile)
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 11);
                 quit();
             });
         }
