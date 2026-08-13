@@ -68,6 +68,14 @@ The loop was exercised end to end:
 4. Replaying the identical command was refused: *"the active project content has changed"*. The staleness guarantee holds headlessly.
 5. `--render` produced a WAV of the result.
 
+## Single-instance handoff made every headless mode a silent no-op
+
+The application declared `moreThanOneInstanceAllowed() = false`, which is right for the interactive editor: two windows must not fight over the audio device. But JUCE applies it to *every* invocation, so running `--describe`, `--render`, `--apply-command`, or any packaged test while an editor window happened to be open handed the command line to the running instance and exited **0 without doing anything**.
+
+This is a bad failure mode for an agent loop: the exit code says success, no output file appears, and nothing explains why. It was found by accident when a describe produced no file while an editor was open from an earlier launch.
+
+The flag now returns true when the command line names any headless mode and false otherwise, so the interactive editor stays single-instance while agent and test modes run alongside it.
+
 ## What this slice does not do
 
 The command vocabulary is still **one operation**, `editNotes`, capped at 128 changes. An agent can move notes and nothing else: not tempo, song length, tracks, mixer values, or shelf sounds. Widening that vocabulary is the next slice and is what makes the loop genuinely useful, because at present an agent can only rearrange material inside a structure a human had to build.

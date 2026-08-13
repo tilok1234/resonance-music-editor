@@ -914,7 +914,26 @@ class ResonanceApplication final : public juce::JUCEApplication
 public:
     const juce::String getApplicationName() override       { return "Resonance Music Editor"; }
     const juce::String getApplicationVersion() override    { return JUCE_APPLICATION_VERSION_STRING; }
-    bool moreThanOneInstanceAllowed() override             { return false; }
+    // The interactive editor stays single-instance so two windows cannot fight over the
+    // audio device. The headless modes take no device and must run even while an editor
+    // window is open, otherwise a second invocation silently hands off and does nothing.
+    bool moreThanOneInstanceAllowed() override
+    {
+        static const char* headlessModes[] { "--describe", "--apply-command", "--render",
+                                             "--audio-probe", "--self-test", "--m6-runtime-test",
+                                             "--m6-authoring-test", "--m5-workflow-test",
+                                             "--m4-workflow-test", "--command-load-test",
+                                             "--selection-test", "--sound-shelf-test",
+                                             "--ui-snapshot", "--ui-idle-test" };
+
+        juce::StringArray args;
+        args.addTokens (juce::JUCEApplication::getCommandLineParameters(), true);
+        for (const auto* mode : headlessModes)
+            if (args.contains (mode))
+                return true;
+
+        return false;
+    }
 
     void initialise (const juce::String& commandLine) override
     {
