@@ -37,6 +37,10 @@ public:
     juce::var runSelectionSelfTest();
     juce::var runSoundShelfSelfTest (const juce::File& alternateProjectFile);
     juce::var runAudioProbeSelfTest (const juce::File& projectFile);
+    juce::var renderProjectToWav (const juce::File& projectFile,
+                                  const juce::File& wavFile,
+                                  int repeats,
+                                  double tailSeconds);
     bool openProjectFromCommandLine (const juce::File& projectFile);
     void prepareM5PreviewForSnapshot();
 

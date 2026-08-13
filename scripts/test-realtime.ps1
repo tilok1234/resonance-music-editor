@@ -18,6 +18,7 @@ $commandLoadReport = Join-Path $artifacts "command-load-test-report.json"
 $selectionReport = Join-Path $artifacts "selection-test-report.json"
 $soundShelfReport = Join-Path $artifacts "sound-shelf-test-report.json"
 $audioProbeReport = Join-Path $artifacts "audio-probe-report.json"
+$renderReport = Join-Path $artifacts "render-report.json"
 $songProjectArtifact = Join-Path $artifacts "realtime-song-project.resonance.json"
 $m6AuthoringProject = Join-Path $artifacts "m6-two-track-authoring.resonance.json"
 $uiSnapshot = Join-Path $artifacts "realtime-ui-snapshot.png"
@@ -50,7 +51,7 @@ if (-not (Test-Path -LiteralPath $editor)) {
 }
 
 New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
-Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m6AuthoringReport,$m5WorkflowReport,$commandLoadReport,$selectionReport,$soundShelfReport,$audioProbeReport,$songProjectArtifact,$m6AuthoringProject,$uiSnapshot -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m6AuthoringReport,$m5WorkflowReport,$commandLoadReport,$selectionReport,$soundShelfReport,$audioProbeReport,$renderReport,$songProjectArtifact,$m6AuthoringProject,$uiSnapshot -Force -ErrorAction SilentlyContinue
 
 if (-not (Test-Path -LiteralPath $m4AcceptedFixture) -or
     (Get-FileHash -Algorithm SHA256 -LiteralPath $m4AcceptedFixture).Hash -ne
@@ -407,6 +408,31 @@ if ($audioProbeResult.clipped -or $audioProbeResult.invalidSampleCount -ne 0 -or
     throw "The rendered probe clipped, produced invalid samples, or produced silence"
 }
 
+# Renders the committed artifact to a temporary WAV. The audio is discarded; only the
+# fact that a complete, non-silent, non-clipping file was written is evidence.
+$renderWav = Join-Path ([IO.Path]::GetTempPath()) "resonance-gate-render.wav"
+Remove-Item -LiteralPath $renderWav -Force -ErrorAction SilentlyContinue
+$renderTest = Start-Process -FilePath $editor -ArgumentList "--render","--project",$m6AuthoringProject,"--wav",$renderWav,"--tail-seconds","1","--report",$renderReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($renderTest.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $renderReport) {
+        Get-Content -LiteralPath $renderReport
+    }
+    throw "Offline render failed with exit code $($renderTest.ExitCode)"
+}
+
+$renderResult = Get-Content -LiteralPath $renderReport -Raw | ConvertFrom-Json
+if (-not (Test-Path -LiteralPath $renderWav) -or (Get-Item $renderWav).Length -ne $renderResult.fileBytes) {
+    throw "The rendered WAV is missing or does not match its reported size"
+}
+
+if ($renderResult.clippedSamples -ne 0 -or $renderResult.invalidSampleCount -ne 0 -or
+    $renderResult.peak -le 0) {
+    throw "The offline render clipped, produced invalid samples, or was silent"
+}
+
+Remove-Item -LiteralPath $renderWav -Force -ErrorAction SilentlyContinue
+
 if ($m5Result.seededVelocitySeed -ne 18421 -or
     $m5Result.seededVelocityMaximumDelta -ne 8 -or
     $m5Result.seededVelocityDiffCount -ne 8 -or
@@ -530,6 +556,9 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     ParameterizedDynamicsCandidateSha256 = $m5Result.parameterizedCandidateSha256
     ParameterizedDynamicsDiffs = $m5Result.parameterizedDiffCount
     InvalidDynamicsSettingsBlocked = $m5Result.invalidDynamicsSettingsBlocked
+    RenderSeconds = [math]::Round($renderResult.renderedSeconds, 1)
+    RenderPeakDbfs = [math]::Round($renderResult.peakDbfs, 1)
+    RenderRmsDbfs = [math]::Round($renderResult.rmsDbfs, 1)
     AudioProbeAudibleTracks = "$($audioProbeResult.audibleTrackCount)/$($audioProbeResult.expectedAudibleTrackCount)"
     AudioProbeMasterPeak = [math]::Round($audioProbeResult.masterPeak, 4)
     SoundShelfAcceptedSha256 = $soundShelfResult.acceptedSoundSha256

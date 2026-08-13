@@ -8,16 +8,19 @@ Repository: <https://github.com/tilok1234/resonance-music-editor>
 
 Resonance is a clean-room restart of a Windows game-music editor. The current application is a working four-track, 64-bar authoring prototype, not a complete DAW. It preloads four distinct instances of the explicitly scanned and inventory-approved Surge XT 1.3.4 VST3, plays through Windows Audio/WASAPI, edits one clip per track on a shared canvas of one through 64 bars, opens the selected track's native Surge editor, and saves independent accepted sound and mixer state with the symbolic song.
 
-M4 (host-owned sound A/B) and M5 (validated edit-command/proposal layer) remain explicitly accepted by the user. M6 (multi-track and mixer) is technically verified but **has never passed a listening gate**. M7 (arrangement) is in progress: slice M7.1 delivered the song-length canvas on 2026-08-13.
+M4 (host-owned sound A/B) and M5 (validated edit-command/proposal layer) remain explicitly accepted by the user. M6 (multi-track and mixer) is technically verified but **has never passed a listening gate**. M7 (arrangement) is in progress: M7.1 delivered the song-length canvas and M7.5 delivered offline WAV render, both on 2026-08-13.
 
 Project version: `0.5.0`. It has not been bumped since M4's acceptance at 0.3.0 because no milestone has been accepted since, although the capability set has grown considerably beyond what "0.5.0" implied a week ago. Bumping it is reasonable to propose, but it should follow an acceptance rather than precede one.
 
 ## Current branch and history
 
-Working branch `codex/m6-two-track-authoring`, HEAD `58405d6`, clean tree.
+Working branch `codex/m6-two-track-authoring`, pushed, open as **draft PR #3** based on `codex/m6-two-track-runtime` (matching how #1 and #2 stack). The tip is the commit that carries this handoff; run `git log` for the exact value.
 
 | Commit | Slice |
 | --- | --- |
+| (tip) | M7.5 offline WAV render |
+| `59af6c7` | Reference songs the docs point at |
+| `2644ea5` | Current-reference docs audit, handoff rewrite |
 | `58405d6` | M7.1 song canvas to 64 bars, schema v5, roll time axis |
 | `7e9262e` | Per-track audio probe after the first listening report |
 | `47103e9` | Four-track ceiling, schema v4 |
@@ -28,11 +31,11 @@ Working branch `codex/m6-two-track-authoring`, HEAD `58405d6`, clean tree.
 | `dc7a767` | External edit-command loading |
 | `b6af336` | Bounded M6 two-track authoring (prior baseline) |
 
-Nothing since `b6af336` has been pushed or reviewed. The accepted M4 baseline is `7af6573` on `codex/m4-accepted-0.3.0` (draft PR #1); the accepted M5 commit is `9d94780` (draft PR #2). Verify live `HEAD` and upstream before relying on any of these.
+Everything through `59af6c7` is pushed and gathered in draft PR #3; nothing has been reviewed or merged. The accepted M4 baseline is `7af6573` on `codex/m4-accepted-0.3.0` (draft PR #1); the accepted M5 commit is `9d94780` (draft PR #2). Verify live `HEAD` and upstream before relying on any of these.
 
 ## What changed since 2026-08-09, and why
 
-A 2026-08-12 assessment found that the binding constraint on making songs was not arrangement or AI, but **note-entry throughput and sound variety**. Neither was a roadmap milestone. Eight slices followed, none of which altered the accepted M4 or M5 contracts:
+A 2026-08-12 assessment found that the binding constraint on making songs was not arrangement or AI, but **note-entry throughput and sound variety**. Neither was a roadmap milestone. Nine slices followed, none of which altered the accepted M4 or M5 contracts:
 
 1. **External command loading.** Version-1 edit-command files load into M5's accepted preview path; **Copy hash** publishes the content SHA-256, track ID, and clip ID needed to author one. `scripts/make-edit-command.py` builds them.
 2. **Piano-roll visibility.** Vertical zoom 12–72 rows, dim ghost notes for inactive tracks, pitch-range fitting on Open and New.
@@ -42,6 +45,7 @@ A 2026-08-12 assessment found that the binding constraint on making songs was no
 6. **Four tracks, schema v4.**
 7. **Per-track audio probe.** See below.
 8. **M7.1 song canvas, schema v5.** 64 bars, 1,024 notes per clip, horizontal zoom and scroll.
+9. **M7.5 offline render.** `--render` writes a 24-bit WAV through the production callback, with repeats and a release tail.
 
 ## The most important thing to understand
 
@@ -60,7 +64,7 @@ Carry both lessons forward:
 | --- | --- |
 | Scheduler/mixer/runtime assertions | 124 passed |
 | Project/migration/ceiling/canvas/shelf/command assertions | 270 passed |
-| Schema-validated artifacts and fixtures | 25 passed |
+| Schema-validated artifacts and fixtures | 26 passed |
 | Song project schemas | canonical writer `5`; accepted inputs `4`, `3`, `2`, `1` |
 | Track ceiling | 4 persisted; 8 runtime lanes; 4 Surge instances preloaded |
 | Clip canvas | 4–256 beats (1–64 bars); 1,024 notes per clip |
@@ -68,9 +72,10 @@ Carry both lessons forward:
 | Packaged command load | 6 refusal paths, Apply, replay-after-Apply refused, one-step Undo |
 | Packaged selection/clipboard | 19 checks |
 | Packaged sound shelf | 10 checks against two genuinely different Surge states |
+| Packaged offline render | complete file, non-silent, no clipping, no invalid samples |
 | UI idle gate | 2,093.8 ms with four preloaded instances, below the 3,000 ms ceiling |
 | Packaged UI snapshot | 104,134 bytes; SHA-256 `7b520b966da04274a00fc70891e0eebc580dd6de048aa3482ca2e95153fc6e49` |
-| Packaged editor SHA-256 | `1d9e1a662146cc338fb02bd8bb3b3a95ed77830d7e5637f6235aa51f6525ffbd` |
+| Packaged editor SHA-256 | `362aea878cfe6f4807c142aaa52ffb24bbedd4ab5660af775980dd7559a779fd` |
 | Surge XT | 1.3.4; 2,855 parameters; VST3 UID suffix `190e4fbd` |
 
 Device name, sample rate, block size, latency, and path-derived identifiers are machine observations. Regenerate rather than copying them.
@@ -98,13 +103,14 @@ Each of these cost real time. They are recorded so they cost less next time.
 - Host-owned named A/B sound snapshots with Capture, Audition, Apply, Reject, one-transaction Undo, and a persistent named sound shelf.
 - Strict version-1 edit-command parser/serializer, full-project SHA-256 preconditions, non-mutating candidates, before/after diffs and overlays, consume-once Apply/Reject, deterministic seeded velocity resolver, and external command-file loading.
 - Fixed eight-lane `MixerSnapshot` and eight prepared runtime slots with preallocated scratch, separate scheduling/MIDI channels, bounded meters, and clean shutdown.
-- Eleven packaged self-test modes, one of which renders audio.
+- Twelve packaged modes, of which `--audio-probe` renders and measures signal and `--render` writes a 24-bit WAV.
+- Offline WAV render of a whole project through the production callback, with repeats, tail, and a schema-validated report.
 
 ## Known limitations
 
 - **No listening approval for anything since M4/M5.** This is the largest open item.
 - One clip per track. No sections, markers, reusable clip instances, arrangement timeline, tempo or meter changes, or automation.
-- No offline render or export; nothing can leave the editor.
+- No stems, loop-region metadata, normalisation, dither, or loudness targets; render is offline-only, single-file, and blocks the message thread.
 - Exactly one accepted inventory record; all four tracks instantiate the same Surge product. The shelf varies the patch, not the plug-in.
 - No factory-preset browser and no `.fxp` interpretation (ADR-0004, deliberate).
 - No user-facing missing-plug-in recovery.
@@ -116,8 +122,10 @@ Each of these cost real time. They are recorded so they cost less next time.
 
 ## Recommended next steps, in order
 
-1. **Run the listening pass.** Open `songs/emberline-long.resonance.json` (32 bars, four tracks, intro/A/B/A'/outro) and judge it. Does it read as four instruments? Do the sections land? This is the only step that can invalidate eight slices of unvalidated work, and an agent cannot do it.
-2. **M7.5 offline WAV render.** Small now: `--audio-probe` already renders a whole project through the production callback, so writing the buffer to a file is a modest delta. Closes the last open finding from the 2026-08-12 assessment and makes every future listening pass shareable and repeatable.
+1. **Run the listening pass.** Render `songs/emberline-long.resonance.json` with `--render` and listen to the WAV, or open it and press Play. Does it read as four instruments? Do the sections land? This is the only step that can invalidate nine slices of unvalidated work, and an agent cannot do it.
+
+   Measurement already found one flaw worth confirming by ear: per-section RMS of the rendered file shows the intro sitting about 8 dB below the body, but the **outro at the same level as the A sections** rather than thinning as intended, so the piece may stop rather than resolve.
+2. **M7.5 offline WAV render — delivered 2026-08-13.** `--render` writes a 24-bit WAV through the production callback. The remaining assessment findings are now all closed.
 3. **M7.3 reusable clip instances.** The real arrangement work, and what stops a long song's note list growing linearly with its length.
 4. **M7.2 sections and markers**, then tempo and meter changes.
 5. **User-facing missing-plug-in recovery**, still required before M6 can be called complete.
@@ -163,7 +171,7 @@ The product is a music-only editor aimed at video-game music. Manual and future 
 edits share one versioned project model, and technical tests are deliberately separate
 from listening approval.
 
-Current state: branch codex/m6-two-track-authoring at 58405d6, unpushed. Editor 0.5.0
+Current state: branch codex/m6-two-track-authoring, pushed, open as draft PR #3. Editor 0.5.0
 writes song-project schema version 5 and reads 1 through 5 without rewriting sources.
 Up to four tracks, one clip each, on a canvas of one through 64 bars with up to 1024
 notes per clip. Four Surge XT instances preload at startup against an eight-lane
@@ -171,7 +179,8 @@ runtime. The gate passes 124 scheduler assertions, 270 project assertions, and 2
 schema validations.
 
 M4 and M5 are user-accepted. M6 is technically verified but has NEVER passed a
-listening gate. M7 is in progress; M7.1 delivered the song-length canvas.
+listening gate. M7 is in progress; M7.1 delivered the song-length canvas and M7.5
+delivered offline WAV render.
 
 Most important context: every packaged gate except --audio-probe is silent by
 contract. The first time the user listened they found a defect all of them had passed,
@@ -179,9 +188,8 @@ and the probe added in response then caught a second one. Run --audio-probe on a
 project-shaped change, and do not mistake it for listening approval.
 
 Recommended next: (1) get the user to run the listening pass on
-songs/emberline-long.resonance.json; (2) M7.5 offline WAV render, which is cheap
-because the probe already renders through the production callback; (3) M7.3 reusable
-clip instances. Do not add different plug-in products per track, automation, a live AI
+songs/emberline-long.resonance.json, rendering it with --render if that is easier;
+(2) M7.3 reusable clip instances; (3) M7.2 sections and markers. Do not add different plug-in products per track, automation, a live AI
 service, or factory .fxp indexing without an explicit request.
 ```
 

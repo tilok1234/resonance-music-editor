@@ -2220,6 +2220,156 @@ juce::var MainEditorComponent::runAudioProbeSelfTest (const juce::File& projectF
     return result;
 }
 
+juce::var MainEditorComponent::renderProjectToWav (const juce::File& projectFile,
+                                                   const juce::File& wavFile,
+                                                   int repeats,
+                                                   double tailSeconds)
+{
+    auto* resultObject = new juce::DynamicObject();
+    juce::var result (resultObject);
+    resultObject->setProperty ("schemaVersion", 1);
+    resultObject->setProperty ("editorVersion", JUCE_APPLICATION_VERSION_STRING);
+
+    const auto fail = [resultObject, &result] (const juce::String& message)
+    {
+        resultObject->setProperty ("passed", false);
+        resultObject->setProperty ("error", message);
+        return result;
+    };
+
+    if (projectFile != juce::File() && ! openProjectFromCommandLine (projectFile))
+        return fail ("The project could not be opened");
+    if (wavFile == juce::File())
+        return fail ("An output WAV path is required");
+
+    const auto safeRepeats = juce::jlimit (1, 64, repeats);
+    const auto safeTail = juce::jlimit (0.0, 30.0, tailSeconds);
+    const auto trackCount = project.getTrackCount();
+    if (trackCount < 1)
+        return fail ("The project has no tracks");
+
+    clearEditPreview (true);
+    clearSoundCandidate();
+    publishProjectMixerSnapshot();
+
+    // The render deliberately reuses the production callback rather than a second
+    // mixing path, so what is written is what the editor plays.
+    const auto rate = static_cast<double> (project.getSampleRate());
+    constexpr int blockSize = 512;
+    const auto prepared = engine.prepareForOfflineRender (rate, blockSize);
+    if (prepared.failed())
+        return fail ("Offline render preparation failed: " + prepared.getErrorMessage());
+
+    // Unity master so a render is reproducible rather than reflecting the session's
+    // monitoring level. Per-track mixer gains are part of the song and are kept.
+    engine.setMasterGainDecibels (0.0f);
+    engine.stopAndRewind();
+    engine.setPlaying (true);
+
+    const auto loopSeconds = project.getLoopLengthBeats() * 60.0 / project.getTempoBpm();
+    const auto musicSamples = static_cast<juce::int64> (
+        std::llround (rate * loopSeconds * static_cast<double> (safeRepeats)));
+    const auto tailSamples = static_cast<juce::int64> (std::llround (rate * safeTail));
+    const auto totalSamples = musicSamples + tailSamples;
+
+    std::unique_ptr<juce::OutputStream> stream (wavFile.createOutputStream());
+    if (stream == nullptr)
+        return fail ("Could not open " + wavFile.getFullPathName() + " for writing");
+
+    juce::WavAudioFormat wav;
+    const auto options = juce::AudioFormatWriterOptions {}
+                             .withSampleRate (rate)
+                             .withNumChannels (2)
+                             .withBitsPerSample (24);
+    auto writer = wav.createWriterFor (stream, options);
+    if (writer == nullptr)
+        return fail ("Could not create a WAV writer");
+
+    juce::AudioBuffer<float> block (2, blockSize);
+    juce::AudioIODeviceCallbackContext callbackContext;
+    float peak = 0.0f;
+    double sumOfSquares = 0.0;
+    juce::int64 clippedSamples = 0;
+    juce::int64 written = 0;
+    auto writeFailed = false;
+
+    while (written < totalSamples && ! writeFailed)
+    {
+        // The transport stops after the requested repeats so the tail captures release
+        // rather than another pass of the song.
+        if (written >= musicSamples && engine.isPlaying())
+            engine.setPlaying (false);
+
+        const auto samplesThisBlock = static_cast<int> (
+            juce::jmin (static_cast<juce::int64> (blockSize), totalSamples - written));
+        block.clear();
+        auto* outputs = block.getArrayOfWritePointers();
+        engine.audioDeviceIOCallbackWithContext (nullptr, 0, outputs, 2, samplesThisBlock,
+                                                 callbackContext);
+
+        for (int channel = 0; channel < 2; ++channel)
+        {
+            const auto* samples = block.getReadPointer (channel);
+            for (int index = 0; index < samplesThisBlock; ++index)
+            {
+                const auto value = samples[index];
+                peak = juce::jmax (peak, std::abs (value));
+                sumOfSquares += static_cast<double> (value) * static_cast<double> (value);
+                if (std::abs (value) >= 1.0f)
+                    ++clippedSamples;
+            }
+        }
+
+        writeFailed = ! writer->writeFromAudioSampleBuffer (block, 0, samplesThisBlock);
+        written += samplesThisBlock;
+    }
+
+    writer->flush();
+    writer.reset();
+    engine.setPlaying (false);
+    engine.stopAndRewind();
+
+    if (writeFailed)
+        return fail ("Writing the WAV data failed");
+
+    const auto totalValues = static_cast<double> (juce::jmax<juce::int64> (1, written * 2));
+    const auto rms = std::sqrt (sumOfSquares / totalValues);
+    const auto toDecibels = [] (double linear)
+    {
+        return linear > 1.0e-9 ? 20.0 * std::log10 (linear) : -144.0;
+    };
+
+    resultObject->setProperty ("projectPath", projectFile.getFileName());
+    resultObject->setProperty ("wavPath", wavFile.getFileName());
+    resultObject->setProperty ("title", project.getTitle());
+    resultObject->setProperty ("sampleRate", static_cast<int> (rate));
+    resultObject->setProperty ("bitsPerSample", 24);
+    resultObject->setProperty ("trackCount", trackCount);
+    resultObject->setProperty ("repeats", safeRepeats);
+    resultObject->setProperty ("tailSeconds", safeTail);
+    resultObject->setProperty ("renderedSamples", static_cast<int> (written));
+    resultObject->setProperty ("renderedSeconds", static_cast<double> (written) / rate);
+    resultObject->setProperty ("fileBytes", static_cast<int> (wavFile.getSize()));
+    resultObject->setProperty ("peak", peak);
+    resultObject->setProperty ("peakDbfs", toDecibels (peak));
+    resultObject->setProperty ("rmsDbfs", toDecibels (rms));
+    resultObject->setProperty ("clippedSamples", static_cast<int> (clippedSamples));
+    resultObject->setProperty ("invalidSampleCount",
+                               static_cast<int> (engine.getInvalidSampleCount()));
+
+    const auto passed = written == totalSamples && wavFile.getSize() > 0 && peak > 0.001f
+                        && clippedSamples == 0 && engine.getInvalidSampleCount() == 0;
+    resultObject->setProperty ("passed", passed);
+    if (! passed)
+        resultObject->setProperty ("error",
+                                   peak <= 0.001f ? juce::String ("The render was silent")
+                                   : clippedSamples > 0
+                                       ? juce::String ("The render clipped")
+                                       : juce::String ("The render did not complete"));
+
+    return result;
+}
+
 bool MainEditorComponent::openProjectFromCommandLine (const juce::File& projectFile)
 {
     if (! projectFile.existsAsFile())

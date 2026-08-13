@@ -622,6 +622,16 @@ public:
         return editor != nullptr ? editor->runAudioProbeSelfTest (projectFile) : juce::var {};
     }
 
+    juce::var renderProjectToWav (const juce::File& projectFile,
+                                  const juce::File& wavFile,
+                                  int repeats,
+                                  double tailSeconds)
+    {
+        return editor != nullptr
+                   ? editor->renderProjectToWav (projectFile, wavFile, repeats, tailSeconds)
+                   : juce::var {};
+    }
+
     bool openProjectFromCommandLine (const juce::File& projectFile)
     {
         return editor != nullptr && editor->openProjectFromCommandLine (projectFile);
@@ -684,6 +694,7 @@ public:
         const auto selectionTestMode = args.contains ("--selection-test");
         const auto soundShelfTestMode = args.contains ("--sound-shelf-test");
         const auto audioProbeMode = args.contains ("--audio-probe");
+        const auto renderMode = args.contains ("--render");
         window = std::make_unique<MainWindow> (inventory,
                                                quarantine,
                                                properties.getUserSettings(),
@@ -693,12 +704,13 @@ public:
                                                    && ! commandLoadTestMode
                                                    && ! selectionTestMode
                                                    && ! soundShelfTestMode
-                                                   && ! audioProbeMode);
+                                                   && ! audioProbeMode
+                                                   && ! renderMode);
 
         const auto interactive = ! snapshotMode && ! idleTestMode && ! m4WorkflowTestMode
                                  && ! m5WorkflowTestMode && ! m6AuthoringTestMode
                                  && ! commandLoadTestMode && ! selectionTestMode
-                                 && ! soundShelfTestMode && ! audioProbeMode;
+                                 && ! soundShelfTestMode && ! audioProbeMode && ! renderMode;
 
         // Opening a song from the command line so the editor starts on it, rather than
         // starting on the starter project and making the user find the file.
@@ -877,6 +889,32 @@ public:
                                     && static_cast<bool> (object->getProperty ("passed"));
                 const auto reportWritten = writeReport (reportFile, report);
                 setApplicationReturnValue (passed && reportWritten ? 0 : 11);
+                quit();
+            });
+        }
+        else if (renderMode)
+        {
+            const auto projectFile = resolvePathArgument (args, "--project", "");
+            const auto wavFile = juce::File (getArgumentValue (args, "--wav"));
+            const auto repeatsText = getArgumentValue (args, "--repeats");
+            const auto tailText = getArgumentValue (args, "--tail-seconds");
+            const auto repeats = repeatsText.isNotEmpty() ? repeatsText.getIntValue() : 1;
+            const auto tailSeconds = tailText.isNotEmpty() ? tailText.getDoubleValue() : 2.0;
+            const auto reportFile = resolvePathArgument (args, "--report", "render-report.json");
+            juce::Timer::callAfterDelay (750,
+                                         [this, projectFile, wavFile, repeats, tailSeconds, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->renderProjectToWav (projectFile, wavFile,
+                                                                      repeats, tailSeconds)
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                if (object != nullptr && ! passed)
+                    std::cerr << object->getProperty ("error").toString() << std::endl;
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 12);
                 quit();
             });
         }
