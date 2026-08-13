@@ -86,6 +86,7 @@ juce::var describeProject (const SongProject& project, const SoundShelf& shelf)
     root->setProperty ("maxNotesPerClip", static_cast<int> (maxSequenceNotes));
     root->setProperty ("minimumLoopBeats", minimumLoopBeats);
     root->setProperty ("maximumLoopBeats", maximumLoopBeats);
+    root->setProperty ("maxClipPlacements", static_cast<int> (maxClipPlacements));
 
     juce::Array<juce::var> tracks;
     for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
@@ -107,6 +108,24 @@ juce::var describeProject (const SongProject& project, const SoundShelf& shelf)
         trackObject->setProperty ("soundName", project.getPluginSoundName (trackIndex));
         // Identity and integrity only; the opaque state bytes are not included.
         trackObject->setProperty ("stateSha256", project.getPluginStateSha256 (trackIndex));
+
+        // A clip holds its notes once, clip-relative, and each placement repeats them.
+        // The expanded count is what the maxNotesPerClip ceiling actually applies to.
+        trackObject->setProperty ("clipLengthTicks",
+                                  juce::roundToInt (project.getClipLengthBeats (trackIndex) * 960.0));
+        juce::Array<juce::var> placementArray;
+        for (const auto& placement : project.getPlacements (trackIndex))
+        {
+            auto* placementObject = new juce::DynamicObject();
+            juce::var placementVar (placementObject);
+            placementObject->setProperty ("id", placement.id);
+            placementObject->setProperty ("startTick",
+                                          juce::roundToInt (placement.startBeat * 960.0));
+            placementArray.add (placementVar);
+        }
+        trackObject->setProperty ("placements", placementArray);
+        trackObject->setProperty ("expandedNoteCount",
+                                  project.getExpandedNoteCount (trackIndex));
 
         const auto notes = project.getNotes (trackIndex);
         trackObject->setProperty ("noteCount", static_cast<int> (notes.size()));

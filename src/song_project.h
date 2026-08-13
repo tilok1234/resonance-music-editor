@@ -34,6 +34,15 @@ struct TrackMixerSettings
     bool solo = false;
 };
 
+// One occurrence of a clip in the song. A clip holds the notes once; a placement says
+// where that content plays. Ids are derived from the clip id, so a preview and its
+// later apply produce identical projects.
+struct ClipPlacement
+{
+    juce::String id;
+    double startBeat = 0.0;
+};
+
 struct TrackMidiRouting
 {
     int inputChannel = 0;
@@ -50,8 +59,13 @@ public:
     static constexpr int priorSchemaVersion = 3;
     // Version 4 is the newest archived input contract; version 5 widened the clip
     // ceiling from 8 to 64 bars of 4/4.
-    static constexpr int lastArchivedSchemaVersion = 4;
-    static constexpr int currentSchemaVersion = 5;
+    // Version 5 is the newest archived input contract; version 6 made a clip reusable
+    // content with an explicit placement list instead of one clip stretched over the song.
+    static constexpr int lastArchivedSchemaVersion = 5;
+    // Version 6 was the first to persist placements; older inputs migrate to one
+    // placement at beat zero, which reproduces their previous behaviour exactly.
+    static constexpr int placementSchemaVersion = 6;
+    static constexpr int currentSchemaVersion = 6;
     static constexpr int maxProjectTracks = 4;
 
     SongProject();
@@ -81,6 +95,19 @@ public:
     juce::String getTrackName (int trackIndex) const;
     juce::String getClipId() const;
     juce::String getClipId (int trackIndex) const;
+    // A clip's own length, which is independent of the song length. Notes are stored
+    // clip-relative and are bounded by this rather than by the song.
+    double getClipLengthBeats() const;
+    double getClipLengthBeats (int trackIndex) const;
+    juce::Result setClipLengthBeats (int trackIndex, double beats);
+    std::vector<ClipPlacement> getPlacements() const;
+    std::vector<ClipPlacement> getPlacements (int trackIndex) const;
+    // Replaces the whole placement list. Start beats are sorted and must not overlap;
+    // ids are derived as <clipId>-placement-N so the result is deterministic.
+    juce::Result setPlacements (int trackIndex, const std::vector<double>& startBeats);
+    // Notes multiplied by placements. This is what reaches the audio thread, so it is
+    // what the maxSequenceNotes ceiling applies to.
+    int getExpandedNoteCount (int trackIndex) const;
     TrackMixerSettings getTrackMixerSettings() const;
     TrackMixerSettings getTrackMixerSettings (int trackIndex) const;
     juce::Result setTrackMixerSettings (const TrackMixerSettings& settings);
@@ -162,6 +189,10 @@ private:
     juce::ValueTree getActiveTrackTree() const;
     juce::ValueTree getNotesTree() const;
     juce::ValueTree getNotesTree (int trackIndex) const;
+    juce::ValueTree getPlacementsTree (int trackIndex) const;
+    // Older trees carry neither a clip length nor a placement list. This gives them the
+    // one-placement-at-zero shape that reproduces their previous behaviour exactly.
+    static void ensureClipStructure (juce::ValueTree& track, double songLengthBeats);
     juce::ValueTree getInstrumentTree() const;
     juce::ValueTree getInstrumentTree (int trackIndex) const;
     juce::ValueTree findNoteTree (const juce::String& id) const;

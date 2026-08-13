@@ -804,11 +804,31 @@ void testEditCommandFoundation (TestContext& context,
                         && versionTwo.hasNoteChanges(),
                     "A version-2 command must parse with the version-1 note-edit shape");
 
-    resonance::EditCommand invalidVersion;
+    resonance::EditCommand versionThree;
     context.expect (resonance::parseEditCommand (
                         commandJson.replace ("\"commandVersion\": 1", "\"commandVersion\": 3"),
+                        versionThree).wasOk()
+                        && versionThree.commandVersion == 3
+                        && versionThree.hasNoteChanges(),
+                    "A version-3 command must parse with the version-1 note-edit shape");
+
+    resonance::EditCommand invalidVersion;
+    context.expect (resonance::parseEditCommand (
+                        commandJson.replace ("\"commandVersion\": 1", "\"commandVersion\": 4"),
                         invalidVersion).failed(),
                     "An unsupported command version must be rejected during parsing");
+
+    // Clip operations are the version-3 addition and must not be smuggled into an
+    // older document, which would apply behaviour the declared version does not cover.
+    resonance::EditCommand versionTwoWithClipOperations;
+    context.expect (resonance::parseEditCommand (
+                        commandJson
+                            .replace ("\"commandVersion\": 1", "\"commandVersion\": 2")
+                            .replace ("\"summary\":",
+                                      "\"projectOperations\": [{\"type\":\"setPlacements\","
+                                      "\"trackId\":\"track-1\",\"startTicks\":[0]}], \"summary\":"),
+                        versionTwoWithClipOperations).failed(),
+                    "A clip operation inside a version-2 command must be rejected");
 
     // Project operations are a version-2 feature and must not be smuggled into a
     // version-1 document.
@@ -1013,6 +1033,184 @@ void testLastArchivedProjectMigration (TestContext& context,
     context.expect (fixtureFile.loadFileAsData (sourceAfterLoad)
                         && juce::SHA256 (sourceAfterLoad).toHexString() == sourceSha256,
                     "Loading a version-4 project must leave its source file byte-identical");
+}
+
+void testArchivedV5ProjectMigration (TestContext& context,
+                                     const juce::File& fixtureFile,
+                                     juce::String& sourceSha256)
+{
+    context.expect (fixtureFile.existsAsFile(), "The version-5 migration fixture must exist");
+
+    juce::MemoryBlock sourceBytes;
+    context.expect (fixtureFile.loadFileAsData (sourceBytes),
+                    "The version-5 fixture bytes must be readable");
+    sourceSha256 = juce::SHA256 (sourceBytes).toHexString();
+
+    resonance::SongProject migrated;
+    context.expect (migrated.loadFromFile (fixtureFile).wasOk(),
+                    "A version-5 two-track project must load");
+    context.expect (migrated.getSchemaVersion() == resonance::SongProject::currentSchemaVersion
+                        && migrated.getTrackCount() == 2,
+                    "Version-5 migration must yield two current-schema tracks");
+    context.expect (migrated.getTrackId (0) == "track-v5-1"
+                        && migrated.getClipId (1) == "clip-v5-2",
+                    "Version-5 migration must preserve stable identity");
+    context.expect (migrated.getTrackMixerSettings (1).muted
+                        && migrated.getTrackMidiRouting (1).outputChannel == 9,
+                    "Version-5 migration must preserve mixer and routing state");
+
+    // The whole point of the migration: a clip that used to be stretched over the song
+    // and looped becomes one placement of a clip whose length is the song length. What
+    // plays must not change.
+    context.expect (migrated.getLoopLengthBeats() == 64.0,
+                    "Version-5 migration must keep the song length");
+    for (int trackIndex = 0; trackIndex < migrated.getTrackCount(); ++trackIndex)
+    {
+        context.expect (migrated.getClipLengthBeats (trackIndex) == 64.0,
+                        "A migrated clip must span the song it used to loop over");
+        const auto placements = migrated.getPlacements (trackIndex);
+        context.expect (placements.size() == 1 && placements.front().startBeat == 0.0,
+                        "A migrated clip must carry exactly one placement at beat zero");
+    }
+
+    const auto snapshot = migrated.createSequenceSnapshotForTrack (0);
+    context.expect (snapshot.noteCount == 2 && snapshot.loopBeats == 64.0,
+                    "A migrated track must publish its notes unchanged");
+    context.expect (std::abs (snapshot.notes[1].beat - 60.0) < 1.0e-9,
+                    "A migrated note deep in the clip must keep its beat");
+
+    juce::MemoryBlock sourceAfterLoad;
+    context.expect (fixtureFile.loadFileAsData (sourceAfterLoad)
+                        && juce::SHA256 (sourceAfterLoad).toHexString() == sourceSha256,
+                    "Loading a version-5 project must leave its source file byte-identical");
+}
+
+void testClipPlacements (TestContext& context, bool& placementsPassed)
+{
+    const auto before = context.assertions;
+    resonance::SongProject project;
+    juce::MemoryBlock state;
+    const juce::String payload ("clip-placement-state");
+    state.append (payload.toRawUTF8(), payload.getNumBytesAsUTF8());
+    project.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    project.setPluginState (state);
+
+    context.expect (resonance::maxClipPlacements == 64,
+                    "The shared bounds header must publish the placement ceiling");
+
+    // A fresh project behaves exactly as it did before placements existed.
+    context.expect (project.getClipLengthBeats (0) == project.getLoopLengthBeats(),
+                    "A new clip must span its song");
+    context.expect (project.getPlacements (0).size() == 1
+                        && project.getPlacements (0).front().startBeat == 0.0,
+                    "A new clip must carry one placement at beat zero");
+
+    project.setLoopLengthBeats (32.0);
+    context.expect (project.setClipLengthBeats (0, 8.0).wasOk()
+                        && project.getClipLengthBeats (0) == 8.0,
+                    "A clip must be shortenable within its song");
+    context.expect (project.setClipLengthBeats (0, 64.0).failed(),
+                    "A clip longer than its song must fail closed");
+    context.expect (project.setClipLengthBeats (0, 1.0).failed(),
+                    "A clip shorter than the published minimum must fail closed");
+
+    const auto baseline = project.createSequenceSnapshotForTrack (0);
+    context.expect (baseline.noteCount == 8,
+                    "One placement must publish the clip's notes once");
+
+    // Four placements of an eight-beat clip fill a 32-beat song.
+    context.expect (project.setPlacements (0, { 0.0, 8.0, 16.0, 24.0 }).wasOk(),
+                    "Non-overlapping placements inside the song must be accepted");
+    const auto placements = project.getPlacements (0);
+    context.expect (placements.size() == 4
+                        && placements[2].id == project.getClipId (0) + "-placement-3",
+                    "Placement ids must be derived from the clip id, in order");
+
+    const auto expanded = project.createSequenceSnapshotForTrack (0);
+    context.expect (expanded.noteCount == baseline.noteCount * 4,
+                    "Every placement must expand into the published sequence");
+    context.expect (project.getExpandedNoteCount (0) == static_cast<int> (expanded.noteCount),
+                    "The reported expanded count must match what is published");
+    auto foundThirdRepeat = false;
+    for (std::size_t index = 0; index < expanded.noteCount; ++index)
+        foundThirdRepeat = foundThirdRepeat
+                           || std::abs (expanded.notes[index].beat - 16.0) < 1.0e-9;
+    context.expect (foundThirdRepeat,
+                    "A placement must offset its clip's notes by its own start beat");
+
+    // Unsorted input is accepted and normalised; genuinely overlapping input is not.
+    context.expect (project.setPlacements (0, { 24.0, 0.0, 16.0, 8.0 }).wasOk()
+                        && project.getPlacements (0).front().startBeat == 0.0,
+                    "Placement starts must be sorted rather than rejected for order");
+    context.expect (project.setPlacements (0, { 0.0, 4.0 }).failed(),
+                    "Overlapping placements must fail closed");
+    context.expect (project.setPlacements (0, { 0.0, 28.0 }).failed(),
+                    "A placement running past the end of the song must fail closed");
+    context.expect (project.setPlacements (0, {}).failed(),
+                    "A clip with no placement must fail closed");
+    context.expect (project.getPlacements (0).size() == 4,
+                    "A refused placement list must leave the accepted one in place");
+
+    // Placements multiply notes, and the product is what reaches the audio thread.
+    std::vector<double> tooMany;
+    for (int index = 0; index < static_cast<int> (resonance::maxClipPlacements) + 1; ++index)
+        tooMany.push_back (static_cast<double> (index) * 8.0);
+    context.expect (project.setPlacements (0, tooMany).failed(),
+                    "More placements than the published ceiling must fail closed");
+
+    resonance::SongProject dense;
+    dense.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    dense.setPluginState (state);
+    dense.setLoopLengthBeats (256.0);
+    for (const auto& starter : dense.getNotes (0))
+        dense.removeNote (starter.id);
+    context.expect (dense.setClipLengthBeats (0, 4.0).wasOk(),
+                    "A dense fixture must accept a short clip once its clip is empty");
+    for (int index = 0; index < 120; ++index)
+        dense.addNote (static_cast<double> (index % 8) * 0.5, 0.25, 60 + (index % 12), 90);
+    const auto denseNotes = static_cast<std::size_t> (dense.getNotes (0).size());
+    context.expect (denseNotes > 64, "A dense fixture must hold enough notes to overflow");
+    std::vector<double> manyStarts;
+    for (int index = 0; index < 32; ++index)
+        manyStarts.push_back (static_cast<double> (index) * 4.0);
+    context.expect (denseNotes * manyStarts.size() > resonance::maxSequenceNotes,
+                    "The dense fixture must genuinely exceed the sequence ceiling");
+    context.expect (dense.setPlacements (0, manyStarts).failed(),
+                    "An expansion past the sequence ceiling must fail closed, not truncate");
+
+    // Round trip and undo.
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getNonexistentChildFile ("resonance-placements", ".resonance.json", false);
+    context.expect (project.saveToFile (file).wasOk(), "A placed project must save");
+    resonance::SongProject reopened;
+    context.expect (reopened.loadFromFile (file).wasOk()
+                        && reopened.getClipLengthBeats (0) == 8.0
+                        && reopened.getPlacements (0).size() == 4,
+                    "A placed project must reopen with its clip length and placements");
+    context.expect (reopened.createSequenceSnapshotForTrack (0).noteCount == expanded.noteCount,
+                    "A reopened project must publish the same expanded sequence");
+    context.expect (project.getContentSha256() == reopened.getContentSha256(),
+                    "Placements must be part of the hashed canonical material");
+    context.expect (file.deleteFile(), "The placement fixture must be removable");
+
+    project.beginUndoTransaction ("Change placements");
+    context.expect (project.setPlacements (0, { 0.0, 16.0 }).wasOk()
+                        && project.getPlacements (0).size() == 2,
+                    "A placement change must apply");
+    context.expect (project.undo() && project.getPlacements (0).size() == 4,
+                    "One undo must restore the previous placement list");
+
+    // Shrinking the song must not leave a placement addressing beats past its end.
+    project.setLoopLengthBeats (16.0);
+    const auto survivors = project.getPlacements (0);
+    context.expect (! survivors.empty() && survivors.front().startBeat == 0.0,
+                    "Shrinking a song must keep the first placement");
+    for (const auto& placement : survivors)
+        context.expect (placement.startBeat + project.getClipLengthBeats (0)
+                            <= project.getLoopLengthBeats() + 1.0e-9,
+                        "Every surviving placement must fit inside the shortened song");
+
+    placementsPassed = context.assertions > before;
 }
 
 void testLongSongCanvas (TestContext& context, bool& canvasPassed)
@@ -1259,6 +1457,64 @@ void testProjectOperations (TestContext& context, bool& operationsPassed)
     context.expect (resonance::createEditCommandPreview (unknownTrack, project, missing).failed(),
                     "A mixer operation on an unknown track must fail closed");
 
+    // Clip operations, the version-3 addition. One command lengthens the song, shortens
+    // the clip, and repeats it — which is the whole point of reusable clips.
+    resonance::SongProject placed;
+    placed.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    placed.setPluginState (state);
+    const auto placedTrackId = placed.getTrackId (0);
+
+    resonance::ProjectOperation songLength;
+    songLength.type = resonance::ProjectOperationType::setSongLength;
+    songLength.lengthTicks = 32 * 960;
+    resonance::ProjectOperation clipLength;
+    clipLength.type = resonance::ProjectOperationType::setClipLength;
+    clipLength.trackId = placedTrackId;
+    clipLength.lengthTicks = 8 * 960;
+    resonance::ProjectOperation placements;
+    placements.type = resonance::ProjectOperationType::setPlacements;
+    placements.trackId = placedTrackId;
+    placements.placementStartTicks = { 0, 8 * 960, 16 * 960, 24 * 960 };
+
+    resonance::EditCommand clipCommand;
+    clipCommand.commandVersion = 3;
+    clipCommand.projectContentSha256 = placed.getContentSha256();
+    clipCommand.summary = "Repeat the clip four times";
+    clipCommand.projectOperations = { songLength, clipLength, placements };
+
+    resonance::EditCommandPreview clipPreview;
+    context.expect (resonance::createEditCommandPreview (clipCommand, placed, clipPreview).wasOk(),
+                    "A clip-operation command must preview");
+    context.expect (placed.getPlacements (0).size() == 1,
+                    "A pending clip preview must not mutate the active project");
+    context.expect (clipPreview.applyTo (placed).wasOk(),
+                    "Clip operations must apply atomically");
+    context.expect (placed.getLoopLengthBeats() == 32.0
+                        && placed.getClipLengthBeats (0) == 8.0
+                        && placed.getPlacements (0).size() == 4,
+                    "Every clip operation must land on the active project");
+    context.expect (placed.createSequenceSnapshotForTrack (0).noteCount == 32,
+                    "The applied placements must expand into the published sequence");
+    context.expect (placed.undo() && placed.getPlacements (0).size() == 1
+                        && placed.getLoopLengthBeats() == 8.0,
+                    "One Undo must restore everything a clip command changed");
+
+    // Round-tripping the command through JSON must preserve the placement list.
+    resonance::EditCommand reparsed;
+    context.expect (resonance::parseEditCommand (resonance::serialiseEditCommand (clipCommand),
+                                                 reparsed).wasOk()
+                        && reparsed.projectOperations.size() == 3
+                        && reparsed.projectOperations[2].placementStartTicks.size() == 4
+                        && reparsed.projectOperations[2].placementStartTicks[3] == 24 * 960,
+                    "A serialised clip command must reparse with its placements intact");
+
+    resonance::EditCommand overlapping = clipCommand;
+    overlapping.projectContentSha256 = placed.getContentSha256();
+    overlapping.projectOperations[2].placementStartTicks = { 0, 4 * 960 };
+    resonance::EditCommandPreview overlapRefused;
+    context.expect (resonance::createEditCommandPreview (overlapping, placed, overlapRefused).failed(),
+                    "A command placing a clip over itself must fail closed");
+
     operationsPassed = context.assertions > before;
 }
 
@@ -1436,6 +1692,7 @@ int main (int argc, char* argv[])
     const auto previousProjectFixturePath = argumentValue (args, "--previous-project-fixture");
     const auto priorProjectFixturePath = argumentValue (args, "--prior-project-fixture");
     const auto archivedProjectFixturePath = argumentValue (args, "--archived-project-fixture");
+    const auto archivedV5ProjectFixturePath = argumentValue (args, "--archived-v5-project-fixture");
     TestContext context;
     int savedBytes = 0;
     juce::String stateSha;
@@ -1456,6 +1713,8 @@ int main (int argc, char* argv[])
     bool fourTrackCeilingPassed = false;
     juce::String archivedSourceSha;
     bool archivedMigrationPassed = false;
+    bool archivedV5MigrationPassed = false;
+    bool clipPlacementsPassed = false;
     bool longCanvasPassed = false;
     bool projectOperationsPassed = false;
     int soundShelfBytes = 0;
@@ -1480,6 +1739,8 @@ int main (int argc, char* argv[])
     reportObject->setProperty ("previousMigrationFixture",
                                juce::File (previousProjectFixturePath).getFileName());
     reportObject->setProperty ("maxProjectTracks", resonance::SongProject::maxProjectTracks);
+    reportObject->setProperty ("archivedV5MigrationFixture",
+                               juce::File (archivedV5ProjectFixturePath).getFileName());
 
     try
     {
@@ -1510,7 +1771,14 @@ int main (int argc, char* argv[])
                                           juce::File (archivedProjectFixturePath),
                                           archivedSourceSha);
         archivedMigrationPassed = true;
+        juce::String archivedV5SourceSha;
+        testArchivedV5ProjectMigration (context,
+                                        juce::File (archivedV5ProjectFixturePath),
+                                        archivedV5SourceSha);
+        archivedV5MigrationPassed = true;
+        reportObject->setProperty ("archivedV5SourceSha256", archivedV5SourceSha);
         testFourTrackCeiling (context, fourTrackCeilingPassed);
+        testClipPlacements (context, clipPlacementsPassed);
         testLongSongCanvas (context, longCanvasPassed);
         testEditCommandFoundation (context,
                                    juce::File (editCommandFixturePath),
@@ -1537,6 +1805,10 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("fourTrackCeilingPassed", fourTrackCeilingPassed);
         reportObject->setProperty ("archivedMigrationPassed", archivedMigrationPassed);
         reportObject->setProperty ("archivedSourceSha256", archivedSourceSha);
+        reportObject->setProperty ("archivedV5MigrationPassed", archivedV5MigrationPassed);
+        reportObject->setProperty ("clipPlacementsPassed", clipPlacementsPassed);
+        reportObject->setProperty ("maxClipPlacements",
+                                   static_cast<int> (resonance::maxClipPlacements));
         reportObject->setProperty ("longCanvasPassed", longCanvasPassed);
         reportObject->setProperty ("projectOperationsPassed", projectOperationsPassed);
         reportObject->setProperty ("commandVersion2", resonance::EditCommand::supportedVersion);
@@ -1568,6 +1840,10 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("fourTrackCeilingPassed", fourTrackCeilingPassed);
         reportObject->setProperty ("archivedMigrationPassed", archivedMigrationPassed);
         reportObject->setProperty ("archivedSourceSha256", archivedSourceSha);
+        reportObject->setProperty ("archivedV5MigrationPassed", archivedV5MigrationPassed);
+        reportObject->setProperty ("clipPlacementsPassed", clipPlacementsPassed);
+        reportObject->setProperty ("maxClipPlacements",
+                                   static_cast<int> (resonance::maxClipPlacements));
         reportObject->setProperty ("longCanvasPassed", longCanvasPassed);
         reportObject->setProperty ("projectOperationsPassed", projectOperationsPassed);
         reportObject->setProperty ("commandVersion2", resonance::EditCommand::supportedVersion);

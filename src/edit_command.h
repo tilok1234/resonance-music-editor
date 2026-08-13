@@ -36,7 +36,10 @@ enum class ProjectOperationType
     setTrackMixer,
     setSound,
     addTrack,
-    removeTrack
+    removeTrack,
+    // Added in command version 3, alongside song-project schema 6.
+    setClipLength,
+    setPlacements
 };
 
 struct ProjectOperation
@@ -51,12 +54,18 @@ struct ProjectOperation
     std::optional<double> pan;
     std::optional<bool> mute;
     std::optional<bool> solo;
+    // setPlacements replaces the whole list, which keeps it deterministic: the same
+    // command always produces the same placements rather than appending to whatever
+    // happened to be there.
+    std::vector<int> placementStartTicks;
 };
 
 struct EditCommand
 {
     static constexpr int legacyVersion = 1;
-    static constexpr int supportedVersion = 2;
+    static constexpr int previousVersion = 2;
+    static constexpr int supportedVersion = 3;
+    static constexpr std::size_t maximumPlacements = maxClipPlacements;
     static constexpr std::size_t maximumNoteChanges = 1024;
     static constexpr std::size_t maximumProjectOperations = 32;
 

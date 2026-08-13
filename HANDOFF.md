@@ -54,6 +54,7 @@ A 2026-08-12 assessment found that the binding constraint on making songs was no
 10. **M8 agent control surface.** `--describe` and `--apply-command`, so an external agent can read and edit a project without the GUI.
 11. **M8 command vocabulary.** Edit-command version 2 adds tempo, song length, snap, title, mixer, sound, and track add/remove operations alongside note changes, with the cap raised to 1,024 changes.
 12. **M8 editor layout.** The device chooser moved into a dialog, the mixer shows every track with its own meter, the keyboard and the resolver inputs became toggles, and the piano roll took the reclaimed space.
+13. **M7.3 reusable clips.** A clip is content with its own length; a placement is one occurrence of it. Song-project schema 6, edit-command version 3 with `setClipLength` and `setPlacements`.
 
 ## The most important thing to understand
 
@@ -65,15 +66,18 @@ Carry both lessons forward:
 
 - A silent gate cannot observe silence. Run `--audio-probe` on any project-shaped change.
 - The probe catches silence, not badness. The mix that started this was audible and still wrong. Only a person can find that.
+- **The probe cannot compare two renders.** Two runs of the *same* project differ by up to 3.5 dB on a per-track peak, measured on 2026-08-13. Verify a change symbolically, through `--describe` note lists or model assertions, never by comparing levels.
 
 ## Current verified local baseline
 
 | Gate | Result |
 | --- | --- |
 | Scheduler/mixer/runtime assertions | 124 passed |
-| Project/migration/ceiling/canvas/shelf/command assertions | 282 passed |
+| Project/migration/ceiling/canvas/shelf/command/placement assertions | 338 passed |
 | Schema-validated artifacts and fixtures | 26 passed |
-| Song project schemas | canonical writer `5`; accepted inputs `4`, `3`, `2`, `1` |
+| Song project schemas | canonical writer `6`; accepted inputs `5`, `4`, `3`, `2`, `1` |
+| Edit-command versions | authored `3`; accepted `3`, `2`, `1` |
+| Clip placements | 1-64 per clip, expansion bounded by the 1,024-note sequence ceiling |
 | Track ceiling | 4 persisted; 8 runtime lanes; 4 Surge instances preloaded |
 | Clip canvas | 4–256 beats (1–64 bars); 1,024 notes per clip |
 | Packaged audio probe | 1/1 expected-audible tracks, no per-track overload, no clipping, no invalid samples |

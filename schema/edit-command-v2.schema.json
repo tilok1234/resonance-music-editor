@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://resonance.local/schema/edit-command-v3.json",
-  "title": "Resonance Edit Command v3",
+  "$id": "https://resonance.local/schema/edit-command-v2.json",
+  "title": "Resonance Edit Command v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -14,8 +14,7 @@
       "type": "integer",
       "enum": [
         1,
-        2,
-        3
+        2
       ]
     },
     "projectContentSha256": {
@@ -246,57 +245,6 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 80
-              }
-            }
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "type",
-              "trackId",
-              "lengthTicks"
-            ],
-            "properties": {
-              "type": {
-                "const": "setClipLength"
-              },
-              "trackId": {
-                "type": "string",
-                "minLength": 1
-              },
-              "lengthTicks": {
-                "type": "integer",
-                "minimum": 3840,
-                "maximum": 245760
-              }
-            }
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "type",
-              "trackId",
-              "startTicks"
-            ],
-            "properties": {
-              "type": {
-                "const": "setPlacements"
-              },
-              "trackId": {
-                "type": "string",
-                "minLength": 1
-              },
-              "startTicks": {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 64,
-                "items": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 245760
-                }
               }
             }
           }

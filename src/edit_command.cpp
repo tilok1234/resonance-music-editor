@@ -369,6 +369,45 @@ juce::Result parseProjectOperations (juce::DynamicObject& root,
                 return juce::Result::fail ("removeTrack requires a trackId");
             operation.type = ProjectOperationType::removeTrack;
         }
+        else if (type == "setClipLength")
+        {
+            if (! hasOnlyProperties (*object, { "type", "trackId", "lengthTicks" }))
+                return juce::Result::fail ("setClipLength contains an unsupported field");
+            operation.trackId = requireString (*object, "trackId");
+            if (operation.trackId.isEmpty())
+                return juce::Result::fail ("setClipLength requires a trackId");
+            if (! readInt (*object, "lengthTicks", operation.lengthTicks)
+                || operation.lengthTicks < static_cast<int> (minimumLoopBeats) * projectPpq
+                || operation.lengthTicks > static_cast<int> (maximumLoopBeats) * projectPpq)
+                return juce::Result::fail ("setClipLength requires lengthTicks within the published canvas");
+            operation.type = ProjectOperationType::setClipLength;
+        }
+        else if (type == "setPlacements")
+        {
+            if (! hasOnlyProperties (*object, { "type", "trackId", "startTicks" }))
+                return juce::Result::fail ("setPlacements contains an unsupported field");
+            operation.trackId = requireString (*object, "trackId");
+            if (operation.trackId.isEmpty())
+                return juce::Result::fail ("setPlacements requires a trackId");
+
+            const auto* startTicks = object->getProperty ("startTicks").getArray();
+            if (startTicks == nullptr || startTicks->isEmpty()
+                || startTicks->size() > static_cast<int> (EditCommand::maximumPlacements))
+                return juce::Result::fail ("setPlacements requires from 1 through "
+                                           + juce::String (static_cast<int> (EditCommand::maximumPlacements))
+                                           + " startTicks");
+            for (const auto& tickValue : *startTicks)
+            {
+                if (! tickValue.isInt() && ! tickValue.isInt64() && ! tickValue.isDouble())
+                    return juce::Result::fail ("Every setPlacements startTick must be a number");
+                const auto tick = static_cast<double> (tickValue);
+                if (std::floor (tick) != tick || tick < 0.0
+                    || tick > static_cast<double> (maximumLoopBeats) * projectPpq)
+                    return juce::Result::fail ("A setPlacements startTick is outside the published canvas");
+                operation.placementStartTicks.push_back (static_cast<int> (tick));
+            }
+            operation.type = ProjectOperationType::setPlacements;
+        }
         else
         {
             return juce::Result::fail ("Unsupported project operation type: " + type);
@@ -397,12 +436,29 @@ juce::Result parseEditCommand (const juce::String& json, EditCommand& destinatio
     EditCommand command;
     if (! readInt (*root, "commandVersion", command.commandVersion)
         || (command.commandVersion != EditCommand::legacyVersion
+            && command.commandVersion != EditCommand::previousVersion
             && command.commandVersion != EditCommand::supportedVersion))
-        return juce::Result::fail ("Only edit-command versions 1 and 2 are supported");
+        return juce::Result::fail ("Only edit-command versions 1 through "
+                                   + juce::String (EditCommand::supportedVersion) + " are supported");
 
     const auto hasProjectOperations = root->hasProperty ("projectOperations");
     if (hasProjectOperations && command.commandVersion == EditCommand::legacyVersion)
         return juce::Result::fail ("Project operations require edit-command version 2");
+
+    if (hasProjectOperations && command.commandVersion < EditCommand::supportedVersion)
+    {
+        // Parsed early so an older command naming a newer operation is refused rather
+        // than silently applying something its declared version does not cover.
+        std::vector<ProjectOperation> probe;
+        const auto probeResult = parseProjectOperations (*root, probe);
+        if (probeResult.failed())
+            return probeResult;
+        for (const auto& operation : probe)
+            if (operation.type == ProjectOperationType::setClipLength
+                || operation.type == ProjectOperationType::setPlacements)
+                return juce::Result::fail ("Clip operations require edit-command version "
+                                           + juce::String (EditCommand::supportedVersion));
+    }
 
     command.projectContentSha256 = requireString (*root, "projectContentSha256").toLowerCase();
     if (! isSha256 (command.projectContentSha256))
@@ -585,6 +641,21 @@ juce::String serialiseEditCommand (const EditCommand& command)
                     operationObject->setProperty ("type", "removeTrack");
                     operationObject->setProperty ("trackId", operation.trackId);
                     break;
+                case ProjectOperationType::setClipLength:
+                    operationObject->setProperty ("type", "setClipLength");
+                    operationObject->setProperty ("trackId", operation.trackId);
+                    operationObject->setProperty ("lengthTicks", operation.lengthTicks);
+                    break;
+                case ProjectOperationType::setPlacements:
+                {
+                    operationObject->setProperty ("type", "setPlacements");
+                    operationObject->setProperty ("trackId", operation.trackId);
+                    juce::Array<juce::var> startTicks;
+                    for (const auto tick : operation.placementStartTicks)
+                        startTicks.add (tick);
+                    operationObject->setProperty ("startTicks", startTicks);
+                    break;
+                }
             }
             operations.add (value);
         }
@@ -759,6 +830,41 @@ juce::Result applyProjectOperations (const std::vector<ProjectOperation>& operat
                 note ("removed track " + operation.trackId);
                 break;
             }
+
+            case ProjectOperationType::setClipLength:
+            {
+                const auto index = trackIndexFor (operation.trackId);
+                if (index < 0)
+                    return juce::Result::fail ("setClipLength targets an unknown track: "
+                                               + operation.trackId);
+
+                const auto beats = static_cast<double> (operation.lengthTicks) / projectPpq;
+                const auto applied = project.setClipLengthBeats (index, beats);
+                if (applied.failed())
+                    return applied;
+                note ("clip length " + juce::String (beats, 2) + " beats on " + operation.trackId);
+                break;
+            }
+
+            case ProjectOperationType::setPlacements:
+            {
+                const auto index = trackIndexFor (operation.trackId);
+                if (index < 0)
+                    return juce::Result::fail ("setPlacements targets an unknown track: "
+                                               + operation.trackId);
+
+                std::vector<double> startBeats;
+                startBeats.reserve (operation.placementStartTicks.size());
+                for (const auto tick : operation.placementStartTicks)
+                    startBeats.push_back (static_cast<double> (tick) / projectPpq);
+
+                const auto applied = project.setPlacements (index, startBeats);
+                if (applied.failed())
+                    return applied;
+                note (juce::String (static_cast<int> (startBeats.size())) + " placements on "
+                      + operation.trackId);
+                break;
+            }
         }
     }
 
@@ -771,8 +877,11 @@ juce::Result createEditCommandPreview (const EditCommand& command,
                                        const SoundShelf* shelf)
 {
     if (command.commandVersion != EditCommand::legacyVersion
+        && command.commandVersion != EditCommand::previousVersion
         && command.commandVersion != EditCommand::supportedVersion)
-        return juce::Result::fail ("Only edit-command versions 1 and 2 are supported");
+        return juce::Result::fail ("Only edit-command versions 1 through "
+                                   + juce::String (EditCommand::supportedVersion)
+                                   + " are supported");
     if (! isSha256 (command.projectContentSha256))
         return juce::Result::fail ("The edit command content-hash precondition is invalid");
     if (command.summary.trim().isEmpty() || command.summary.length() > 160)

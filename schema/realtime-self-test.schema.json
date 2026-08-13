@@ -22,15 +22,39 @@
     "passed"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "editorVersion": { "type": "string", "minLength": 1 },
-    "juceVersion": { "type": "string", "minLength": 1 },
-    "testedAt": { "type": "string", "format": "date-time" },
-    "inventoryPath": { "type": "string", "minLength": 1 },
-    "quarantinePath": { "type": "string", "minLength": 1 },
-    "songProjectPath": { "type": "string", "minLength": 1 },
-    "noRescanPerformed": { "type": "boolean" },
-    "audioEmitted": { "type": "boolean" },
+    "schemaVersion": {
+      "const": 1
+    },
+    "editorVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "juceVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "testedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "inventoryPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "quarantinePath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "songProjectPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "noRescanPerformed": {
+      "type": "boolean"
+    },
+    "audioEmitted": {
+      "type": "boolean"
+    },
     "device": {
       "type": "object",
       "additionalProperties": false,
@@ -44,13 +68,34 @@
         "xRuns"
       ],
       "properties": {
-        "type": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 },
-        "sampleRate": { "type": "number", "exclusiveMinimum": 0 },
-        "blockSize": { "type": "integer", "minimum": 1 },
-        "outputChannels": { "type": "integer", "minimum": 1 },
-        "outputLatencySamples": { "type": "integer", "minimum": 0 },
-        "xRuns": { "type": "integer", "minimum": -1 }
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sampleRate": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "blockSize": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "outputChannels": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "outputLatencySamples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "xRuns": {
+          "type": "integer",
+          "minimum": -1
+        }
       }
     },
     "plugin": {
@@ -67,17 +112,37 @@
         "preparedForRealtime"
       ],
       "properties": {
-        "identifier": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 },
-        "version": { "type": "string", "minLength": 1 },
+        "identifier": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
         "bundleFingerprintSha256": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },
-        "parameterCount": { "type": "integer", "minimum": 0 },
-        "expectedParameterCount": { "type": "integer", "minimum": 0 },
-        "mainOutputChannels": { "type": "integer", "minimum": 1 },
-        "preparedForRealtime": { "type": "boolean" }
+        "parameterCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expectedParameterCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mainOutputChannels": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "preparedForRealtime": {
+          "type": "boolean"
+        }
       }
     },
     "songProject": {
@@ -106,30 +171,82 @@
         "soundNameRoundTrip"
       ],
       "properties": {
-        "schemaVersion": { "const": 5 },
-        "trackId": { "const": "track-1" },
-        "clipId": { "const": "loop-1" },
-        "mixerGainDb": { "const": 0 },
-        "mixerPan": { "const": 0 },
-        "mixerMuted": { "const": false },
-        "mixerSolo": { "const": false },
-        "midiInputChannel": { "const": 0 },
-        "midiOutputChannel": { "const": 1 },
-        "fileBytes": { "type": "integer", "minimum": 1000 },
-        "stateBytes": { "type": "integer", "minimum": 1 },
-        "stateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "soundName": { "const": "Self-test Surge state" },
-        "noteCount": { "type": "integer", "const": 9 },
-        "fixtureNoteId": { "const": "note-self-test-1" },
-        "tempoBpm": { "type": "number", "const": 137 },
-        "loopLengthBeats": { "type": "number", "const": 16 },
-        "savedPayloadExact": { "const": true },
-        "pluginRestoreExact": { "const": true },
-        "soundNameRoundTrip": { "const": true }
+        "schemaVersion": {
+          "const": 6
+        },
+        "trackId": {
+          "const": "track-1"
+        },
+        "clipId": {
+          "const": "loop-1"
+        },
+        "mixerGainDb": {
+          "const": 0
+        },
+        "mixerPan": {
+          "const": 0
+        },
+        "mixerMuted": {
+          "const": false
+        },
+        "mixerSolo": {
+          "const": false
+        },
+        "midiInputChannel": {
+          "const": 0
+        },
+        "midiOutputChannel": {
+          "const": 1
+        },
+        "fileBytes": {
+          "type": "integer",
+          "minimum": 1000
+        },
+        "stateBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stateSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "soundName": {
+          "const": "Self-test Surge state"
+        },
+        "noteCount": {
+          "type": "integer",
+          "const": 9
+        },
+        "fixtureNoteId": {
+          "const": "note-self-test-1"
+        },
+        "tempoBpm": {
+          "type": "number",
+          "const": 137
+        },
+        "loopLengthBeats": {
+          "type": "number",
+          "const": 16
+        },
+        "savedPayloadExact": {
+          "const": true
+        },
+        "pluginRestoreExact": {
+          "const": true
+        },
+        "soundNameRoundTrip": {
+          "const": true
+        }
       }
     },
-    "parameterCountMatchesInventory": { "type": "boolean" },
-    "stereoMainOutput": { "type": "boolean" },
-    "passed": { "type": "boolean" }
+    "parameterCountMatchesInventory": {
+      "type": "boolean"
+    },
+    "stereoMainOutput": {
+      "type": "boolean"
+    },
+    "passed": {
+      "type": "boolean"
+    }
   }
 }

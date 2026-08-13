@@ -13,6 +13,8 @@ constexpr auto trackType = "track";
 constexpr auto notesType = "notes";
 constexpr auto noteType = "note";
 constexpr auto instrumentType = "instrument";
+constexpr auto placementsType = "placements";
+constexpr auto placementType = "placement";
 
 bool isSupportedSampleRate (int rate)
 {
@@ -143,6 +145,7 @@ void SongProject::resetToStarter()
         notes.addChild (note, -1, nullptr);
     }
     track.addChild (notes, -1, nullptr);
+    ensureClipStructure (track, loopLengthBeats);
     newRoot.addChild (track, -1, nullptr);
 
     installRoot (newRoot, true, "track-1");
@@ -183,21 +186,57 @@ double SongProject::getLoopLengthBeats() const
 void SongProject::setLoopLengthBeats (double beats)
 {
     const auto safeLength = juce::jlimit (minimumLoopBeats, maximumLoopBeats, beats);
+    const auto previousLength = getLoopLengthBeats();
+
+    // Each track's new clip length is decided against the old song length, before the
+    // song changes underneath it.
+    std::vector<double> clipLengths;
+    clipLengths.reserve (static_cast<std::size_t> (getTrackCount()));
+    for (int trackIndex = 0; trackIndex < getTrackCount(); ++trackIndex)
+    {
+        const auto current = getClipLengthBeats (trackIndex);
+        const auto placements = getPlacements (trackIndex);
+        // A clip placed once at the start and spanning its whole song is the default and
+        // migrated shape, and resizing the song must keep resizing it — that is what
+        // choosing a song length in the editor has always meant. A clip that has been
+        // given its own length and placements keeps them, and is only clamped if the
+        // song shrank beneath it.
+        const auto spansWholeSong = std::abs (current - previousLength) < 1.0e-9
+                                    && placements.size() == 1
+                                    && std::abs (placements.front().startBeat) < 1.0e-9;
+        clipLengths.push_back (spansWholeSong ? safeLength : juce::jmin (current, safeLength));
+    }
+
     root.setProperty ("loopLengthBeats", safeLength, &undoManager);
 
     const auto minimumLength = getSnapBeats();
     for (int trackIndex = 0; trackIndex < getTrackCount(); ++trackIndex)
     {
+        auto track = getTrackTree (trackIndex);
+        const auto clipLength = clipLengths[static_cast<std::size_t> (trackIndex)];
+        track.setProperty ("clipLengthBeats", clipLength, &undoManager);
+
         auto notes = getNotesTree (trackIndex);
         for (int noteIndex = 0; noteIndex < notes.getNumChildren(); ++noteIndex)
         {
             auto note = notes.getChild (noteIndex);
             auto beat = static_cast<double> (note.getProperty ("beat"));
             auto length = static_cast<double> (note.getProperty ("lengthBeats"));
-            beat = juce::jlimit (0.0, juce::jmax (0.0, safeLength - minimumLength), beat);
-            length = juce::jlimit (minimumLength, safeLength - beat, length);
+            beat = juce::jlimit (0.0, juce::jmax (0.0, clipLength - minimumLength), beat);
+            length = juce::jlimit (minimumLength, clipLength - beat, length);
             note.setProperty ("beat", beat, &undoManager);
             note.setProperty ("lengthBeats", length, &undoManager);
+        }
+
+        // Placements that no longer fit are dropped rather than left addressing beats
+        // past the end of the song. The first placement always survives.
+        auto placements = getPlacementsTree (trackIndex);
+        for (int index = placements.getNumChildren(); --index >= 1;)
+        {
+            const auto start = static_cast<double> (
+                placements.getChild (index).getProperty ("startBeat"));
+            if (start + clipLength > safeLength + 1.0e-9)
+                placements.removeChild (index, &undoManager);
         }
     }
 }
@@ -288,6 +327,154 @@ juce::String SongProject::getClipId() const
 juce::String SongProject::getClipId (int trackIndex) const
 {
     return getTrackTree (trackIndex).getProperty ("clipId").toString();
+}
+
+double SongProject::getClipLengthBeats() const
+{
+    return getClipLengthBeats (getActiveTrackIndex());
+}
+
+double SongProject::getClipLengthBeats (int trackIndex) const
+{
+    const auto track = getTrackTree (trackIndex);
+    if (! track.isValid())
+        return getLoopLengthBeats();
+
+    // Trees written before schema 6 have no clip length; the clip was the whole song.
+    const auto stored = static_cast<double> (
+        track.getProperty ("clipLengthBeats", getLoopLengthBeats()));
+    return juce::jlimit (minimumLoopBeats, getLoopLengthBeats(), stored);
+}
+
+juce::Result SongProject::setClipLengthBeats (int trackIndex, double beats)
+{
+    auto track = getTrackTree (trackIndex);
+    if (! track.isValid())
+        return juce::Result::fail ("The track does not exist");
+    if (! std::isfinite (beats))
+        return juce::Result::fail ("A clip length must be a finite number of beats");
+
+    const auto songLength = getLoopLengthBeats();
+    if (beats < minimumLoopBeats || beats > songLength + 1.0e-9)
+        return juce::Result::fail ("A clip length must be from "
+                                   + juce::String (minimumLoopBeats)
+                                   + " beats through the song length of "
+                                   + juce::String (songLength) + " beats");
+
+    // Shortening a clip must not silently discard notes or push a placement past the
+    // end of the song, so both are checked before anything is written.
+    const auto notes = getNotesTree (trackIndex);
+    for (int index = 0; index < notes.getNumChildren(); ++index)
+    {
+        const auto note = notes.getChild (index);
+        const auto end = static_cast<double> (note.getProperty ("beat"))
+                         + static_cast<double> (note.getProperty ("lengthBeats"));
+        if (end > beats + 1.0e-9)
+            return juce::Result::fail ("A note ends at beat " + juce::String (end)
+                                       + ", past the requested clip length of "
+                                       + juce::String (beats) + " beats");
+    }
+
+    const auto placements = getPlacements (trackIndex);
+    for (std::size_t index = 0; index + 1 < placements.size(); ++index)
+        if (placements[index].startBeat + beats > placements[index + 1].startBeat + 1.0e-9)
+            return juce::Result::fail ("The requested clip length would make placements overlap");
+    if (! placements.empty()
+        && placements.back().startBeat + beats > songLength + 1.0e-9)
+        return juce::Result::fail ("The requested clip length would push the last placement past the end of the song");
+
+    track.setProperty ("clipLengthBeats", beats, &undoManager);
+    return juce::Result::ok();
+}
+
+std::vector<ClipPlacement> SongProject::getPlacements() const
+{
+    return getPlacements (getActiveTrackIndex());
+}
+
+std::vector<ClipPlacement> SongProject::getPlacements (int trackIndex) const
+{
+    std::vector<ClipPlacement> result;
+    const auto placements = getPlacementsTree (trackIndex);
+    if (! placements.isValid() || placements.getNumChildren() == 0)
+    {
+        // Older trees behave as one placement at the start of the song.
+        result.push_back ({ getClipId (trackIndex) + "-placement-1", 0.0 });
+        return result;
+    }
+
+    result.reserve (static_cast<std::size_t> (placements.getNumChildren()));
+    for (int index = 0; index < placements.getNumChildren(); ++index)
+    {
+        const auto placement = placements.getChild (index);
+        result.push_back ({ placement.getProperty ("id").toString(),
+                            static_cast<double> (placement.getProperty ("startBeat")) });
+    }
+
+    return result;
+}
+
+juce::Result SongProject::setPlacements (int trackIndex, const std::vector<double>& startBeats)
+{
+    auto track = getTrackTree (trackIndex);
+    if (! track.isValid())
+        return juce::Result::fail ("The track does not exist");
+    if (startBeats.empty())
+        return juce::Result::fail ("A clip needs at least one placement");
+    if (startBeats.size() > maxClipPlacements)
+        return juce::Result::fail ("A clip supports at most " + juce::String (maxClipPlacements)
+                                   + " placements");
+
+    const auto clipLength = getClipLengthBeats (trackIndex);
+    const auto songLength = getLoopLengthBeats();
+    const auto noteCount = static_cast<std::size_t> (getNotesTree (trackIndex).getNumChildren());
+    // Placements multiply notes, and the product is what reaches the audio thread. This
+    // refuses rather than truncating: a silent truncation here would drop music without
+    // any gate being able to see it.
+    if (noteCount * startBeats.size() > maxSequenceNotes)
+        return juce::Result::fail (juce::String (noteCount) + " notes across "
+                                   + juce::String (startBeats.size()) + " placements exceeds the "
+                                   + juce::String (maxSequenceNotes)
+                                   + " note ceiling for a published sequence");
+
+    auto sorted = startBeats;
+    std::sort (sorted.begin(), sorted.end());
+    for (std::size_t index = 0; index < sorted.size(); ++index)
+    {
+        if (! std::isfinite (sorted[index]) || sorted[index] < 0.0)
+            return juce::Result::fail ("A placement start must be zero or a positive number of beats");
+        if (sorted[index] + clipLength > songLength + 1.0e-9)
+            return juce::Result::fail ("A placement at beat " + juce::String (sorted[index])
+                                       + " would run past the end of the song");
+        if (index + 1 < sorted.size()
+            && sorted[index] + clipLength > sorted[index + 1] + 1.0e-9)
+            return juce::Result::fail ("Placements at beats " + juce::String (sorted[index])
+                                       + " and " + juce::String (sorted[index + 1]) + " overlap");
+    }
+
+    const auto clipId = getClipId (trackIndex);
+    juce::ValueTree replacement (placementsType);
+    for (std::size_t index = 0; index < sorted.size(); ++index)
+    {
+        juce::ValueTree placement (placementType);
+        placement.setProperty ("id",
+                               clipId + "-placement-" + juce::String (static_cast<int> (index) + 1),
+                               nullptr);
+        placement.setProperty ("startBeat", sorted[index], nullptr);
+        replacement.addChild (placement, -1, nullptr);
+    }
+
+    auto existing = track.getChildWithName (placementsType);
+    if (existing.isValid())
+        track.removeChild (existing, &undoManager);
+    track.addChild (replacement, -1, &undoManager);
+    return juce::Result::ok();
+}
+
+int SongProject::getExpandedNoteCount (int trackIndex) const
+{
+    return getNotesTree (trackIndex).getNumChildren()
+           * static_cast<int> (getPlacements (trackIndex).size());
 }
 
 TrackMixerSettings SongProject::getTrackMixerSettings() const
@@ -393,6 +580,12 @@ juce::Result SongProject::addTrackWithIdentity (const juce::String& trackId,
                                             cleanTrackId + "-note-" + juce::String (index + 1),
                                             nullptr);
 
+    auto placements = copy.getChildWithName (placementsType);
+    for (int index = 0; index < placements.getNumChildren(); ++index)
+        placements.getChild (index).setProperty ("id",
+                                                 clipId + "-placement-" + juce::String (index + 1),
+                                                 nullptr);
+
     // Deliberately does not open its own undo transaction. This is composed inside a
     // larger edit-command application, and starting one here would split that command
     // into two undo steps.
@@ -414,14 +607,21 @@ juce::Result SongProject::duplicateActiveTrack (juce::String* createdTrackId)
 
     auto copy = source.createCopy();
     const auto newTrackId = "track-" + juce::Uuid().toString();
+    const auto newClipId = "clip-" + juce::Uuid().toString();
     copy.setProperty ("id", newTrackId, nullptr);
     copy.setProperty ("name", getTrackName() + " 2", nullptr);
-    copy.setProperty ("clipId", "clip-" + juce::Uuid().toString(), nullptr);
+    copy.setProperty ("clipId", newClipId, nullptr);
     copy.setProperty ("midiOutputChannel", juce::jlimit (1, 16, getTrackCount() + 1), nullptr);
 
     auto notes = copy.getChildWithName (notesType);
     for (int index = 0; index < notes.getNumChildren(); ++index)
         notes.getChild (index).setProperty ("id", "note-" + juce::Uuid().toString(), nullptr);
+
+    auto placements = copy.getChildWithName (placementsType);
+    for (int index = 0; index < placements.getNumChildren(); ++index)
+        placements.getChild (index).setProperty ("id",
+                                                 newClipId + "-placement-" + juce::String (index + 1),
+                                                 nullptr);
 
     beginUndoTransaction ("Add instrument track");
     root.addChild (copy, -1, &undoManager);
@@ -522,7 +722,7 @@ juce::String SongProject::addNote (double beat, double lengthBeatsValue, int mid
     if (! notes.isValid() || notes.getNumChildren() >= static_cast<int> (maxSequenceNotes))
         return {};
 
-    const auto loop = getLoopLengthBeats();
+    const auto loop = getClipLengthBeats();
     const auto minimumLength = getSnapBeats();
     const auto safeBeat = juce::jlimit (0.0, juce::jmax (0.0, loop - minimumLength), beat);
     const auto safeLength = juce::jlimit (minimumLength, loop - safeBeat, lengthBeatsValue);
@@ -551,11 +751,11 @@ juce::Result SongProject::insertNote (const SongNote& note)
         return juce::Result::fail ("The note id already exists: " + note.id);
     if (! std::isfinite (note.beat) || ! std::isfinite (note.lengthBeats))
         return juce::Result::fail ("Note timing must be finite");
-    if (note.beat < 0.0 || note.beat >= getLoopLengthBeats())
-        return juce::Result::fail ("Note start is outside the loop");
+    if (note.beat < 0.0 || note.beat >= getClipLengthBeats())
+        return juce::Result::fail ("Note start is outside the clip");
     if (note.lengthBeats <= 0.0
-        || note.beat + note.lengthBeats > getLoopLengthBeats() + 1.0e-9)
-        return juce::Result::fail ("Note length is outside the loop");
+        || note.beat + note.lengthBeats > getClipLengthBeats() + 1.0e-9)
+        return juce::Result::fail ("Note length is outside the clip");
     if (note.midiNote < 0 || note.midiNote > 127)
         return juce::Result::fail ("Note MIDI pitch must be from 0 through 127");
     if (note.velocity < 1 || note.velocity > 127)
@@ -577,7 +777,7 @@ bool SongProject::updateNote (const SongNote& note)
     if (! target.isValid())
         return false;
 
-    const auto loop = getLoopLengthBeats();
+    const auto loop = getClipLengthBeats();
     const auto minimumLength = getSnapBeats();
     const auto safeBeat = juce::jlimit (0.0, juce::jmax (0.0, loop - minimumLength), note.beat);
     const auto safeLength = juce::jlimit (minimumLength, loop - safeBeat, note.lengthBeats);
@@ -753,20 +953,29 @@ SequenceSnapshot SongProject::createSequenceSnapshotForTrack (int trackIndex) co
     SequenceSnapshot snapshot;
     snapshot.loopBeats = getLoopLengthBeats();
 
+    // Clips hold their notes once, clip-relative. The audio thread consumes a flat
+    // song-absolute list, so every placement is expanded here, on the message thread.
     const auto notesTree = getNotesTree (trackIndex);
-    snapshot.noteCount = juce::jmin (static_cast<std::size_t> (notesTree.getNumChildren()),
-                                    maxSequenceNotes);
-    for (std::size_t index = 0; index < snapshot.noteCount; ++index)
+    const auto placements = getPlacements (trackIndex);
+    std::size_t written = 0;
+    for (const auto& placement : placements)
     {
-        const auto note = notesTree.getChild (static_cast<int> (index));
-        snapshot.notes[index] = {
-            static_cast<double> (note.getProperty ("beat")),
-            static_cast<double> (note.getProperty ("lengthBeats")),
-            static_cast<int> (note.getProperty ("midiNote")),
-            static_cast<float> (static_cast<int> (note.getProperty ("velocity"))) / 127.0f
-        };
+        for (int index = 0; index < notesTree.getNumChildren(); ++index)
+        {
+            if (written >= maxSequenceNotes)
+                break;
+
+            const auto note = notesTree.getChild (index);
+            snapshot.notes[written++] = {
+                placement.startBeat + static_cast<double> (note.getProperty ("beat")),
+                static_cast<double> (note.getProperty ("lengthBeats")),
+                static_cast<int> (note.getProperty ("midiNote")),
+                static_cast<float> (static_cast<int> (note.getProperty ("velocity"))) / 127.0f
+            };
+        }
     }
 
+    snapshot.noteCount = written;
     return snapshot;
 }
 
@@ -868,6 +1077,32 @@ juce::ValueTree SongProject::getNotesTree (int trackIndex) const
     return getTrackTree (trackIndex).getChildWithName (notesType);
 }
 
+juce::ValueTree SongProject::getPlacementsTree (int trackIndex) const
+{
+    return getTrackTree (trackIndex).getChildWithName (placementsType);
+}
+
+void SongProject::ensureClipStructure (juce::ValueTree& track, double songLengthBeats)
+{
+    if (! track.isValid())
+        return;
+
+    if (! track.hasProperty ("clipLengthBeats"))
+        track.setProperty ("clipLengthBeats", songLengthBeats, nullptr);
+
+    if (track.getChildWithName (placementsType).isValid())
+        return;
+
+    juce::ValueTree placements (placementsType);
+    juce::ValueTree placement (placementType);
+    placement.setProperty ("id",
+                           track.getProperty ("clipId").toString() + "-placement-1",
+                           nullptr);
+    placement.setProperty ("startBeat", 0.0, nullptr);
+    placements.addChild (placement, -1, nullptr);
+    track.addChild (placements, -1, nullptr);
+}
+
 juce::ValueTree SongProject::getInstrumentTree() const
 {
     return getActiveTrackTree().getChildWithName (instrumentType);
@@ -900,6 +1135,8 @@ juce::var SongProject::toJsonValue() const
     object->setProperty ("title", getTitle());
     object->setProperty ("sampleRate", getSampleRate());
     object->setProperty ("ppq", projectPpq);
+    object->setProperty ("songLengthTicks",
+                         juce::roundToInt (getLoopLengthBeats() * projectPpq));
 
     juce::Array<juce::var> tempoMap;
     auto tempo = makeObject();
@@ -960,10 +1197,19 @@ juce::var SongProject::toJsonValue() const
         auto clip = makeObject();
         auto* clipObject = clip.getDynamicObject();
         clipObject->setProperty ("id", getClipId (trackIndex));
-        clipObject->setProperty ("startTick", 0);
         clipObject->setProperty ("lengthTicks",
-                                 juce::roundToInt (getLoopLengthBeats() * projectPpq));
-        clipObject->setProperty ("loopEnabled", true);
+                                 juce::roundToInt (getClipLengthBeats (trackIndex) * projectPpq));
+
+        juce::Array<juce::var> placementsJson;
+        for (const auto& placement : getPlacements (trackIndex))
+        {
+            auto placementJson = makeObject();
+            placementJson.getDynamicObject()->setProperty ("id", placement.id);
+            placementJson.getDynamicObject()->setProperty (
+                "startTick", juce::roundToInt (placement.startBeat * projectPpq));
+            placementsJson.add (placementJson);
+        }
+        clipObject->setProperty ("placements", placementsJson);
 
         juce::Array<juce::var> notesJson;
         const auto notes = getNotesTree (trackIndex);
@@ -1175,34 +1421,96 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
     auto* clipObject = requireObject (clips->getReference (0));
     const auto clipId = clipObject != nullptr ? requireString (*clipObject, "id").trim()
                                               : juce::String {};
-    int clipStartTick = -1;
-    bool loopEnabled = false;
-    int loopTicks = 0;
+    int clipTicks = 0;
     if (clipObject == nullptr || clipId.isEmpty()
-        || ! readInt (*clipObject, "startTick", clipStartTick) || clipStartTick != 0
-        || ! readBool (*clipObject, "loopEnabled", loopEnabled) || ! loopEnabled
-        || ! readInt (*clipObject, "lengthTicks", loopTicks)
-        || loopTicks < projectPpq * static_cast<int> (minimumLoopBeats)
-        || loopTicks > projectPpq * static_cast<int> (maximumLoopBeats))
-        return juce::Result::fail ("Loop clip id, start, enabled state, and length are invalid");
+        || ! readInt (*clipObject, "lengthTicks", clipTicks)
+        || clipTicks < projectPpq * static_cast<int> (minimumLoopBeats)
+        || clipTicks > projectPpq * static_cast<int> (maximumLoopBeats))
+        return juce::Result::fail ("Clip id and length are invalid");
+
+    int songTicks = 0;
+    std::vector<double> placementStarts;
+    std::vector<juce::String> placementIds;
+    if (schemaVersion >= placementSchemaVersion)
+    {
+        if (! readInt (*rootObject, "songLengthTicks", songTicks)
+            || songTicks < projectPpq * static_cast<int> (minimumLoopBeats)
+            || songTicks > projectPpq * static_cast<int> (maximumLoopBeats))
+            return juce::Result::fail ("Project songLengthTicks is outside the supported range");
+        if (clipTicks > songTicks)
+            return juce::Result::fail ("A clip cannot be longer than the song that holds it");
+
+        const auto placementsValue = clipObject->getProperty ("placements");
+        const auto* placements = placementsValue.getArray();
+        if (placements == nullptr || placements->isEmpty()
+            || placements->size() > static_cast<int> (maxClipPlacements))
+            return juce::Result::fail ("A clip requires 1 through "
+                                       + juce::String (maxClipPlacements) + " placements");
+
+        std::set<juce::String> seenPlacementIds;
+        int previousEndTick = -1;
+        for (const auto& placementValue : *placements)
+        {
+            auto* placementObject = requireObject (placementValue);
+            if (placementObject == nullptr)
+                return juce::Result::fail ("Every placement must be a JSON object");
+
+            const auto id = requireString (*placementObject, "id").trim();
+            int startTick = 0;
+            if (id.isEmpty() || ! seenPlacementIds.insert (id).second)
+                return juce::Result::fail ("Every placement id must be non-empty and unique");
+            if (! readInt (*placementObject, "startTick", startTick) || startTick < 0
+                || startTick + clipTicks > songTicks)
+                return juce::Result::fail ("A placement runs past the end of the song");
+            // Stored in order, so one comparison rejects both unsorted and overlapping
+            // placement lists.
+            if (startTick < previousEndTick)
+                return juce::Result::fail ("Placements must be stored in order and must not overlap");
+
+            previousEndTick = startTick + clipTicks;
+            placementIds.push_back (id);
+            placementStarts.push_back (static_cast<double> (startTick) / projectPpq);
+        }
+    }
+    else
+    {
+        // Before version 6 a track held one clip that was stretched over the whole song
+        // and looped, which is exactly one placement at the start.
+        int clipStartTick = -1;
+        bool loopEnabled = false;
+        if (! readInt (*clipObject, "startTick", clipStartTick) || clipStartTick != 0
+            || ! readBool (*clipObject, "loopEnabled", loopEnabled) || ! loopEnabled)
+            return juce::Result::fail ("Loop clip start and enabled state are invalid");
+
+        songTicks = clipTicks;
+        placementIds.push_back (clipId + "-placement-1");
+        placementStarts.push_back (0.0);
+    }
 
     const auto notesValue = clipObject->getProperty ("notes");
     const auto* notes = notesValue.getArray();
     if (notes == nullptr || notes->size() > static_cast<int> (maxSequenceNotes))
-        return juce::Result::fail ("Project notes array is missing or exceeds 512 notes");
+        return juce::Result::fail ("Project notes array is missing or exceeds "
+                                   + juce::String (maxSequenceNotes) + " notes");
+    if (static_cast<std::size_t> (notes->size()) * placementStarts.size() > maxSequenceNotes)
+        return juce::Result::fail ("The clip's notes across its placements exceed the "
+                                   + juce::String (maxSequenceNotes)
+                                   + " note ceiling for a published sequence");
 
     juce::ValueTree loadedRoot (rootType);
     loadedRoot.setProperty ("schemaVersion", currentSchemaVersion, nullptr);
     loadedRoot.setProperty ("title", title, nullptr);
     loadedRoot.setProperty ("sampleRate", sampleRate, nullptr);
     loadedRoot.setProperty ("tempoBpm", tempo, nullptr);
-    loadedRoot.setProperty ("loopLengthBeats", static_cast<double> (loopTicks) / projectPpq, nullptr);
+    loadedRoot.setProperty ("loopLengthBeats", static_cast<double> (songTicks) / projectPpq, nullptr);
     loadedRoot.setProperty ("snapBeats", snap, nullptr);
 
     juce::ValueTree loadedTrack (trackType);
     loadedTrack.setProperty ("id", trackId, nullptr);
     loadedTrack.setProperty ("name", trackName, nullptr);
     loadedTrack.setProperty ("clipId", clipId, nullptr);
+    loadedTrack.setProperty ("clipLengthBeats",
+                             static_cast<double> (clipTicks) / projectPpq, nullptr);
     loadedTrack.setProperty ("gainDecibels", mixerSettings.gainDecibels, nullptr);
     loadedTrack.setProperty ("pan", mixerSettings.pan, nullptr);
     loadedTrack.setProperty ("muted", mixerSettings.muted, nullptr);
@@ -1237,11 +1545,11 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
         int velocity = 0;
         if (id.isEmpty() || ! ids.insert (id).second)
             return juce::Result::fail ("Every note id must be non-empty and unique");
-        if (! readInt (*noteObject, "startTick", startTick) || startTick < 0 || startTick >= loopTicks)
-            return juce::Result::fail ("Note startTick is outside the loop");
+        if (! readInt (*noteObject, "startTick", startTick) || startTick < 0 || startTick >= clipTicks)
+            return juce::Result::fail ("Note startTick is outside the clip");
         if (! readInt (*noteObject, "lengthTicks", lengthTick) || lengthTick <= 0
-            || startTick + lengthTick > loopTicks)
-            return juce::Result::fail ("Note lengthTicks is outside the loop");
+            || startTick + lengthTick > clipTicks)
+            return juce::Result::fail ("Note lengthTicks is outside the clip");
         if (! readInt (*noteObject, "midiNote", midiNote) || midiNote < 0 || midiNote > 127)
             return juce::Result::fail ("Note midiNote must be from 0 through 127");
         if (! readInt (*noteObject, "velocity", velocity) || velocity < 1 || velocity > 127)
@@ -1256,6 +1564,16 @@ juce::Result SongProject::valueTreeFromJson (const juce::var& json, juce::ValueT
         loadedNotes.addChild (loadedNote, -1, nullptr);
     }
     loadedTrack.addChild (loadedNotes, -1, nullptr);
+
+    juce::ValueTree loadedPlacements (placementsType);
+    for (std::size_t index = 0; index < placementStarts.size(); ++index)
+    {
+        juce::ValueTree placement (placementType);
+        placement.setProperty ("id", placementIds[index], nullptr);
+        placement.setProperty ("startBeat", placementStarts[index], nullptr);
+        loadedPlacements.addChild (placement, -1, nullptr);
+    }
+    loadedTrack.addChild (loadedPlacements, -1, nullptr);
     loadedRoot.addChild (loadedTrack, -1, nullptr);
 
     destination = loadedRoot;
@@ -1289,6 +1607,15 @@ void SongProject::installRoot (juce::ValueTree newRoot,
     suppressChanges = true;
     root.removeListener (this);
     root = std::move (newRoot);
+    // Trees arrive from the loader, from edit-command candidates, and from replaceWith.
+    // Normalising here means one place guarantees every track has a clip and a placement.
+    const auto songLength = static_cast<double> (
+        root.getProperty ("loopLengthBeats", loopLengthBeats));
+    for (int index = 0; index < root.getNumChildren(); ++index)
+    {
+        auto track = root.getChild (index);
+        ensureClipStructure (track, songLength);
+    }
     root.addListener (this);
     undoManager.clearUndoHistory();
     activeTrackId = preferredActiveTrackId;

@@ -46,7 +46,12 @@
     "longCanvasPassed",
     "maximumLoopBeats",
     "projectOperationsPassed",
-    "commandVersion2"
+    "commandVersion2",
+    "archivedV5MigrationFixture",
+    "archivedV5SourceSha256",
+    "archivedV5MigrationPassed",
+    "clipPlacementsPassed",
+    "maxClipPlacements"
   ],
   "properties": {
     "schemaVersion": {
@@ -64,14 +69,15 @@
       "type": "integer",
       "enum": [
         1,
-        2
+        2,
+        3
       ]
     },
     "editCommandFixture": {
       "const": "edit-command-note-patch-v1.json"
     },
     "projectSchemaVersion": {
-      "const": 5
+      "const": 6
     },
     "legacySchemaVersion": {
       "const": 1
@@ -173,7 +179,7 @@
       "const": true
     },
     "lastArchivedSchemaVersion": {
-      "const": 4
+      "const": 5
     },
     "archivedMigrationPassed": {
       "const": true
@@ -192,7 +198,24 @@
       "const": true
     },
     "commandVersion2": {
-      "const": 2
+      "const": 3
+    },
+    "archivedV5MigrationFixture": {
+      "type": "string",
+      "minLength": 1
+    },
+    "archivedV5SourceSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "archivedV5MigrationPassed": {
+      "const": true
+    },
+    "clipPlacementsPassed": {
+      "const": true
+    },
+    "maxClipPlacements": {
+      "const": 64
     }
   }
 }

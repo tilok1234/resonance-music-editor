@@ -46,6 +46,7 @@ Keep the master level low for the first listen. It defaults to `-12 dB`, and tra
 - Drag a note to change its beat and pitch; drag its highlighted right edge to resize it.
 - Select a note and edit velocity, or right-click/press **Delete** to remove it.
 - Choose `1/32`, `1/16`, `1/8`, or `1/4` grid snap and a one-, two-, four-, or eight-bar loop.
+- A clip holds its notes once and a placement repeats it. A new clip spans its whole song and is placed once, which is how every project up to schema 5 behaved. Clip lengths and placements are set through edit commands, not yet through the editor.
 - Use **Undo/Redo** or `Ctrl+Z` / `Ctrl+Y` while playback continues.
 - The mixer shows one strip per track. Click a strip's name to choose which clip, sound, and Surge window you are editing. **+ Track** duplicates the selected track into another independent Surge instance; **- Track**, **<**, and **>** remove or reorder it with Undo support.
 - Set gain, pan, **M**, and **S** on any strip without selecting it first; each strip carries its own level meter. The two vertical meters beside the strips are the **MASTER** output.
