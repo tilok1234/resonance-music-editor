@@ -48,6 +48,7 @@ A 2026-08-12 assessment found that the binding constraint on making songs was no
 9. **M7.5 offline render.** `--render` writes a 24-bit WAV through the production callback, with repeats and a release tail.
 10. **M8 agent control surface.** `--describe` and `--apply-command`, so an external agent can read and edit a project without the GUI.
 11. **M8 command vocabulary.** Edit-command version 2 adds tempo, song length, snap, title, mixer, sound, and track add/remove operations alongside note changes, with the cap raised to 1,024 changes.
+12. **M8 editor layout.** The device chooser moved into a dialog, the mixer shows every track with its own meter, the keyboard and the resolver inputs became toggles, and the piano roll took the reclaimed space.
 
 ## The most important thing to understand
 
@@ -71,13 +72,14 @@ Carry both lessons forward:
 | Track ceiling | 4 persisted; 8 runtime lanes; 4 Surge instances preloaded |
 | Clip canvas | 4–256 beats (1–64 bars); 1,024 notes per clip |
 | Packaged audio probe | 1/1 expected-audible tracks, no per-track overload, no clipping, no invalid samples |
+| Audio probe on `emberline-long` | 4/4 audible, no overload, master peak 0.557 |
 | Packaged command load | 6 refusal paths, Apply, replay-after-Apply refused, one-step Undo |
 | Packaged selection/clipboard | 19 checks |
 | Packaged sound shelf | 10 checks against two genuinely different Surge states |
 | Packaged offline render | complete file, non-silent, no clipping, no invalid samples |
-| UI idle gate | 2,093.8 ms with four preloaded instances, below the 3,000 ms ceiling |
-| Packaged UI snapshot | 104,134 bytes; SHA-256 `7b520b966da04274a00fc70891e0eebc580dd6de048aa3482ca2e95153fc6e49` |
-| Packaged editor SHA-256 | `362aea878cfe6f4807c142aaa52ffb24bbedd4ab5660af775980dd7559a779fd` |
+| UI idle gate | 1,937.5 ms of CPU with four preloaded instances, below the 3,000 ms ceiling |
+| Packaged UI snapshot | 76,831 bytes; SHA-256 `95decc856a43b47f3090452b41bee7bae44f626c480a26938341f1ce17b4c8b2` |
+| Packaged editor SHA-256 | `4028ba91e27855cabdc5f7b9b70e8441b19189c3ba09c0a7600f92c5c881591b` |
 | Surge XT | 1.3.4; 2,855 parameters; VST3 UID suffix `190e4fbd` |
 
 Device name, sample rate, block size, latency, and path-derived identifiers are machine observations. Regenerate rather than copying them.
@@ -92,7 +94,7 @@ Each of these cost real time. They are recorded so they cost less next time.
 2. **Snapshot structures are huge.** `MixerSnapshot` embeds a fixed-capacity sequence per lane. At 2,048 notes an engine reached ~1.2 MB and overflowed a thread stack. Never construct `MixerSnapshot` or `RealtimeEngine` as a stack local.
 3. **A schema bump touches more than the schema.** Expect to update the loader, an archived schema copy, a new migration fixture, the report schemas (`song-project-test`, `realtime-self-test`, `m6-authoring-test`), and several hard-coded version assertions in `scripts/test-realtime.ps1`. The v4 and v5 bumps each needed multiple gate runs to flush these out.
 4. **The editor holds `bin/`.** A running editor blocks the build's copy step, the gate's no-leftover-process check, and screenshots. Close it before verifying.
-5. **Paint code compiling is not paint code working.** Ghost notes and horizontal zoom both looked correct in source and were only proven by screenshot. `--ui-snapshot --project <file>` captures any project.
+5. **Paint code compiling is not paint code working.** Ghost notes, horizontal zoom, and the mixer strips all looked correct in source and were only proven — or disproven — by screenshot. The mixer card's height was short by exactly its header, which clipped every Mute and Solo control; nothing else caught it. `--ui-snapshot --project <file>` captures any project.
 
 ## Implemented capabilities
 

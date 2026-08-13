@@ -95,6 +95,41 @@ juce::String noteName (int midiNote)
 {
     return juce::MidiMessage::getMidiNoteName (midiNote, true, true, 3);
 }
+
+// One description of a mixer strip, used by both resized() and paint() so the captions
+// and the meter cannot drift away from the controls they belong to.
+struct TrackStripLayout
+{
+    juce::Rectangle<int> select, gainCaption, gain, panCaption, pan, mute, solo, meter;
+};
+
+TrackStripLayout layOutTrackStrip (juce::Rectangle<int> bounds)
+{
+    TrackStripLayout layout;
+    auto area = bounds.reduced (9);
+    layout.select = area.removeFromTop (24);
+    area.removeFromTop (5);
+
+    auto gainRow = area.removeFromTop (22);
+    layout.gainCaption = gainRow.removeFromLeft (36);
+    layout.gain = gainRow;
+    area.removeFromTop (3);
+
+    auto panRow = area.removeFromTop (22);
+    layout.panCaption = panRow.removeFromLeft (36);
+    layout.pan = panRow;
+    area.removeFromTop (5);
+
+    auto bottomRow = area.removeFromTop (22);
+    layout.meter = bottomRow.removeFromRight (10);
+    bottomRow.removeFromRight (10);
+    layout.mute = bottomRow.removeFromLeft (44);
+    bottomRow.removeFromLeft (6);
+    layout.solo = bottomRow.removeFromLeft (44);
+    return layout;
+}
+
+constexpr int trackStripHeight = 9 * 2 + 24 + 5 + 22 + 3 + 22 + 5 + 22;
 } // namespace
 
 class MainEditorComponent::PluginEditorWindow final : public juce::DocumentWindow
@@ -232,6 +267,63 @@ public:
     void closeButtonPressed() override { setVisible (false); }
 };
 
+// The device chooser used to hold a quarter of the main window permanently, which is
+// a poor trade for a control that is set once. It lives here now.
+class MainEditorComponent::SettingsWindow final : public juce::DocumentWindow
+{
+private:
+    class SettingsContent final : public juce::Component
+    {
+    public:
+        SettingsContent (juce::Component& selector, juce::Component& summary)
+            : deviceSelector (selector), deviceSummary (summary)
+        {
+            setOpaque (true);
+            addAndMakeVisible (deviceSelector);
+            addAndMakeVisible (deviceSummary);
+            setSize (440, 560);
+        }
+
+        void paint (juce::Graphics& graphics) override
+        {
+            graphics.fillAll (background);
+            graphics.setFont (uiFont (11.0f, juce::Font::bold));
+            graphics.setColour (textMuted);
+            graphics.drawText ("AUDIO + MIDI DEVICE",
+                               getLocalBounds().reduced (16).removeFromTop (18),
+                               juce::Justification::centredLeft);
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced (16);
+            area.removeFromTop (22);
+            deviceSummary.setBounds (area.removeFromTop (58));
+            area.removeFromTop (8);
+            deviceSelector.setBounds (area);
+        }
+
+    private:
+        juce::Component& deviceSelector;
+        juce::Component& deviceSummary;
+    };
+
+public:
+    SettingsWindow (juce::Component& selector, juce::Component& summary)
+        : juce::DocumentWindow ("Audio settings - Resonance",
+                                background,
+                                juce::DocumentWindow::closeButton)
+    {
+        setUsingNativeTitleBar (true);
+        setResizable (true, false);
+        setContentOwned (new SettingsContent (selector, summary), true);
+        centreWithSize (460, 600);
+        setResizeLimits (400, 430, 900, 1100);
+    }
+
+    void closeButtonPressed() override { setVisible (false); }
+};
+
 MainEditorComponent::MainEditorComponent (juce::File inventoryFile,
                                           juce::File quarantineFile,
                                           juce::PropertiesFile* settings)
@@ -267,6 +359,7 @@ MainEditorComponent::~MainEditorComponent()
     stopTimer();
     activeFileChooser.reset();
     pluginEditorWindow.reset();
+    settingsWindow.reset();
     project.setChangeCallback ({});
     saveSettings();
 
@@ -389,6 +482,8 @@ void MainEditorComponent::configureControls()
     dynamicsSeedEditor.setTooltip ("Deterministic seed from 0 through 2147483647");
     dynamicsSeedEditor.onTextChange = [this] { refreshEditPreviewControls(); };
 
+    applyAdvancedControlVisibility();
+
     for (auto* editor : { &dynamicsStrengthEditor, &dynamicsSeedEditor })
     {
         editor->setColour (juce::TextEditor::backgroundColourId, background.withAlpha (0.75f));
@@ -400,6 +495,7 @@ void MainEditorComponent::configureControls()
 
     for (auto* button : { &newButton, &openButton, &saveButton, &undoButton, &redoButton,
                           &playButton, &stopButton, &panicButton, &pluginEditorButton,
+                          &settingsButton, &keyboardToggleButton, &advancedToggleButton,
                           &auditionProjectSoundButton, &captureSoundButton,
                           &auditionCandidateButton, &applySoundButton, &rejectSoundButton,
                           &previewSelectedEditButton, &previewDynamicsButton,
@@ -410,9 +506,6 @@ void MainEditorComponent::configureControls()
                           &addTrackButton, &removeTrackButton,
                           &moveTrackLeftButton, &moveTrackRightButton })
         addAndMakeVisible (*button);
-
-    addAndMakeVisible (trackMuteButton);
-    addAndMakeVisible (trackSoloButton);
 
     playButton.setColour (juce::TextButton::buttonColourId, primary.darker (0.55f));
     panicButton.setColour (juce::TextButton::buttonColourId, danger.darker (0.55f));
@@ -443,6 +536,14 @@ void MainEditorComponent::configureControls()
     stopButton.onClick = [this] { engine.stopAndRewind(); };
     panicButton.onClick = [this] { engine.panic(); };
     pluginEditorButton.onClick = [this] { openPluginEditor(); };
+    settingsButton.onClick = [this] { openSettingsWindow(); };
+    keyboardToggleButton.onClick = [this] { toggleKeyboard(); };
+    advancedToggleButton.onClick = [this] { toggleAdvancedControls(); };
+    settingsButton.setTooltip ("Choose the audio and MIDI device");
+    keyboardToggleButton.setTooltip ("Show or hide the on-screen audition keyboard");
+    advancedToggleButton.setTooltip ("Show or hide the dynamics resolver inputs");
+    for (auto* button : { &keyboardToggleButton, &advancedToggleButton })
+        button->setClickingTogglesState (false);
     auditionProjectSoundButton.onClick = [this] { auditionProjectSound(); };
     captureSoundButton.onClick = [this] { captureSoundCandidate(); };
     auditionCandidateButton.onClick = [this] { auditionSoundCandidate(); };
@@ -461,13 +562,7 @@ void MainEditorComponent::configureControls()
     moveTrackLeftButton.onClick = [this] { moveActiveTrack (-1); };
     moveTrackRightButton.onClick = [this] { moveActiveTrack (1); };
 
-    trackSelector.setTooltip ("Choose the instrument track shown in the piano roll and Surge editor");
-    trackSelector.onChange = [this]
-    {
-        if (! refreshingProjectControls)
-            selectTrack (trackSelector.getSelectedId() - 1);
-    };
-    addAndMakeVisible (trackSelector);
+    configureTrackStrips();
 
     previewSelectedEditButton.setTooltip ("Preview the selected note one semitone higher");
     previewDynamicsButton.setTooltip ("Resolve the target, maximum velocity change, and seed into candidate B");
@@ -521,10 +616,7 @@ void MainEditorComponent::configureControls()
     snapLabel.setText ("SNAP", juce::dontSendNotification);
     loopLengthLabel.setText ("LOOP", juce::dontSendNotification);
     velocityLabel.setText ("VELOCITY", juce::dontSendNotification);
-    trackGainLabel.setText ("GAIN", juce::dontSendNotification);
-    trackPanLabel.setText ("PAN", juce::dontSendNotification);
-    for (auto* label : { &bpmLabel, &gainLabel, &snapLabel, &loopLengthLabel, &velocityLabel,
-                         &trackGainLabel, &trackPanLabel })
+    for (auto* label : { &bpmLabel, &gainLabel, &snapLabel, &loopLengthLabel, &velocityLabel })
     {
         label->setFont (uiFont (11.0f, juce::Font::bold));
         label->setColour (juce::Label::textColourId, textMuted);
@@ -565,78 +657,6 @@ void MainEditorComponent::configureControls()
     };
     addAndMakeVisible (gainSlider);
     engine.setMasterGainDecibels (static_cast<float> (gainSlider.getValue()));
-
-    trackGainSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    trackGainSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 54, 24);
-    trackGainSlider.setRange (-60.0, 12.0, 0.5);
-    trackGainSlider.setTextValueSuffix (" dB");
-    trackGainSlider.onDragStart = [this]
-    {
-        trackGainGestureActive = true;
-        project.beginUndoTransaction ("Change track gain");
-    };
-    trackGainSlider.onDragEnd = [this] { trackGainGestureActive = false; };
-    trackGainSlider.onValueChange = [this]
-    {
-        if (refreshingProjectControls)
-            return;
-
-        if (! trackGainGestureActive)
-            project.beginUndoTransaction ("Change track gain");
-        auto settings = project.getTrackMixerSettings();
-        settings.gainDecibels = trackGainSlider.getValue();
-        const auto result = project.setTrackMixerSettings (settings);
-        if (result.failed())
-            projectStatusMessage = result.getErrorMessage();
-    };
-    addAndMakeVisible (trackGainSlider);
-
-    trackPanSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    trackPanSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 42, 24);
-    trackPanSlider.setRange (-1.0, 1.0, 0.05);
-    trackPanSlider.onDragStart = [this]
-    {
-        trackPanGestureActive = true;
-        project.beginUndoTransaction ("Change track pan");
-    };
-    trackPanSlider.onDragEnd = [this] { trackPanGestureActive = false; };
-    trackPanSlider.onValueChange = [this]
-    {
-        if (refreshingProjectControls)
-            return;
-
-        if (! trackPanGestureActive)
-            project.beginUndoTransaction ("Change track pan");
-        auto settings = project.getTrackMixerSettings();
-        settings.pan = trackPanSlider.getValue();
-        const auto result = project.setTrackMixerSettings (settings);
-        if (result.failed())
-            projectStatusMessage = result.getErrorMessage();
-    };
-    addAndMakeVisible (trackPanSlider);
-
-    trackMuteButton.onClick = [this]
-    {
-        if (refreshingProjectControls)
-            return;
-        project.beginUndoTransaction ("Toggle track mute");
-        auto settings = project.getTrackMixerSettings();
-        settings.muted = trackMuteButton.getToggleState();
-        const auto result = project.setTrackMixerSettings (settings);
-        if (result.failed())
-            projectStatusMessage = result.getErrorMessage();
-    };
-    trackSoloButton.onClick = [this]
-    {
-        if (refreshingProjectControls)
-            return;
-        project.beginUndoTransaction ("Toggle track solo");
-        auto settings = project.getTrackMixerSettings();
-        settings.solo = trackSoloButton.getToggleState();
-        const auto result = project.setTrackMixerSettings (settings);
-        if (result.failed())
-            projectStatusMessage = result.getErrorMessage();
-    };
 
     snapCombo.addItem ("1/32", 1);
     snapCombo.addItem ("1/16", 2);
@@ -726,9 +746,148 @@ void MainEditorComponent::configureControls()
                          juce::Colour::fromRGB (19, 27, 39));
     keyboard->setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, primary);
     addAndMakeVisible (*keyboard);
+    keyboard->setVisible (keyboardVisible);
 
     project.setChangeCallback ([this] { projectChanged(); });
     refreshProjectControls();
+}
+
+void MainEditorComponent::configureTrackStrips()
+{
+    for (int index = 0; index < SongProject::maxProjectTracks; ++index)
+    {
+        auto& strip = trackStrips[static_cast<std::size_t> (index)];
+
+        strip.selectButton.setButtonText (juce::String (index + 1).paddedLeft ('0', 2));
+        strip.selectButton.setTooltip ("Show this track in the piano roll and the Surge editor");
+        strip.selectButton.onClick = [this, index] { selectTrack (index); };
+        addAndMakeVisible (strip.selectButton);
+
+        strip.gainSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+        strip.gainSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 54, 22);
+        strip.gainSlider.setRange (-60.0, 12.0, 0.5);
+        strip.gainSlider.setTextValueSuffix (" dB");
+        strip.gainSlider.setTooltip ("Track level");
+        strip.gainSlider.onDragStart = [this]
+        {
+            trackGainGestureActive = true;
+            project.beginUndoTransaction ("Change track gain");
+        };
+        strip.gainSlider.onDragEnd = [this] { trackGainGestureActive = false; };
+        strip.gainSlider.onValueChange = [this, index]
+        {
+            if (refreshingProjectControls)
+                return;
+
+            if (! trackGainGestureActive)
+                project.beginUndoTransaction ("Change track gain");
+            auto settings = project.getTrackMixerSettings (index);
+            settings.gainDecibels = trackStrips[static_cast<std::size_t> (index)].gainSlider.getValue();
+            const auto result = project.setTrackMixerSettingsForTrack (index, settings);
+            if (result.failed())
+                projectStatusMessage = result.getErrorMessage();
+        };
+        addAndMakeVisible (strip.gainSlider);
+
+        strip.panSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+        strip.panSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 42, 22);
+        strip.panSlider.setRange (-1.0, 1.0, 0.05);
+        strip.panSlider.setTooltip ("Track pan");
+        strip.panSlider.onDragStart = [this]
+        {
+            trackPanGestureActive = true;
+            project.beginUndoTransaction ("Change track pan");
+        };
+        strip.panSlider.onDragEnd = [this] { trackPanGestureActive = false; };
+        strip.panSlider.onValueChange = [this, index]
+        {
+            if (refreshingProjectControls)
+                return;
+
+            if (! trackPanGestureActive)
+                project.beginUndoTransaction ("Change track pan");
+            auto settings = project.getTrackMixerSettings (index);
+            settings.pan = trackStrips[static_cast<std::size_t> (index)].panSlider.getValue();
+            const auto result = project.setTrackMixerSettingsForTrack (index, settings);
+            if (result.failed())
+                projectStatusMessage = result.getErrorMessage();
+        };
+        addAndMakeVisible (strip.panSlider);
+
+        strip.muteButton.setTooltip ("Mute this track");
+        strip.muteButton.onClick = [this, index]
+        {
+            if (refreshingProjectControls)
+                return;
+            project.beginUndoTransaction ("Toggle track mute");
+            auto settings = project.getTrackMixerSettings (index);
+            settings.muted = trackStrips[static_cast<std::size_t> (index)].muteButton.getToggleState();
+            const auto result = project.setTrackMixerSettingsForTrack (index, settings);
+            if (result.failed())
+                projectStatusMessage = result.getErrorMessage();
+        };
+        addAndMakeVisible (strip.muteButton);
+
+        strip.soloButton.setTooltip ("Solo this track");
+        strip.soloButton.onClick = [this, index]
+        {
+            if (refreshingProjectControls)
+                return;
+            project.beginUndoTransaction ("Toggle track solo");
+            auto settings = project.getTrackMixerSettings (index);
+            settings.solo = trackStrips[static_cast<std::size_t> (index)].soloButton.getToggleState();
+            const auto result = project.setTrackMixerSettingsForTrack (index, settings);
+            if (result.failed())
+                projectStatusMessage = result.getErrorMessage();
+        };
+        addAndMakeVisible (strip.soloButton);
+    }
+}
+
+// Strips beyond the project's track count are hidden rather than disabled, so the
+// mixer always shows exactly the tracks that exist.
+void MainEditorComponent::refreshTrackStrips()
+{
+    const auto trackCount = project.getTrackCount();
+    const auto activeTrack = project.getActiveTrackIndex();
+    const auto trackLaneClear = ! hasPendingEditPreview() && ! soundCandidate.has_value();
+    const auto trackReady = getActivePlugin() != nullptr;
+
+    for (int index = 0; index < SongProject::maxProjectTracks; ++index)
+    {
+        auto& strip = trackStrips[static_cast<std::size_t> (index)];
+        const auto present = index < trackCount;
+
+        strip.selectButton.setVisible (present);
+        strip.gainSlider.setVisible (present);
+        strip.panSlider.setVisible (present);
+        strip.muteButton.setVisible (present);
+        strip.soloButton.setVisible (present);
+
+        if (! present)
+            continue;
+
+        const auto mixerSettings = project.getTrackMixerSettings (index);
+        strip.gainSlider.setValue (mixerSettings.gainDecibels, juce::dontSendNotification);
+        strip.panSlider.setValue (mixerSettings.pan, juce::dontSendNotification);
+        strip.muteButton.setToggleState (mixerSettings.muted, juce::dontSendNotification);
+        strip.soloButton.setToggleState (mixerSettings.solo, juce::dontSendNotification);
+
+        strip.selectButton.setButtonText (juce::String (index + 1).paddedLeft ('0', 2)
+                                          + "  " + project.getTrackName (index).toUpperCase());
+        strip.selectButton.setToggleState (index == activeTrack, juce::dontSendNotification);
+        strip.selectButton.setEnabled (trackLaneClear);
+        strip.gainSlider.setEnabled (trackReady && trackLaneClear);
+        strip.panSlider.setEnabled (trackReady && trackLaneClear);
+        strip.muteButton.setEnabled (trackReady && trackLaneClear);
+        strip.soloButton.setEnabled (trackReady && trackLaneClear);
+    }
+
+    if (visibleTrackStripCount != trackCount)
+    {
+        visibleTrackStripCount = trackCount;
+        resized();
+    }
 }
 
 void MainEditorComponent::initialiseAudioAndPlugin()
@@ -755,7 +914,6 @@ void MainEditorComponent::initialiseAudioAndPlugin()
                                                                            true, false,
                                                                            true, false);
     deviceSelector->setItemHeight (24);
-    addAndMakeVisible (*deviceSelector);
 
     const auto inventoryResult = loadFirstAcceptedInstrument (inventoryPath, quarantinePath, pluginRecord);
     if (inventoryResult.failed())
@@ -906,8 +1064,7 @@ void MainEditorComponent::selectTrack (int trackIndex)
     if (trackIndex < 0 || trackIndex >= project.getTrackCount()
         || ! canChangeTrackContext())
     {
-        const juce::ScopedValueSetter<bool> refreshing (refreshingProjectControls, true);
-        trackSelector.setSelectedId (currentTrack + 1, juce::dontSendNotification);
+        refreshTrackStrips();
         return;
     }
 
@@ -930,7 +1087,9 @@ void MainEditorComponent::addInstrumentTrack()
 
     if (project.getTrackCount() >= SongProject::maxProjectTracks)
     {
-        projectStatusMessage = "THIS M6 SLICE SUPPORTS TWO INSTRUMENT TRACKS";
+        projectStatusMessage = "A SONG SUPPORTS AT MOST "
+                               + juce::String (SongProject::maxProjectTracks)
+                               + " INSTRUMENT TRACKS";
         updateStatus();
         return;
     }
@@ -949,7 +1108,8 @@ void MainEditorComponent::addInstrumentTrack()
 
     if (pianoRoll != nullptr)
         pianoRoll->setSelectedNote ({});
-    projectStatusMessage = "TRACK 2 ADDED  /  INDEPENDENT SURGE INSTANCE READY";
+    projectStatusMessage = "TRACK " + juce::String (project.getTrackCount())
+                           + " ADDED  /  INDEPENDENT SURGE INSTANCE READY";
     refreshProjectControls();
 }
 
@@ -1180,6 +1340,49 @@ void MainEditorComponent::openPluginEditor()
     auditionedSoundSha256.clear();
     projectStatusMessage = "LIVE SURGE EDIT  /  CAPTURE B TO COMPARE OR KEEP A UNCHANGED";
     refreshSoundControls();
+}
+
+void MainEditorComponent::openSettingsWindow()
+{
+    if (deviceSelector == nullptr)
+        return;
+
+    if (settingsWindow == nullptr)
+        settingsWindow = std::make_unique<SettingsWindow> (*deviceSelector, deviceSummaryLabel);
+
+    settingsWindow->setVisible (true);
+    settingsWindow->toFront (true);
+}
+
+void MainEditorComponent::toggleKeyboard()
+{
+    keyboardVisible = ! keyboardVisible;
+    if (keyboard != nullptr)
+        keyboard->setVisible (keyboardVisible);
+    keyboardToggleButton.setToggleState (keyboardVisible, juce::dontSendNotification);
+    resized();
+    repaint();
+}
+
+void MainEditorComponent::toggleAdvancedControls()
+{
+    advancedControlsVisible = ! advancedControlsVisible;
+    advancedToggleButton.setToggleState (advancedControlsVisible, juce::dontSendNotification);
+    applyAdvancedControlVisibility();
+    resized();
+    repaint();
+}
+
+void MainEditorComponent::applyAdvancedControlVisibility()
+{
+    juce::Component* const advanced[] { &dynamicsScopeLabel,
+                                        &dynamicsStrengthLabel,
+                                        &dynamicsSeedLabel,
+                                        &dynamicsScopeCombo,
+                                        &dynamicsStrengthEditor,
+                                        &dynamicsSeedEditor };
+    for (auto* component : advanced)
+        component->setVisible (advancedControlsVisible);
 }
 
 void MainEditorComponent::captureSoundCandidate()
@@ -2964,13 +3167,8 @@ void MainEditorComponent::refreshProjectControls()
     snapCombo.setSelectedId (snapComboId (project.getSnapBeats()), juce::dontSendNotification);
     loopLengthCombo.setSelectedId (loopComboId (project.getLoopLengthBeats()), juce::dontSendNotification);
 
-    trackSelector.clear (juce::dontSendNotification);
-    for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
-        trackSelector.addItem (juce::String (trackIndex + 1) + " / "
-                                   + project.getTrackName (trackIndex),
-                               trackIndex + 1);
     const auto activeTrack = project.getActiveTrackIndex();
-    trackSelector.setSelectedId (activeTrack + 1, juce::dontSendNotification);
+    refreshTrackStrips();
     trackNameLabel.setText (juce::String (activeTrack + 1).paddedLeft ('0', 2)
                                 + "  /  " + project.getTrackName(),
                             juce::dontSendNotification);
@@ -2980,25 +3178,13 @@ void MainEditorComponent::refreshProjectControls()
                             + project.getPluginSoundName(),
                             juce::dontSendNotification);
 
-    const auto mixerSettings = project.getTrackMixerSettings();
-    trackGainSlider.setValue (mixerSettings.gainDecibels, juce::dontSendNotification);
-    trackPanSlider.setValue (mixerSettings.pan, juce::dontSendNotification);
-    trackMuteButton.setToggleState (mixerSettings.muted, juce::dontSendNotification);
-    trackSoloButton.setToggleState (mixerSettings.solo, juce::dontSendNotification);
-
     const auto trackLaneClear = ! soundCandidate.has_value() && ! hasPendingEditPreview();
-    const auto trackReady = getActivePlugin() != nullptr;
-    trackSelector.setEnabled (trackLaneClear && project.getTrackCount() > 1);
     addTrackButton.setEnabled (trackLaneClear
                                && project.getTrackCount() < SongProject::maxProjectTracks);
     removeTrackButton.setEnabled (trackLaneClear && project.getTrackCount() > 1);
     moveTrackLeftButton.setEnabled (trackLaneClear && activeTrack > 0);
     moveTrackRightButton.setEnabled (trackLaneClear
                                      && activeTrack + 1 < project.getTrackCount());
-    trackGainSlider.setEnabled (trackReady && trackLaneClear);
-    trackPanSlider.setEnabled (trackReady && trackLaneClear);
-    trackMuteButton.setEnabled (trackReady && trackLaneClear);
-    trackSoloButton.setEnabled (trackReady && trackLaneClear);
 
     undoButton.setEnabled (project.canUndo());
     redoButton.setEnabled (project.canRedo());
@@ -3437,6 +3623,11 @@ void MainEditorComponent::prepareM5PreviewForSnapshot()
     const auto notes = project.getNotes();
     if (notes.empty() || pianoRoll == nullptr)
         return;
+
+    if (! advancedControlsVisible)
+        toggleAdvancedControls();
+    if (! keyboardVisible)
+        toggleKeyboard();
 
     dynamicsScopeCombo.setSelectedId (velocityScopeWholeLoop, juce::dontSendNotification);
     dynamicsStrengthEditor.setText (juce::String (editorVelocityVariationMaximumDelta), false);
@@ -4133,15 +4324,14 @@ void MainEditorComponent::timerCallback()
                                     juce::dontSendNotification);
 
     playButton.setButtonText (engine.isPlaying() ? "Pause" : "Play loop");
-    const auto activeTrack = project.getActiveTrackIndex();
-    const auto leftPeak = activeTrack >= 0
-                              ? engine.getTrackLeftPeak (static_cast<std::size_t> (activeTrack))
-                              : 0.0f;
-    const auto rightPeak = activeTrack >= 0
-                               ? engine.getTrackRightPeak (static_cast<std::size_t> (activeTrack))
-                               : 0.0f;
-    displayedLeftPeak = juce::jmax (leftPeak, displayedLeftPeak * 0.88f);
-    displayedRightPeak = juce::jmax (rightPeak, displayedRightPeak * 0.88f);
+    displayedLeftPeak = juce::jmax (engine.getLeftPeak(), displayedLeftPeak * 0.88f);
+    displayedRightPeak = juce::jmax (engine.getRightPeak(), displayedRightPeak * 0.88f);
+    for (std::size_t index = 0; index < displayedTrackPeaks.size(); ++index)
+    {
+        const auto trackPeak = juce::jmax (engine.getTrackLeftPeak (index),
+                                           engine.getTrackRightPeak (index));
+        displayedTrackPeaks[index] = juce::jmax (trackPeak, displayedTrackPeaks[index] * 0.88f);
+    }
     deviceSummaryLabel.setText (formatDeviceSummary (deviceManager), juce::dontSendNotification);
     updateStatus();
     repaint (trackCardBounds);
@@ -4258,37 +4448,63 @@ void MainEditorComponent::paint (juce::Graphics& graphics)
     drawCard (graphics, transportCardBounds);
     drawCard (graphics, trackCardBounds);
     drawCard (graphics, loopCardBounds);
-    drawCard (graphics, keyboardCardBounds);
-    drawCard (graphics, deviceCardBounds);
+    if (! keyboardCardBounds.isEmpty())
+        drawCard (graphics, keyboardCardBounds);
+    drawCard (graphics, editProposalBounds);
 
     graphics.setFont (uiFont (11.0f, juce::Font::bold));
     graphics.setColour (textMuted);
+    graphics.drawText ("MIXER  /  ALL TRACKS",
+                       trackCardBounds.reduced (16).removeFromTop (18),
+                       juce::Justification::centredLeft);
     graphics.drawText ("CLICK TO ADD  /  DRAG TO MOVE  /  DRAG RIGHT EDGE TO RESIZE  /  DELETE TO REMOVE",
                        loopCardBounds.reduced (16).removeFromTop (20),
                        juce::Justification::centredLeft);
-    graphics.drawText ("MANUAL AUDITION  /  SHARED WITH THE SURGE WINDOW",
-                       keyboardCardBounds.reduced (16).removeFromTop (22),
-                       juce::Justification::centredLeft);
-    graphics.drawText ("AUDIO + MIDI DEVICE",
-                       deviceCardBounds.reduced (16).removeFromTop (22),
+    if (! keyboardCardBounds.isEmpty())
+        graphics.drawText ("MANUAL AUDITION  /  SHARED WITH THE SURGE WINDOW",
+                           keyboardCardBounds.reduced (16).removeFromTop (22),
+                           juce::Justification::centredLeft);
+
+    graphics.setColour (secondary);
+    graphics.drawText ("EDIT PROPOSAL  /  A-B PREVIEW BEFORE APPLY",
+                       editProposalBounds.reduced (14).removeFromTop (18),
                        juce::Justification::centredLeft);
 
-    if (! editProposalBounds.isEmpty())
+    // Per-track captions and meters, taken from the same layout the controls used.
+    graphics.setFont (uiFont (10.0f, juce::Font::bold));
+    const auto activeTrack = project.getActiveTrackIndex();
+    for (int index = 0; index < visibleTrackStripCount; ++index)
     {
-        const auto proposal = editProposalBounds.toFloat();
-        graphics.setColour (background.withAlpha (0.58f));
-        graphics.fillRoundedRectangle (proposal, 9.0f);
-        graphics.setColour (secondary.withAlpha (0.42f));
-        graphics.drawRoundedRectangle (proposal.reduced (0.5f), 9.0f, 1.0f);
-        graphics.setFont (uiFont (10.5f, juce::Font::bold));
-        graphics.setColour (secondary);
-        graphics.drawText ("M5 NOTE PROPOSAL  /  A-B PREVIEW",
-                           editProposalBounds.reduced (10).removeFromTop (20),
-                           juce::Justification::centredLeft);
+        const auto& stripBounds = trackStripBounds[static_cast<std::size_t> (index)];
+        if (stripBounds.isEmpty())
+            continue;
+
+        const auto layout = layOutTrackStrip (stripBounds);
+        graphics.setColour (background.withAlpha (0.45f));
+        graphics.fillRoundedRectangle (stripBounds.toFloat(), 8.0f);
+        if (index == activeTrack)
+        {
+            graphics.setColour (primary.withAlpha (0.55f));
+            graphics.drawRoundedRectangle (stripBounds.toFloat().reduced (0.5f), 8.0f, 1.0f);
+        }
+
+        graphics.setColour (textMuted);
+        graphics.drawText ("GAIN", layout.gainCaption, juce::Justification::centredLeft);
+        graphics.drawText ("PAN", layout.panCaption, juce::Justification::centredLeft);
+
+        auto well = layout.meter.toFloat();
+        graphics.setColour (background.withAlpha (0.9f));
+        graphics.fillRoundedRectangle (well, 3.0f);
+        const auto level = displayedTrackPeaks[static_cast<std::size_t> (index)];
+        const auto normalised = juce::jlimit (0.0f, 1.0f, std::sqrt (level));
+        graphics.setColour (normalised > 0.9f ? danger : primary);
+        graphics.fillRoundedRectangle (well.withTop (well.getBottom() - well.getHeight() * normalised),
+                                       3.0f);
     }
 
+    // The master pair sits beside the strips. Nothing else in the window showed it.
     auto meterArea = trackCardBounds.reduced (16).removeFromRight (30).toFloat();
-    meterArea.removeFromTop (6.0f);
+    meterArea.removeFromTop (26.0f);
     meterArea.removeFromBottom (6.0f);
     const auto drawMeter = [&graphics, meterArea] (float level, float x)
     {
@@ -4302,6 +4518,11 @@ void MainEditorComponent::paint (juce::Graphics& graphics)
     };
     drawMeter (displayedLeftPeak, meterArea.getX());
     drawMeter (displayedRightPeak, meterArea.getX() + 12.0f);
+    graphics.setColour (textMuted);
+    graphics.setFont (uiFont (9.0f, juce::Font::bold));
+    graphics.drawText ("MASTER",
+                       trackCardBounds.reduced (16).removeFromRight (44).removeFromTop (18),
+                       juce::Justification::centredRight);
 }
 
 void MainEditorComponent::resized()
@@ -4311,13 +4532,27 @@ void MainEditorComponent::resized()
     area.removeFromTop (8);
     transportCardBounds = area.removeFromTop (70);
     area.removeFromTop (12);
+    footerBounds = area.removeFromBottom (20);
+    area.removeFromBottom (8);
 
     auto body = area;
-    deviceCardBounds = body.removeFromRight (326);
-    body.removeFromRight (12);
-    trackCardBounds = body.removeFromTop (221);
+    // 16 padding either side, the 40 high track header, the 6 gap, then the strips.
+    trackCardBounds = body.removeFromTop (32 + 40 + 6 + trackStripHeight);
     body.removeFromTop (12);
-    keyboardCardBounds = body.removeFromBottom (154);
+
+    // The keyboard is optional, and it yields before the piano roll does.
+    keyboardCardBounds = {};
+    if (keyboardVisible)
+    {
+        const auto keyboardHeight = juce::jmin (118, body.getHeight() - 320);
+        if (keyboardHeight > 64)
+        {
+            keyboardCardBounds = body.removeFromBottom (keyboardHeight);
+            body.removeFromBottom (12);
+        }
+    }
+
+    editProposalBounds = body.removeFromBottom (110);
     body.removeFromBottom (12);
     loopCardBounds = body;
 
@@ -4335,6 +4570,12 @@ void MainEditorComponent::resized()
     projectNameLabel.setBounds (projectHeader);
 
     auto transport = transportCardBounds.reduced (14);
+    settingsButton.setBounds (transport.removeFromRight (76));
+    transport.removeFromRight (6);
+    advancedToggleButton.setBounds (transport.removeFromRight (92));
+    transport.removeFromRight (6);
+    keyboardToggleButton.setBounds (transport.removeFromRight (62));
+    transport.removeFromRight (14);
     playButton.setBounds (transport.removeFromLeft (104));
     transport.removeFromLeft (7);
     stopButton.setBounds (transport.removeFromLeft (62));
@@ -4351,58 +4592,47 @@ void MainEditorComponent::resized()
 
     auto track = trackCardBounds.reduced (16);
     track.removeFromRight (44);
-    auto trackHeader = track.removeFromTop (43);
-    pluginEditorButton.setBounds (trackHeader.removeFromRight (138).reduced (0, 4));
+    auto trackHeader = track.removeFromTop (40);
+    trackHeader.removeFromTop (18);
+    pluginEditorButton.setBounds (trackHeader.removeFromRight (128));
+    trackHeader.removeFromRight (8);
+    moveTrackRightButton.setBounds (trackHeader.removeFromRight (30));
+    trackHeader.removeFromRight (4);
+    moveTrackLeftButton.setBounds (trackHeader.removeFromRight (30));
+    trackHeader.removeFromRight (8);
+    removeTrackButton.setBounds (trackHeader.removeFromRight (62));
+    trackHeader.removeFromRight (4);
+    addTrackButton.setBounds (trackHeader.removeFromRight (62));
     trackHeader.removeFromRight (12);
-    trackNameLabel.setBounds (trackHeader.removeFromTop (24));
+    trackNameLabel.setBounds (trackHeader.removeFromTop (22));
     trackMetaLabel.setBounds (trackHeader);
-    track.removeFromTop (3);
-    auto mixerControls = track.removeFromTop (32);
-    trackSelector.setBounds (mixerControls.removeFromLeft (140).reduced (0, 2));
-    mixerControls.removeFromLeft (5);
-    addTrackButton.setBounds (mixerControls.removeFromLeft (62));
-    mixerControls.removeFromLeft (5);
-    removeTrackButton.setBounds (mixerControls.removeFromLeft (62));
-    mixerControls.removeFromLeft (5);
-    moveTrackLeftButton.setBounds (mixerControls.removeFromLeft (32));
-    mixerControls.removeFromLeft (4);
-    moveTrackRightButton.setBounds (mixerControls.removeFromLeft (32));
-    mixerControls.removeFromLeft (10);
-    trackGainLabel.setBounds (mixerControls.removeFromLeft (34));
-    trackGainSlider.setBounds (mixerControls.removeFromLeft (120));
-    mixerControls.removeFromLeft (6);
-    trackPanLabel.setBounds (mixerControls.removeFromLeft (30));
-    trackPanSlider.setBounds (mixerControls.removeFromLeft (90));
-    mixerControls.removeFromLeft (6);
-    trackMuteButton.setBounds (mixerControls.removeFromLeft (60));
-    mixerControls.removeFromLeft (5);
-    trackSoloButton.setBounds (mixerControls.removeFromLeft (56));
-    track.removeFromTop (3);
-    soundWorkflowLabel.setBounds (track.removeFromTop (20));
-    track.removeFromTop (3);
-    auto soundControls = track.removeFromTop (30);
-    soundNameEditor.setBounds (soundControls.removeFromLeft (180));
-    soundControls.removeFromLeft (7);
-    captureSoundButton.setBounds (soundControls.removeFromLeft (88));
-    soundControls.removeFromLeft (7);
-    auditionProjectSoundButton.setBounds (soundControls.removeFromLeft (84));
-    soundControls.removeFromLeft (7);
-    auditionCandidateButton.setBounds (soundControls.removeFromLeft (84));
-    soundControls.removeFromLeft (7);
-    applySoundButton.setBounds (soundControls.removeFromLeft (72));
-    soundControls.removeFromLeft (7);
-    rejectSoundButton.setBounds (soundControls.removeFromLeft (76));
+    track.removeFromTop (6);
 
-    track.removeFromTop (5);
-    auto shelfControls = track.removeFromTop (28);
-    shelfLabel.setBounds (shelfControls.removeFromLeft (46));
-    shelfCombo.setBounds (shelfControls.removeFromLeft (180).reduced (0, 1));
-    shelfControls.removeFromLeft (7);
-    loadShelfButton.setBounds (shelfControls.removeFromLeft (88));
-    shelfControls.removeFromLeft (7);
-    saveShelfButton.setBounds (shelfControls.removeFromLeft (104));
-    shelfControls.removeFromLeft (7);
-    removeShelfButton.setBounds (shelfControls.removeFromLeft (76));
+    auto strips = track.removeFromTop (trackStripHeight);
+    const auto stripCount = juce::jmax (1, visibleTrackStripCount);
+    const auto stripGap = 8;
+    const auto stripWidth = juce::jmin (312,
+                                        (strips.getWidth() - stripGap * (stripCount - 1)) / stripCount);
+    for (int index = 0; index < SongProject::maxProjectTracks; ++index)
+    {
+        auto& stripBounds = trackStripBounds[static_cast<std::size_t> (index)];
+        if (index >= visibleTrackStripCount)
+        {
+            stripBounds = {};
+            continue;
+        }
+
+        stripBounds = strips.removeFromLeft (stripWidth);
+        strips.removeFromLeft (stripGap);
+
+        const auto layout = layOutTrackStrip (stripBounds);
+        auto& strip = trackStrips[static_cast<std::size_t> (index)];
+        strip.selectButton.setBounds (layout.select);
+        strip.gainSlider.setBounds (layout.gain);
+        strip.panSlider.setBounds (layout.pan);
+        strip.muteButton.setBounds (layout.mute);
+        strip.soloButton.setBounds (layout.solo);
+    }
 
     auto loop = loopCardBounds.reduced (12);
     loop.removeFromTop (21);
@@ -4418,65 +4648,58 @@ void MainEditorComponent::resized()
     if (pianoRoll != nullptr)
         pianoRoll->setBounds (loop.reduced (0, 2));
 
-    if (keyboard != nullptr)
+    if (keyboard != nullptr && ! keyboardCardBounds.isEmpty())
         keyboard->setBounds (keyboardCardBounds.reduced (12).withTrimmedTop (24));
 
-    auto device = deviceCardBounds.reduced (14);
-    device.removeFromTop (24);
-    deviceSummaryLabel.setBounds (device.removeFromTop (62));
-    diagnosticLabel.setBounds (device.removeFromBottom (34));
-    device.removeFromBottom (6);
-    const auto proposalHeight = juce::jlimit (240, 260, device.getHeight() - 180);
-    editProposalBounds = device.removeFromBottom (proposalHeight);
-    device.removeFromBottom (8);
-    if (deviceSelector != nullptr)
-        deviceSelector->setBounds (device);
+    diagnosticLabel.setBounds (footerBounds);
 
-    auto proposal = editProposalBounds.reduced (10);
+    auto proposal = editProposalBounds.reduced (14);
     proposal.removeFromTop (20);
-    editProposalSummaryLabel.setBounds (proposal.removeFromTop (28));
-    editProposalDiffLabel.setBounds (proposal.removeFromTop (50));
-    proposal.removeFromTop (3);
-    auto dynamicsCaptions = proposal.removeFromTop (13);
-    const auto dynamicsGap = 4;
-    const auto scopeWidth = 112;
-    const auto strengthWidth = 66;
-    dynamicsScopeLabel.setBounds (dynamicsCaptions.removeFromLeft (scopeWidth));
-    dynamicsCaptions.removeFromLeft (dynamicsGap);
-    dynamicsStrengthLabel.setBounds (dynamicsCaptions.removeFromLeft (strengthWidth));
-    dynamicsCaptions.removeFromLeft (dynamicsGap);
-    dynamicsSeedLabel.setBounds (dynamicsCaptions);
 
-    auto dynamicsControls = proposal.removeFromTop (26);
-    dynamicsScopeCombo.setBounds (dynamicsControls.removeFromLeft (scopeWidth));
-    dynamicsControls.removeFromLeft (dynamicsGap);
-    dynamicsStrengthEditor.setBounds (dynamicsControls.removeFromLeft (strengthWidth));
-    dynamicsControls.removeFromLeft (dynamicsGap);
-    dynamicsSeedEditor.setBounds (dynamicsControls);
-    proposal.removeFromTop (4);
-    auto previewActions = proposal.removeFromTop (28);
-    const auto previewGap = 4;
-    const auto previewWidth = (previewActions.getWidth() - previewGap) / 2;
-    previewSelectedEditButton.setBounds (previewActions.removeFromLeft (previewWidth));
-    previewActions.removeFromLeft (previewGap);
-    previewDynamicsButton.setBounds (previewActions);
-    proposal.removeFromTop (4);
-    auto commandActions = proposal.removeFromTop (26);
-    const auto commandGap = 4;
-    const auto commandWidth = (commandActions.getWidth() - commandGap) / 2;
-    loadCommandButton.setBounds (commandActions.removeFromLeft (commandWidth));
-    commandActions.removeFromLeft (commandGap);
-    copyHashButton.setBounds (commandActions);
-    proposal.removeFromTop (5);
-    auto editActions = proposal.removeFromTop (28);
-    const auto actionGap = 4;
-    const auto actionWidth = (editActions.getWidth() - actionGap * 3) / 4;
-    auditionEditProjectButton.setBounds (editActions.removeFromLeft (actionWidth));
-    editActions.removeFromLeft (actionGap);
-    auditionEditCandidateButton.setBounds (editActions.removeFromLeft (actionWidth));
-    editActions.removeFromLeft (actionGap);
-    applyEditButton.setBounds (editActions.removeFromLeft (actionWidth));
-    editActions.removeFromLeft (actionGap);
-    rejectEditButton.setBounds (editActions);
+    auto actions = proposal.removeFromRight (juce::jlimit (420, 640, proposal.getWidth() / 2));
+    const auto actionGap = 5;
+    auto firstRow = actions.removeFromTop (30);
+    actions.removeFromTop (6);
+    auto secondRow = actions.removeFromTop (30);
+    const auto actionWidth = (firstRow.getWidth() - actionGap * 3) / 4;
+    for (auto* button : { &previewSelectedEditButton, &previewDynamicsButton,
+                          &loadCommandButton, &copyHashButton })
+    {
+        button->setBounds (firstRow.removeFromLeft (actionWidth));
+        firstRow.removeFromLeft (actionGap);
+    }
+    for (auto* button : { &auditionEditProjectButton, &auditionEditCandidateButton,
+                          &applyEditButton, &rejectEditButton })
+    {
+        button->setBounds (secondRow.removeFromLeft (actionWidth));
+        secondRow.removeFromLeft (actionGap);
+    }
+
+    if (advancedControlsVisible)
+    {
+        proposal.removeFromRight (14);
+        auto dynamics = proposal.removeFromRight (juce::jmin (270, proposal.getWidth() / 2));
+        auto dynamicsCaptions = dynamics.removeFromTop (14);
+        dynamics.removeFromTop (2);
+        auto dynamicsControls = dynamics.removeFromTop (28);
+        const auto dynamicsGap = 4;
+        const auto scopeWidth = 112;
+        const auto strengthWidth = 66;
+        dynamicsScopeLabel.setBounds (dynamicsCaptions.removeFromLeft (scopeWidth));
+        dynamicsCaptions.removeFromLeft (dynamicsGap);
+        dynamicsStrengthLabel.setBounds (dynamicsCaptions.removeFromLeft (strengthWidth));
+        dynamicsCaptions.removeFromLeft (dynamicsGap);
+        dynamicsSeedLabel.setBounds (dynamicsCaptions);
+        dynamicsScopeCombo.setBounds (dynamicsControls.removeFromLeft (scopeWidth));
+        dynamicsControls.removeFromLeft (dynamicsGap);
+        dynamicsStrengthEditor.setBounds (dynamicsControls.removeFromLeft (strengthWidth));
+        dynamicsControls.removeFromLeft (dynamicsGap);
+        dynamicsSeedEditor.setBounds (dynamicsControls);
+    }
+
+    proposal.removeFromRight (14);
+    editProposalSummaryLabel.setBounds (proposal.removeFromTop (28));
+    editProposalDiffLabel.setBounds (proposal);
 }
+
 } // namespace resonance

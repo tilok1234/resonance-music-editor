@@ -192,7 +192,7 @@ A passing probe is still not a listening approval. It catches silence, not badne
 Before calling an interaction milestone complete, verify the exact packaged Release executable:
 
 - startup and shutdown;
-- device selector behavior;
+- device selector behavior, opened from the **Audio** button;
 - Play/Pause, Stop/Rewind, and Panic;
 - piano-roll add, select, drag, resize, velocity, delete, and vertical scroll;
 - add a second track, switch both directions, verify the piano roll and native Surge window follow selection, and check that pending sound/note B blocks track switching;

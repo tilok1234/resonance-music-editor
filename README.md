@@ -47,8 +47,9 @@ Keep the master level low for the first listen. It defaults to `-12 dB`, and tra
 - Select a note and edit velocity, or right-click/press **Delete** to remove it.
 - Choose `1/32`, `1/16`, `1/8`, or `1/4` grid snap and a one-, two-, four-, or eight-bar loop.
 - Use **Undo/Redo** or `Ctrl+Z` / `Ctrl+Y` while playback continues.
-- Use the track selector to choose which clip, sound, mixer values, and Surge window you are editing. **+ Track** duplicates the selected track into a second independent Surge instance; **- Track**, **<**, and **>** remove or reorder it with Undo support.
-- Set each selected track's gain, pan, mute, and solo in the track card. The two vertical meters at the right show the selected track, while **MASTER** remains the final output level.
+- The mixer shows one strip per track. Click a strip's name to choose which clip, sound, and Surge window you are editing. **+ Track** duplicates the selected track into another independent Surge instance; **- Track**, **<**, and **>** remove or reorder it with Undo support.
+- Set gain, pan, **M**, and **S** on any strip without selecting it first; each strip carries its own level meter. The two vertical meters beside the strips are the **MASTER** output.
+- **Audio** opens the device chooser, **Keys** shows or hides the on-screen audition keyboard, and **Advanced** shows or hides the dynamics resolver inputs.
 - Use **Save** to create a `.resonance.json` song. **Open** restores the notes, tempo, loop, snap, and exact versioned Surge state.
 
 Unsaved project changes are marked with `*`. New, Open, and window close ask before discarding project edits, an unapplied B, or live Surge state that matches neither known live-equivalent snapshot.

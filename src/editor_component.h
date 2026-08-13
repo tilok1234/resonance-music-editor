@@ -46,11 +46,14 @@ public:
 
 private:
     class PluginEditorWindow;
+    class SettingsWindow;
 
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void initialiseAudioAndPlugin();
     void configureControls();
+    void configureTrackStrips();
+    void refreshTrackStrips();
     juce::AudioPluginInstance* getActivePlugin() const noexcept;
     bool canChangeTrackContext();
     void selectTrack (int trackIndex);
@@ -64,6 +67,10 @@ private:
     void publishProjectMixerSnapshot (const SequenceSnapshot* activeTrackOverride = nullptr);
     void updateActiveSoundTracking();
     void openPluginEditor();
+    void openSettingsWindow();
+    void toggleKeyboard();
+    void toggleAdvancedControls();
+    void applyAdvancedControlVisibility();
     void captureSoundCandidate();
     void auditionProjectSound();
     void auditionSoundCandidate();
@@ -132,6 +139,7 @@ private:
     std::unique_ptr<PianoRoll> pianoRoll;
     std::unique_ptr<juce::MidiKeyboardComponent> keyboard;
     std::unique_ptr<PluginEditorWindow> pluginEditorWindow;
+    std::unique_ptr<SettingsWindow> settingsWindow;
     std::unique_ptr<juce::FileChooser> activeFileChooser;
     std::array<juce::MemoryBlock, SongProject::maxProjectTracks> initialPluginStates;
     std::array<juce::String, SongProject::maxProjectTracks> slotProjectStateSha256;
@@ -174,6 +182,9 @@ private:
     juce::TextButton stopButton { "Stop" };
     juce::TextButton panicButton { "Panic" };
     juce::TextButton pluginEditorButton { "Open Surge XT" };
+    juce::TextButton settingsButton { "Audio" };
+    juce::TextButton keyboardToggleButton { "Keys" };
+    juce::TextButton advancedToggleButton { "Advanced" };
     juce::TextButton auditionProjectSoundButton { "Audition A" };
     juce::TextButton captureSoundButton { "Capture B" };
     juce::TextButton auditionCandidateButton { "Audition B" };
@@ -196,18 +207,13 @@ private:
     juce::TextButton removeTrackButton { "- Track" };
     juce::TextButton moveTrackLeftButton { "<" };
     juce::TextButton moveTrackRightButton { ">" };
-    juce::ToggleButton trackMuteButton { "Mute" };
-    juce::ToggleButton trackSoloButton { "Solo" };
     juce::TextEditor soundNameEditor;
-    juce::ComboBox trackSelector;
     juce::ComboBox dynamicsScopeCombo;
     juce::TextEditor dynamicsStrengthEditor;
     juce::TextEditor dynamicsSeedEditor;
     juce::Slider bpmSlider;
     juce::Slider gainSlider;
     juce::Slider velocitySlider;
-    juce::Slider trackGainSlider;
-    juce::Slider trackPanSlider;
     juce::ComboBox snapCombo;
     juce::ComboBox loopLengthCombo;
     juce::Label bpmLabel;
@@ -215,15 +221,29 @@ private:
     juce::Label snapLabel;
     juce::Label loopLengthLabel;
     juce::Label velocityLabel;
-    juce::Label trackGainLabel;
-    juce::Label trackPanLabel;
+
+    // One strip per project track. The mixer previously showed only the selected
+    // track, so a four-track balance could not be seen or set without clicking
+    // through every track in turn.
+    struct TrackStrip
+    {
+        juce::TextButton selectButton;
+        juce::Slider gainSlider;
+        juce::Slider panSlider;
+        juce::ToggleButton muteButton { "M" };
+        juce::ToggleButton soloButton { "S" };
+    };
+    std::array<TrackStrip, SongProject::maxProjectTracks> trackStrips;
+    std::array<juce::Rectangle<int>, SongProject::maxProjectTracks> trackStripBounds;
+    std::array<float, SongProject::maxProjectTracks> displayedTrackPeaks {};
+    int visibleTrackStripCount = 0;
 
     juce::Rectangle<int> headerBounds;
     juce::Rectangle<int> transportCardBounds;
     juce::Rectangle<int> trackCardBounds;
     juce::Rectangle<int> loopCardBounds;
     juce::Rectangle<int> keyboardCardBounds;
-    juce::Rectangle<int> deviceCardBounds;
+    juce::Rectangle<int> footerBounds;
     juce::Rectangle<int> editProposalBounds;
 
     float displayedLeftPeak = 0.0f;
@@ -240,6 +260,10 @@ private:
     bool auditioningEditCandidate = false;
     bool applyingEditPreview = false;
     bool suppressProjectChanges = false;
+    // Layout state: the on-screen keyboard and the resolver inputs are both
+    // occasional, so neither holds space by default.
+    bool keyboardVisible = false;
+    bool advancedControlsVisible = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainEditorComponent)
 };
