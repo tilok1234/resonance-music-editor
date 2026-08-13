@@ -18,7 +18,12 @@ Working branch `codex/m6-two-track-authoring`, pushed, open as **draft PR #3** b
 
 | Commit | Slice |
 | --- | --- |
-| (tip) | M7.5 offline WAV render |
+| `0e5aacf` | M8 editor layout rebuild (tip) |
+| `d903c5b` | Headless modes no longer silently no-op |
+| `8e0e3e8` | `setSound`, and the overload it caused |
+| `3666910` | M8 command vocabulary, edit-command v2 |
+| `d32850a` | M8 agent control surface |
+| `f3ea185` | M7.5 offline WAV render |
 | `59af6c7` | Reference songs the docs point at |
 | `2644ea5` | Current-reference docs audit, handoff rewrite |
 | `58405d6` | M7.1 song canvas to 64 bars, schema v5, roll time axis |
@@ -31,7 +36,7 @@ Working branch `codex/m6-two-track-authoring`, pushed, open as **draft PR #3** b
 | `dc7a767` | External edit-command loading |
 | `b6af336` | Bounded M6 two-track authoring (prior baseline) |
 
-Everything through `59af6c7` is pushed and gathered in draft PR #3; nothing has been reviewed or merged. The accepted M4 baseline is `7af6573` on `codex/m4-accepted-0.3.0` (draft PR #1); the accepted M5 commit is `9d94780` (draft PR #2). Verify live `HEAD` and upstream before relying on any of these.
+Everything through `0e5aacf` is pushed and gathered in draft PR #3; nothing has been reviewed or merged. The accepted M4 baseline is `7af6573` on `codex/m4-accepted-0.3.0` (draft PR #1); the accepted M5 commit is `9d94780` (draft PR #2). Verify live `HEAD` and upstream before relying on any of these.
 
 ## What changed since 2026-08-09, and why
 
