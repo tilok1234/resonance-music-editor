@@ -47,7 +47,7 @@ A 2026-08-12 assessment found that the binding constraint on making songs was no
 8. **M7.1 song canvas, schema v5.** 64 bars, 1,024 notes per clip, horizontal zoom and scroll.
 9. **M7.5 offline render.** `--render` writes a 24-bit WAV through the production callback, with repeats and a release tail.
 10. **M8 agent control surface.** `--describe` and `--apply-command`, so an external agent can read and edit a project without the GUI.
-11. **M8 command vocabulary.** Edit-command version 2 adds tempo, song length, snap, title, mixer, and track add/remove operations alongside note changes, with the cap raised to 1,024 changes.
+11. **M8 command vocabulary.** Edit-command version 2 adds tempo, song length, snap, title, mixer, sound, and track add/remove operations alongside note changes, with the cap raised to 1,024 changes.
 
 ## The most important thing to understand
 
@@ -70,7 +70,7 @@ Carry both lessons forward:
 | Song project schemas | canonical writer `5`; accepted inputs `4`, `3`, `2`, `1` |
 | Track ceiling | 4 persisted; 8 runtime lanes; 4 Surge instances preloaded |
 | Clip canvas | 4–256 beats (1–64 bars); 1,024 notes per clip |
-| Packaged audio probe | 1/1 expected-audible tracks, no clipping, no invalid samples |
+| Packaged audio probe | 1/1 expected-audible tracks, no per-track overload, no clipping, no invalid samples |
 | Packaged command load | 6 refusal paths, Apply, replay-after-Apply refused, one-step Undo |
 | Packaged selection/clipboard | 19 checks |
 | Packaged sound shelf | 10 checks against two genuinely different Surge states |

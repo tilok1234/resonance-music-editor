@@ -16,14 +16,30 @@
     "masterPeak",
     "clipped",
     "invalidSampleCount",
-    "passed"
+    "passed",
+    "overloadedTrackCount"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "testVersion": { "type": "string", "minLength": 1 },
-    "projectPath": { "type": "string", "minLength": 1 },
-    "trackCount": { "type": "integer", "minimum": 1, "maximum": 4 },
-    "blockCount": { "type": "integer", "minimum": 64 },
+    "schemaVersion": {
+      "const": 1
+    },
+    "testVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "projectPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trackCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4
+    },
+    "blockCount": {
+      "type": "integer",
+      "minimum": 64
+    },
     "tracks": {
       "type": "array",
       "minItems": 1,
@@ -41,28 +57,86 @@
           "processedBlocks",
           "muted",
           "shouldSound",
-          "audible"
+          "audible",
+          "overloaded"
         ],
         "properties": {
-          "index": { "type": "integer", "minimum": 0, "maximum": 3 },
-          "name": { "type": "string", "minLength": 1 },
-          "noteCount": { "type": "integer", "minimum": 0, "maximum": 512 },
-          "midiOutputChannel": { "type": "integer", "minimum": 1, "maximum": 16 },
-          "gainDb": { "type": "number", "minimum": -60, "maximum": 12 },
-          "peak": { "type": "number", "minimum": 0 },
-          "processedBlocks": { "type": "integer", "minimum": 1 },
-          "muted": { "type": "boolean" },
-          "shouldSound": { "type": "boolean" },
-          "audible": { "type": "boolean" }
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "noteCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1024
+          },
+          "midiOutputChannel": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16
+          },
+          "gainDb": {
+            "type": "number",
+            "minimum": -60,
+            "maximum": 12
+          },
+          "peak": {
+            "type": "number",
+            "minimum": 0
+          },
+          "processedBlocks": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "muted": {
+            "type": "boolean"
+          },
+          "shouldSound": {
+            "type": "boolean"
+          },
+          "audible": {
+            "type": "boolean"
+          },
+          "overloaded": {
+            "const": false
+          }
         }
       }
     },
-    "audibleTrackCount": { "type": "integer", "minimum": 0, "maximum": 4 },
-    "expectedAudibleTrackCount": { "type": "integer", "minimum": 1, "maximum": 4 },
-    "masterPeak": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
-    "clipped": { "const": false },
-    "invalidSampleCount": { "const": 0 },
-    "passed": { "const": true },
-    "error": { "type": "string" }
+    "audibleTrackCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4
+    },
+    "expectedAudibleTrackCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4
+    },
+    "masterPeak": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1
+    },
+    "clipped": {
+      "const": false
+    },
+    "invalidSampleCount": {
+      "const": 0
+    },
+    "passed": {
+      "const": true
+    },
+    "error": {
+      "type": "string"
+    },
+    "overloadedTrackCount": {
+      "const": 0
+    }
   }
 }

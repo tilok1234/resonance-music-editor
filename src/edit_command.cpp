@@ -338,6 +338,16 @@ juce::Result parseProjectOperations (juce::DynamicObject& root,
                 return juce::Result::fail ("setTrackMixer must change at least one value");
             operation.type = ProjectOperationType::setTrackMixer;
         }
+        else if (type == "setSound")
+        {
+            if (! hasOnlyProperties (*object, { "type", "trackId", "soundName" }))
+                return juce::Result::fail ("setSound contains an unsupported field");
+            operation.trackId = requireString (*object, "trackId");
+            operation.text = requireString (*object, "soundName").trim();
+            if (operation.trackId.isEmpty() || operation.text.isEmpty())
+                return juce::Result::fail ("setSound requires a trackId and a soundName");
+            operation.type = ProjectOperationType::setSound;
+        }
         else if (type == "addTrack")
         {
             if (! hasOnlyProperties (*object, { "type", "trackId", "name" }))
@@ -561,6 +571,11 @@ juce::String serialiseEditCommand (const EditCommand& command)
                     if (operation.mute) operationObject->setProperty ("mute", *operation.mute);
                     if (operation.solo) operationObject->setProperty ("solo", *operation.solo);
                     break;
+                case ProjectOperationType::setSound:
+                    operationObject->setProperty ("type", "setSound");
+                    operationObject->setProperty ("trackId", operation.trackId);
+                    operationObject->setProperty ("soundName", operation.text);
+                    break;
                 case ProjectOperationType::addTrack:
                     operationObject->setProperty ("type", "addTrack");
                     if (operation.text.isNotEmpty())
@@ -637,6 +652,7 @@ juce::Result resolveSeededVelocityVariation (const SongProject& activeProject,
 
 juce::Result applyProjectOperations (const std::vector<ProjectOperation>& operations,
                                      SongProject& project,
+                                     const SoundShelf* shelf,
                                      std::vector<juce::String>* summaries,
                                      std::vector<juce::String>* createdTrackIds)
 {
@@ -699,6 +715,31 @@ juce::Result applyProjectOperations (const std::vector<ProjectOperation>& operat
                 break;
             }
 
+            case ProjectOperationType::setSound:
+            {
+                const auto index = trackIndexFor (operation.trackId);
+                if (index < 0)
+                    return juce::Result::fail ("setSound targets an unknown track: " + operation.trackId);
+                if (shelf == nullptr)
+                    return juce::Result::fail ("setSound requires a sound shelf, which is unavailable here");
+
+                const auto* entry = shelf->find (operation.text);
+                if (entry == nullptr)
+                    return juce::Result::fail ("No shelf sound named " + operation.text);
+
+                // applyPluginSound writes to the selected track, so the selection is
+                // moved for the write and restored immediately. Any note changes later
+                // in the same command still resolve against their own target.
+                const auto previousActive = project.getActiveTrackIndex();
+                project.setActiveTrackIndex (index);
+                const auto applied = project.applyPluginSound (entry->name, entry->state);
+                project.setActiveTrackIndex (previousActive);
+                if (applied.failed())
+                    return applied;
+                note ("sound " + entry->name + " on " + operation.trackId);
+                break;
+            }
+
             case ProjectOperationType::addTrack:
             {
                 const auto added = project.addTrackWithIdentity (operation.trackId, operation.text);
@@ -726,7 +767,8 @@ juce::Result applyProjectOperations (const std::vector<ProjectOperation>& operat
 
 juce::Result createEditCommandPreview (const EditCommand& command,
                                        const SongProject& activeProject,
-                                       EditCommandPreview& destination)
+                                       EditCommandPreview& destination,
+                                       const SoundShelf* shelf)
 {
     if (command.commandVersion != EditCommand::legacyVersion
         && command.commandVersion != EditCommand::supportedVersion)
@@ -763,6 +805,7 @@ juce::Result createEditCommandPreview (const EditCommand& command,
     std::vector<juce::String> createdTrackIds;
     const auto operationsResult = applyProjectOperations (command.projectOperations,
                                                           *candidate,
+                                                          shelf,
                                                           &operationSummaries,
                                                           &createdTrackIds);
     if (operationsResult.failed())
@@ -845,7 +888,7 @@ juce::Result createEditCommandPreview (const EditCommand& command,
     return juce::Result::ok();
 }
 
-juce::Result EditCommandPreview::applyTo (SongProject& activeProject)
+juce::Result EditCommandPreview::applyTo (SongProject& activeProject, const SoundShelf* shelf)
 {
     if (! isPending())
         return juce::Result::fail ("This edit preview has already been applied or rejected");
@@ -861,6 +904,7 @@ juce::Result EditCommandPreview::applyTo (SongProject& activeProject)
     {
         const auto operationsResult = applyProjectOperations (command.projectOperations,
                                                               activeProject,
+                                                              shelf,
                                                               nullptr,
                                                               nullptr);
         if (operationsResult.failed())

@@ -224,6 +224,29 @@
                 "minLength": 1
               }
             }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "trackId",
+              "soundName"
+            ],
+            "properties": {
+              "type": {
+                "const": "setSound"
+              },
+              "trackId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "soundName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              }
+            }
           }
         ]
       }

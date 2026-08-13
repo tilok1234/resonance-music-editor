@@ -51,10 +51,21 @@ bool writeReport (const juce::File& reportFile, const juce::var& report)
     return reportFile.replaceWithText (juce::JSON::toString (report, true));
 }
 
+juce::File resolveSoundShelfPath (const juce::StringArray& args)
+{
+    const auto supplied = getArgumentValue (args, "--sound-shelf");
+    if (supplied.isNotEmpty())
+        return juce::File (supplied);
+
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+               .getChildFile ("ResonanceMusicEditor")
+               .getChildFile ("sound-shelf.json");
+}
+
 // Compact, agent-facing view of a project: everything needed to reason about the music
 // and author a valid edit command, with the Base64 instrument state deliberately
-// omitted. A 32-bar four-track song is roughly 30 KB here against 448 KB on disk.
-juce::var describeProject (const SongProject& project)
+// omitted. A 32-bar four-track song is roughly 60 KB here against 438 KB on disk.
+juce::var describeProject (const SongProject& project, const SoundShelf& shelf)
 {
     auto* root = new juce::DynamicObject();
     juce::var description (root);
@@ -125,6 +136,19 @@ juce::var describeProject (const SongProject& project)
         tracks.add (trackVar);
     }
     root->setProperty ("tracks", tracks);
+
+    // An agent cannot ask for a sound it does not know exists.
+    juce::Array<juce::var> shelfSounds;
+    for (const auto& entry : shelf.getEntries())
+    {
+        auto* soundObject = new juce::DynamicObject();
+        juce::var soundVar (soundObject);
+        soundObject->setProperty ("name", entry.name);
+        soundObject->setProperty ("stateSha256", entry.stateSha256);
+        shelfSounds.add (soundVar);
+    }
+    root->setProperty ("shelfSounds", shelfSounds);
+    root->setProperty ("shelfSoundCount", static_cast<int> (shelf.getEntries().size()));
     return description;
 }
 
@@ -145,7 +169,9 @@ int runDescribe (const juce::StringArray& args)
         return 31;
     }
 
-    const auto description = describeProject (project);
+    SoundShelf shelf;
+    shelf.loadFrom (resolveSoundShelfPath (args));
+    const auto description = describeProject (project, shelf);
     const auto text = juce::JSON::toString (description, false);
     const auto outPath = getArgumentValue (args, "--out");
     if (outPath.isEmpty())
@@ -216,9 +242,18 @@ int runApplyCommand (const juce::StringArray& args)
         project.setActiveTrackIndex (targetTrackIndex);
     }
 
+    SoundShelf shelf;
+    const auto shelfPath = resolveSoundShelfPath (args);
+    const auto shelfLoaded = shelf.loadFrom (shelfPath);
+    if (shelfLoaded.failed())
+    {
+        std::cerr << "Sound shelf could not be read: " << shelfLoaded.getErrorMessage() << std::endl;
+        return 47;
+    }
+
     const auto beforeHash = project.getContentSha256();
     EditCommandPreview preview;
-    const auto previewed = createEditCommandPreview (command, project, preview);
+    const auto previewed = createEditCommandPreview (command, project, preview, &shelf);
     if (previewed.failed())
     {
         std::cerr << "Command rejected: " << previewed.getErrorMessage() << std::endl;
@@ -236,7 +271,7 @@ int runApplyCommand (const juce::StringArray& args)
         removals += diff.action == NoteEditAction::remove ? 1 : 0;
     }
 
-    const auto applied = preview.applyTo (project);
+    const auto applied = preview.applyTo (project, &shelf);
     if (applied.failed())
     {
         std::cerr << "Apply failed: " << applied.getErrorMessage() << std::endl;

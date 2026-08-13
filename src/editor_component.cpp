@@ -2166,6 +2166,7 @@ juce::var MainEditorComponent::runAudioProbeSelfTest (const juce::File& projectF
 
     juce::Array<juce::var> trackReports;
     auto audibleTracks = 0;
+    auto overloadedTracks = 0;
     auto expectedAudibleTracks = 0;
     auto expectationsMet = true;
     for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
@@ -2177,6 +2178,11 @@ juce::var MainEditorComponent::runAudioProbeSelfTest (const juce::File& projectF
         // -60 dBFS is the project's own lower mixer bound, so anything below it is
         // treated as silence rather than a quiet part.
         const auto audible = peak > 0.001f;
+        // Per-track meters are clamped to 1.0, so a track sitting exactly at full scale
+        // is overloading internally even when the summed master does not clip. Changing
+        // a track's sound can move its level by a lot, which is how this first appeared.
+        const auto overloaded = peak >= 0.999f;
+        overloadedTracks += overloaded ? 1 : 0;
         audibleTracks += audible ? 1 : 0;
         expectedAudibleTracks += shouldSound ? 1 : 0;
         expectationsMet = expectationsMet && (audible == shouldSound);
@@ -2196,6 +2202,7 @@ juce::var MainEditorComponent::runAudioProbeSelfTest (const juce::File& projectF
         trackObject->setProperty ("muted", settings.muted);
         trackObject->setProperty ("shouldSound", shouldSound);
         trackObject->setProperty ("audible", audible);
+        trackObject->setProperty ("overloaded", overloaded);
         trackReports.add (trackReport);
     }
 
@@ -2205,17 +2212,21 @@ juce::var MainEditorComponent::runAudioProbeSelfTest (const juce::File& projectF
     resultObject->setProperty ("expectedAudibleTrackCount", expectedAudibleTracks);
     resultObject->setProperty ("masterPeak", masterPeak);
     resultObject->setProperty ("clipped", masterPeak > 1.0f);
+    resultObject->setProperty ("overloadedTrackCount", overloadedTracks);
     resultObject->setProperty ("invalidSampleCount",
                                static_cast<int> (engine.getInvalidSampleCount()));
 
     const auto passed = expectationsMet && masterPeak > 0.001f && masterPeak <= 1.0f
-                        && engine.getInvalidSampleCount() == 0;
+                        && overloadedTracks == 0 && engine.getInvalidSampleCount() == 0;
     resultObject->setProperty ("passed", passed);
     if (! passed)
         resultObject->setProperty ("error",
-                                   juce::String (audibleTracks) + " of "
-                                       + juce::String (expectedAudibleTracks)
-                                       + " expected-audible tracks produced signal");
+                                   overloadedTracks > 0
+                                       ? juce::String (overloadedTracks)
+                                             + " track(s) reached full scale"
+                                       : juce::String (audibleTracks) + " of "
+                                             + juce::String (expectedAudibleTracks)
+                                             + " expected-audible tracks produced signal");
 
     return result;
 }
@@ -2640,7 +2651,7 @@ juce::Result MainEditorComponent::installEditPreview (EditCommand command,
         clearEditPreview (true);
 
     EditCommandPreview proposed;
-    const auto result = createEditCommandPreview (command, project, proposed);
+    const auto result = createEditCommandPreview (command, project, proposed, &soundShelf);
     if (result.failed())
     {
         projectStatusMessage = "EDIT PROPOSAL ERROR  /  " + result.getErrorMessage();
@@ -2699,7 +2710,7 @@ void MainEditorComponent::applyEditPreview()
     juce::Result result = juce::Result::ok();
     {
         const juce::ScopedValueSetter<bool> applying (applyingEditPreview, true);
-        result = editPreview->applyTo (project);
+        result = editPreview->applyTo (project, &soundShelf);
     }
 
     if (result.failed())
@@ -2718,7 +2729,17 @@ void MainEditorComponent::applyEditPreview()
     auditioningEditCandidate = false;
     if (pianoRoll != nullptr)
         pianoRoll->clearEditPreview();
-    projectStatusMessage = "NOTE EDIT APPLIED  /  ONE UNDO RESTORES A";
+
+    // A command may have changed a track's sound, which lives in the model. Restore any
+    // runtime slot whose state no longer matches so playback reflects what was applied.
+    const auto resync = synchronisePluginSlotsFromProject();
+    if (resync.failed())
+    {
+        runtimeProjectSyncError = resync.getErrorMessage();
+        showError ("Could not restore Surge XT", resync.getErrorMessage());
+    }
+
+    projectStatusMessage = "EDIT APPLIED  /  ONE UNDO RESTORES A";
     projectChanged();
 }
 

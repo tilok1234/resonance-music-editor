@@ -21,6 +21,7 @@ Edit-command **version 2**, which adds a `projectOperations` array alongside the
 | `setSnap` | 0.125, 0.25, 0.5, or 1.0 |
 | `setTitle` | 1 to 120 characters |
 | `setTrackMixer` | gain, pan, mute, solo; only the supplied fields change |
+| `setSound` | assigns a shelf sound to a track |
 | `addTrack` | with caller-supplied identity |
 | `removeTrack` | by id |
 
@@ -84,8 +85,23 @@ The same command against a project already at the four-track ceiling was refused
 
 A stale error message was also corrected along the way: the track-ceiling refusal still said "at most two instrument tracks" after the ceiling moved to four. It now derives from `maxProjectTracks`.
 
+## Choosing a sound
+
+`setSound` assigns a named shelf sound to a track. It is the one operation that touches more than the model: the model holds the state bytes, but a live plug-in instance also has to be restored or playback keeps the old sound. The GUI apply path therefore calls `synchronisePluginSlotsFromProject` afterwards, which restores exactly the slots whose state no longer matches.
+
+`applyPluginSound` writes to the selected track, so the operation moves the selection for the write and restores it immediately; note changes later in the same command still resolve against their own target.
+
+Both `--describe` and `--apply-command` resolve the shelf from `--sound-shelf`, defaulting to the same file the editor uses. `--describe` now lists the available sound names, because an agent cannot ask for a sound it does not know exists.
+
+### It immediately caused an overload
+
+Assigning two different shelf sounds to a two-track project left the lead track pinned at exactly full scale. Per-track meters are clamped to 1.0, so this was invisible: the summed master read 0.94 and the probe passed.
+
+The patches involved differ by 8.5 dB in intrinsic output at a fixed chord, and far more across register and velocity, so **changing a track's sound can move its level enormously**. A `setSound` should be followed by a level check.
+
+`--audio-probe` now reports a per-track `overloaded` flag for any track at or above 0.999 and fails on it. It caught the case above, a corrective `setTrackMixer` command brought the lead from −7 dB to −21 dB, and the probe then passed with the master at −14.5 dBFS.
+
 ## What an agent still cannot do
 
-- **Choose a sound.** `setSound` from the shelf is not implemented. It is the one operation that touches the plug-in runtime — the GUI path must restore state into a live instance, not only write it into the model — and it deserves its own slice.
 - **Create or place clips.** Reusable clip instances (M7.3) do not exist yet. When they do, they must ship with their command operations, or an agent will not be able to reach them.
 - **Undo a headless apply.** `--apply-command` saves the file; the undo history is per-session. Recovering means restoring the previous file.

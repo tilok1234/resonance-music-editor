@@ -1,6 +1,7 @@
 #pragma once
 
 #include "song_project.h"
+#include "sound_shelf.h"
 
 #include <cstdint>
 #include <memory>
@@ -33,6 +34,7 @@ enum class ProjectOperationType
     setSnap,
     setTitle,
     setTrackMixer,
+    setSound,
     addTrack,
     removeTrack
 };
@@ -97,7 +99,8 @@ public:
 
     bool isPending() const noexcept { return ! consumed && candidate != nullptr; }
     const SongProject* getCandidateProject() const noexcept { return candidate.get(); }
-    juce::Result applyTo (SongProject& activeProject);
+    // The shelf is required only when the command contains a setSound operation.
+    juce::Result applyTo (SongProject& activeProject, const SoundShelf* shelf = nullptr);
     juce::Result reject();
 
     EditCommand command;
@@ -112,7 +115,8 @@ public:
 private:
     friend juce::Result createEditCommandPreview (const EditCommand&,
                                                    const SongProject&,
-                                                   EditCommandPreview&);
+                                                   EditCommandPreview&,
+                                                   const SoundShelf*);
 
     std::unique_ptr<SongProject> candidate;
     bool consumed = false;
@@ -125,5 +129,6 @@ juce::Result resolveSeededVelocityVariation (const SongProject& activeProject,
                                              EditCommand& destination);
 juce::Result createEditCommandPreview (const EditCommand& command,
                                        const SongProject& activeProject,
-                                       EditCommandPreview& destination);
+                                       EditCommandPreview& destination,
+                                       const SoundShelf* shelf = nullptr);
 } // namespace resonance
