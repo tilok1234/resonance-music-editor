@@ -46,6 +46,7 @@ A 2026-08-12 assessment found that the binding constraint on making songs was no
 7. **Per-track audio probe.** See below.
 8. **M7.1 song canvas, schema v5.** 64 bars, 1,024 notes per clip, horizontal zoom and scroll.
 9. **M7.5 offline render.** `--render` writes a 24-bit WAV through the production callback, with repeats and a release tail.
+10. **M8 agent control surface.** `--describe` and `--apply-command`, so an external agent can read and edit a project without the GUI.
 
 ## The most important thing to understand
 
@@ -103,7 +104,8 @@ Each of these cost real time. They are recorded so they cost less next time.
 - Host-owned named A/B sound snapshots with Capture, Audition, Apply, Reject, one-transaction Undo, and a persistent named sound shelf.
 - Strict version-1 edit-command parser/serializer, full-project SHA-256 preconditions, non-mutating candidates, before/after diffs and overlays, consume-once Apply/Reject, deterministic seeded velocity resolver, and external command-file loading.
 - Fixed eight-lane `MixerSnapshot` and eight prepared runtime slots with preallocated scratch, separate scheduling/MIDI channels, bounded meters, and clean shutdown.
-- Twelve packaged modes, of which `--audio-probe` renders and measures signal and `--render` writes a 24-bit WAV.
+- Agent control surface: `--describe` emits a compact project view with the content hash and no Base64, and `--apply-command` applies a validated command headlessly. Neither loads an instrument.
+- Fourteen packaged modes, of which `--audio-probe` renders and measures signal and `--render` writes a 24-bit WAV.
 - Offline WAV render of a whole project through the production callback, with repeats, tail, and a schema-validated report.
 
 ## Known limitations

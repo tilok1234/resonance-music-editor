@@ -30,7 +30,7 @@ The transport is stopped once the requested repeats are rendered, so the tail ca
 
 The render drives `audioDeviceIOCallbackWithContext` with no audio device attached — the same path the editor plays through, and the same path `--audio-probe` already used. There is deliberately no second mixing implementation, so what is written is what the editor plays.
 
-Master gain is forced to unity so a render is reproducible rather than reflecting whatever the session's monitoring level happened to be. Per-track mixer gain and pan are part of the song and are kept.
+Master gain is forced to unity so a render reflects the song rather than whatever the session's monitoring level happened to be. That makes renders comparable in level; it does not make them bit-identical, for the reason described below. Per-track mixer gain and pan are part of the song and are kept.
 
 ### The report is the evidence
 
@@ -65,13 +65,31 @@ Measuring per-section RMS of the rendered file exposed a compositional flaw that
 | Outro, bars 29–32 | −22.7 dBFS |
 | Tail | −59.3 dBFS |
 
-The intro reads clearly at about 8 dB below the body. **The outro does not thin out at all** — it sits level with the A sections, because the harmony part receives a velocity lift in both the intro and the outro, and in the outro that lift cancels the intended thinning. The piece likely stops rather than resolves.
+The intro reads clearly at about 8 dB below the body. The outro sits close to the A sections rather than thinning, which is not what the arrangement intends: the harmony part receives a velocity lift in both the intro and the outro, and in the outro that lift works against the thinning.
 
-This is the third time in two days that moving into the audio domain found something the symbolic gates could not. It is worth noting what kind of finding it is: not a defect in the editor, but a defect in the music, surfaced by measurement rather than by listening. Measurement can show that a section is not dynamically differentiated. It cannot say whether the piece is any good.
+**Read those numbers with the noise floor below in mind.** The intro-to-body gap of about 8 dB is well outside it and is real. The outro-to-A difference of roughly 1 dB is not: it is inside the run-to-run variation and is not evidence on its own. The qualitative point — that the outro does not fall away the way the intro does — is consistent with the arrangement, but it is a listening question, not a measured one.
+
+## The render is not reproducible
+
+Two renders of the identical project produce different audio. Measured over a 32-bar four-track song:
+
+| Comparison | Value |
+| --- | --- |
+| Difference RMS between two identical renders | −19.8 dBFS, about 140% of signal RMS |
+| Per-4-bar section spread | up to ±2.3 dB |
+
+The large sample-wise difference alongside a similar overall level is the signature of randomised oscillator start phase — normal synthesiser behaviour, and a property of the instrument rather than a defect in the host.
+
+Three consequences worth carrying forward:
+
+1. **Measurement cannot A/B small edits.** Anything under roughly ±2.5 dB per section is indistinguishable from run-to-run variation. An early attempt to verify a velocity change to one section by comparing renders produced a difference smaller than the noise floor and was worthless.
+2. **The render gate's assertions are unaffected.** Non-silence, no clipping, no invalid samples, and complete file length are all robust to phase randomisation.
+3. **Roadmap M9 lists "deterministic render manifests and hashes".** That goal is not achievable while the instrument randomises phase, and will need either a seedable instrument state, a documented tolerance-based comparison instead of hashing, or an explicit decision that renders are not bit-reproducible.
 
 ## What remains open
 
 - The rendered audio has no listening approval, and neither does anything else since M5.
 - No stems, loop-region metadata, normalisation, dither, or loudness targets. Those are M9 concerns.
 - Render is offline-only and single-file; there is no progress UI, and a long render blocks the message thread.
-- The outro flaw above is unfixed. It is a compositional choice rather than a defect, and belongs to whoever is judging the music.
+- Whether the outro resolves is unresolved and is a listening question, not a measurable one at this noise floor.
+- Render reproducibility is unaddressed. It blocks the M9 deterministic-manifest goal.

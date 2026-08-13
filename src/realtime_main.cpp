@@ -51,6 +51,227 @@ bool writeReport (const juce::File& reportFile, const juce::var& report)
     return reportFile.replaceWithText (juce::JSON::toString (report, true));
 }
 
+// Compact, agent-facing view of a project: everything needed to reason about the music
+// and author a valid edit command, with the Base64 instrument state deliberately
+// omitted. A 32-bar four-track song is roughly 30 KB here against 448 KB on disk.
+juce::var describeProject (const SongProject& project)
+{
+    auto* root = new juce::DynamicObject();
+    juce::var description (root);
+    root->setProperty ("schemaVersion", project.getSchemaVersion());
+    root->setProperty ("title", project.getTitle());
+    root->setProperty ("tempoBpm", project.getTempoBpm());
+    root->setProperty ("sampleRate", project.getSampleRate());
+    root->setProperty ("snapBeats", project.getSnapBeats());
+    root->setProperty ("loopLengthBeats", project.getLoopLengthBeats());
+    root->setProperty ("loopLengthTicks",
+                       juce::roundToInt (project.getLoopLengthBeats() * 960.0));
+    root->setProperty ("ppq", 960);
+    // The precondition for any command against this exact state.
+    root->setProperty ("projectContentSha256", project.getContentSha256());
+    root->setProperty ("trackCount", project.getTrackCount());
+    root->setProperty ("activeTrackIndex", project.getActiveTrackIndex());
+    root->setProperty ("maxProjectTracks", SongProject::maxProjectTracks);
+    root->setProperty ("maxNotesPerClip", static_cast<int> (maxSequenceNotes));
+    root->setProperty ("minimumLoopBeats", minimumLoopBeats);
+    root->setProperty ("maximumLoopBeats", maximumLoopBeats);
+
+    juce::Array<juce::var> tracks;
+    for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
+    {
+        auto* trackObject = new juce::DynamicObject();
+        juce::var trackVar (trackObject);
+        const auto mixer = project.getTrackMixerSettings (trackIndex);
+        const auto midi = project.getTrackMidiRouting (trackIndex);
+        trackObject->setProperty ("index", trackIndex);
+        trackObject->setProperty ("id", project.getTrackId (trackIndex));
+        trackObject->setProperty ("name", project.getTrackName (trackIndex));
+        trackObject->setProperty ("clipId", project.getClipId (trackIndex));
+        trackObject->setProperty ("gainDb", mixer.gainDecibels);
+        trackObject->setProperty ("pan", mixer.pan);
+        trackObject->setProperty ("mute", mixer.muted);
+        trackObject->setProperty ("solo", mixer.solo);
+        trackObject->setProperty ("midiInputChannel", midi.inputChannel);
+        trackObject->setProperty ("midiOutputChannel", midi.outputChannel);
+        trackObject->setProperty ("soundName", project.getPluginSoundName (trackIndex));
+        // Identity and integrity only; the opaque state bytes are not included.
+        trackObject->setProperty ("stateSha256", project.getPluginStateSha256 (trackIndex));
+
+        const auto notes = project.getNotes (trackIndex);
+        trackObject->setProperty ("noteCount", static_cast<int> (notes.size()));
+
+        juce::Array<juce::var> noteArray;
+        auto lowestPitch = 128;
+        auto highestPitch = -1;
+        for (const auto& note : notes)
+        {
+            auto* noteObject = new juce::DynamicObject();
+            juce::var noteVar (noteObject);
+            noteObject->setProperty ("id", note.id);
+            noteObject->setProperty ("startTick", juce::roundToInt (note.beat * 960.0));
+            noteObject->setProperty ("lengthTicks", juce::roundToInt (note.lengthBeats * 960.0));
+            noteObject->setProperty ("midiNote", note.midiNote);
+            noteObject->setProperty ("velocity", note.velocity);
+            noteArray.add (noteVar);
+            lowestPitch = juce::jmin (lowestPitch, note.midiNote);
+            highestPitch = juce::jmax (highestPitch, note.midiNote);
+        }
+        if (highestPitch >= 0)
+        {
+            trackObject->setProperty ("lowestMidiNote", lowestPitch);
+            trackObject->setProperty ("highestMidiNote", highestPitch);
+        }
+        trackObject->setProperty ("notes", noteArray);
+        tracks.add (trackVar);
+    }
+    root->setProperty ("tracks", tracks);
+    return description;
+}
+
+int runDescribe (const juce::StringArray& args)
+{
+    const auto projectPath = getArgumentValue (args, "--project");
+    if (projectPath.isEmpty())
+    {
+        std::cerr << "--describe requires --project <song.resonance.json>" << std::endl;
+        return 30;
+    }
+
+    SongProject project;
+    const auto loaded = project.loadFromFile (juce::File (projectPath));
+    if (loaded.failed())
+    {
+        std::cerr << "Could not load project: " << loaded.getErrorMessage() << std::endl;
+        return 31;
+    }
+
+    const auto description = describeProject (project);
+    const auto text = juce::JSON::toString (description, false);
+    const auto outPath = getArgumentValue (args, "--out");
+    if (outPath.isEmpty())
+    {
+        std::cout << text << std::endl;
+        return 0;
+    }
+
+    juce::File outFile (outPath);
+    outFile.getParentDirectory().createDirectory();
+    return outFile.replaceWithText (text) ? 0 : 32;
+}
+
+// Applies a command file to a project file with the same validation, hash
+// precondition, and note operations the interactive path uses, and no plug-in loaded.
+int runApplyCommand (const juce::StringArray& args)
+{
+    const auto projectPath = getArgumentValue (args, "--project");
+    const auto commandPath = getArgumentValue (args, "--command");
+    if (projectPath.isEmpty() || commandPath.isEmpty())
+    {
+        std::cerr << "--apply-command requires --project and --command" << std::endl;
+        return 40;
+    }
+
+    const juce::File projectFile (projectPath);
+    SongProject project;
+    const auto loaded = project.loadFromFile (projectFile);
+    if (loaded.failed())
+    {
+        std::cerr << "Could not load project: " << loaded.getErrorMessage() << std::endl;
+        return 41;
+    }
+
+    const juce::File commandFile (commandPath);
+    if (! commandFile.existsAsFile())
+    {
+        std::cerr << "Command file not found: " << commandPath << std::endl;
+        return 42;
+    }
+
+    EditCommand command;
+    const auto parsed = parseEditCommand (commandFile.loadFileAsString(), command);
+    if (parsed.failed())
+    {
+        std::cerr << "Command parse failed: " << parsed.getErrorMessage() << std::endl;
+        return 43;
+    }
+
+    // Command previews validate against the selected track, which is a UI concept with
+    // no meaning headlessly. Here the command's own target defines the selection, so an
+    // agent can address any track without a session. Selection is not serialised, so
+    // this does not alter the saved project.
+    auto targetTrackIndex = -1;
+    for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
+        if (project.getTrackId (trackIndex) == command.trackId)
+            targetTrackIndex = trackIndex;
+
+    if (targetTrackIndex < 0)
+    {
+        std::cerr << "No track with id " << command.trackId << " in this project" << std::endl;
+        return 44;
+    }
+    project.setActiveTrackIndex (targetTrackIndex);
+
+    const auto beforeHash = project.getContentSha256();
+    EditCommandPreview preview;
+    const auto previewed = createEditCommandPreview (command, project, preview);
+    if (previewed.failed())
+    {
+        std::cerr << "Command rejected: " << previewed.getErrorMessage() << std::endl;
+        return 44;
+    }
+
+    const auto diffCount = static_cast<int> (preview.noteDiffs.size());
+    auto additions = 0;
+    auto updates = 0;
+    auto removals = 0;
+    for (const auto& diff : preview.noteDiffs)
+    {
+        additions += diff.action == NoteEditAction::add ? 1 : 0;
+        updates += diff.action == NoteEditAction::update ? 1 : 0;
+        removals += diff.action == NoteEditAction::remove ? 1 : 0;
+    }
+
+    const auto applied = preview.applyTo (project);
+    if (applied.failed())
+    {
+        std::cerr << "Apply failed: " << applied.getErrorMessage() << std::endl;
+        return 45;
+    }
+
+    const auto outPath = getArgumentValue (args, "--out");
+    const juce::File destination (outPath.isNotEmpty() ? outPath : projectPath);
+    const auto saved = project.saveToFile (destination);
+    if (saved.failed())
+    {
+        std::cerr << "Save failed: " << saved.getErrorMessage() << std::endl;
+        return 46;
+    }
+
+    auto* reportObject = new juce::DynamicObject();
+    juce::var report (reportObject);
+    reportObject->setProperty ("schemaVersion", 1);
+    reportObject->setProperty ("projectPath", projectFile.getFileName());
+    reportObject->setProperty ("commandPath", commandFile.getFileName());
+    reportObject->setProperty ("outputPath", destination.getFileName());
+    reportObject->setProperty ("summary", command.summary);
+    reportObject->setProperty ("beforeContentSha256", beforeHash);
+    reportObject->setProperty ("afterContentSha256", project.getContentSha256());
+    reportObject->setProperty ("noteDiffCount", diffCount);
+    reportObject->setProperty ("added", additions);
+    reportObject->setProperty ("updated", updates);
+    reportObject->setProperty ("removed", removals);
+    reportObject->setProperty ("passed", true);
+
+    const auto reportPath = getArgumentValue (args, "--report");
+    const auto text = juce::JSON::toString (report, true);
+    if (reportPath.isNotEmpty())
+        writeReport (juce::File (reportPath), report);
+    else
+        std::cout << text << std::endl;
+
+    return 0;
+}
+
 int runM6RuntimeTest (const juce::StringArray& args)
 {
     const auto inventoryFile = resolvePathArgument (args, "--inventory", "plugin-inventory.json");
@@ -664,6 +885,22 @@ public:
         if (args.contains ("--self-test"))
         {
             setApplicationReturnValue (runSelfTest (args));
+            quit();
+            return;
+        }
+
+        // Agent-facing modes. Neither needs an instrument, so both exit before the
+        // window is built and the four Surge instances are preloaded.
+        if (args.contains ("--describe"))
+        {
+            setApplicationReturnValue (runDescribe (args));
+            quit();
+            return;
+        }
+
+        if (args.contains ("--apply-command"))
+        {
+            setApplicationReturnValue (runApplyCommand (args));
             quit();
             return;
         }
