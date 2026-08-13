@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resonance.local/schema/edit-command-v1.json",
+  "title": "Resonance Edit Command v1 (archived input contract)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "commandVersion",
+    "projectContentSha256",
+    "operation",
+    "target",
+    "summary",
+    "changes"
+  ],
+  "properties": {
+    "commandVersion": { "const": 1 },
+    "projectContentSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "operation": { "const": "editNotes" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trackId", "clipId"],
+      "properties": {
+        "trackId": { "type": "string", "minLength": 1 },
+        "clipId": { "type": "string", "minLength": 1 }
+      }
+    },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "seed": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+    "changes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/addChange" },
+          { "$ref": "#/$defs/updateChange" },
+          { "$ref": "#/$defs/removeChange" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "startTick", "lengthTicks", "midiNote", "velocity"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "startTick": { "type": "integer", "minimum": 0, "maximum": 245759 },
+        "lengthTicks": { "type": "integer", "minimum": 1, "maximum": 245760 },
+        "midiNote": { "type": "integer", "minimum": 0, "maximum": 127 },
+        "velocity": { "type": "integer", "minimum": 1, "maximum": 127 }
+      }
+    },
+    "addChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "note"],
+      "properties": {
+        "action": { "const": "add" },
+        "note": { "$ref": "#/$defs/note" }
+      }
+    },
+    "updateChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "note"],
+      "properties": {
+        "action": { "const": "update" },
+        "note": { "$ref": "#/$defs/note" }
+      }
+    },
+    "removeChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "noteId"],
+      "properties": {
+        "action": { "const": "remove" },
+        "noteId": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

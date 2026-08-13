@@ -44,7 +44,9 @@
     "archivedMigrationPassed",
     "archivedSourceSha256",
     "longCanvasPassed",
-    "maximumLoopBeats"
+    "maximumLoopBeats",
+    "projectOperationsPassed",
+    "commandVersion2"
   ],
   "properties": {
     "schemaVersion": {
@@ -59,7 +61,11 @@
       "minLength": 1
     },
     "editCommandVersion": {
-      "const": 1
+      "type": "integer",
+      "enum": [
+        1,
+        2
+      ]
     },
     "editCommandFixture": {
       "const": "edit-command-note-patch-v1.json"
@@ -136,7 +142,7 @@
     },
     "assertions": {
       "type": "integer",
-      "minimum": 209
+      "minimum": 280
     },
     "roundTripBytes": {
       "type": "integer",
@@ -181,6 +187,12 @@
     },
     "maximumLoopBeats": {
       "const": 256
+    },
+    "projectOperationsPassed": {
+      "const": true
+    },
+    "commandVersion2": {
+      "const": 2
     }
   }
 }

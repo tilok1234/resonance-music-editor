@@ -92,6 +92,11 @@ public:
     juce::Result setTrackMidiRoutingForTrack (int trackIndex,
                                               const TrackMidiRouting& routing);
     juce::Result duplicateActiveTrack (juce::String* createdTrackId = nullptr);
+    // Duplicates the active track using caller-supplied identity. Clip and note ids are
+    // derived from trackId, so the result is fully deterministic: an edit-command
+    // preview and its later apply produce identical projects, and a command author
+    // knows the new track's id in advance and can target it in the same command.
+    juce::Result addTrackWithIdentity (const juce::String& trackId, const juce::String& name);
     juce::Result removeTrack (const juce::String& trackId);
     juce::Result moveTrack (const juce::String& trackId, int newIndex);
 

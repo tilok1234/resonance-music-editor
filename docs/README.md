@@ -86,6 +86,7 @@ An ADR records a durable decision and its consequences. Add a new ADR when a cha
 - [M7.1 song-length canvas](M7_SONG_LENGTH_CANVAS_CHECKPOINT_2026-08-13.md)
 - [M7.5 offline render](M7_OFFLINE_RENDER_CHECKPOINT_2026-08-13.md)
 - [M8 agent control surface](M8_AGENT_CONTROL_SURFACE_CHECKPOINT_2026-08-13.md)
+- [M8 command vocabulary](M8_COMMAND_VOCABULARY_CHECKPOINT_2026-08-13.md)
 
 The acceptance files distinguish implementation proof from musical approval. A passing scheduler, schema, or audio-device test does not mean that a preset, loop, mix, or composition has passed a listening review.
 

@@ -29,28 +29,85 @@
     "passed"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "testVersion": { "type": "string", "minLength": 1 },
-    "commandVersion": { "const": 1 },
-    "projectContentSha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
-    "targetTrackId": { "type": "string", "minLength": 1 },
-    "targetClipId": { "type": "string", "minLength": 1 },
-    "staleHashRefused": { "const": true },
-    "wrongTrackRefused": { "const": true },
-    "wrongClipRefused": { "const": true },
-    "malformedRefused": { "const": true },
-    "oversizeRefused": { "const": true },
-    "missingFileRefused": { "const": true },
-    "previewCreated": { "const": true },
-    "noteDiffCount": { "type": "integer", "minimum": 1, "maximum": 128 },
-    "candidateCarriesEdit": { "const": true },
-    "activeUnchangedDuringPreview": { "const": true },
-    "soundLaneInterlocked": { "const": true },
-    "candidateContentSha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
-    "appliedAsOneTransaction": { "const": true },
-    "undoneInOneStep": { "const": true },
-    "replayAfterApplyRefused": { "const": true },
-    "passed": { "const": true },
-    "error": { "type": "string" }
+    "schemaVersion": {
+      "const": 1
+    },
+    "testVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commandVersion": {
+      "type": "integer",
+      "enum": [
+        1,
+        2
+      ]
+    },
+    "projectContentSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "targetTrackId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "targetClipId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "staleHashRefused": {
+      "const": true
+    },
+    "wrongTrackRefused": {
+      "const": true
+    },
+    "wrongClipRefused": {
+      "const": true
+    },
+    "malformedRefused": {
+      "const": true
+    },
+    "oversizeRefused": {
+      "const": true
+    },
+    "missingFileRefused": {
+      "const": true
+    },
+    "previewCreated": {
+      "const": true
+    },
+    "noteDiffCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 128
+    },
+    "candidateCarriesEdit": {
+      "const": true
+    },
+    "activeUnchangedDuringPreview": {
+      "const": true
+    },
+    "soundLaneInterlocked": {
+      "const": true
+    },
+    "candidateContentSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "appliedAsOneTransaction": {
+      "const": true
+    },
+    "undoneInOneStep": {
+      "const": true
+    },
+    "replayAfterApplyRefused": {
+      "const": true
+    },
+    "passed": {
+      "const": true
+    },
+    "error": {
+      "type": "string"
+    }
   }
 }

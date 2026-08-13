@@ -795,11 +795,29 @@ void testEditCommandFoundation (TestContext& context,
                                                          invalidPreview).failed(),
                     "A command that changes one note twice must be rejected");
 
-    resonance::EditCommand invalidVersion;
+    // Version 2 is now supported and accepts the same note-edit shape as version 1.
+    resonance::EditCommand versionTwo;
     context.expect (resonance::parseEditCommand (
                         commandJson.replace ("\"commandVersion\": 1", "\"commandVersion\": 2"),
+                        versionTwo).wasOk()
+                        && versionTwo.commandVersion == 2
+                        && versionTwo.hasNoteChanges(),
+                    "A version-2 command must parse with the version-1 note-edit shape");
+
+    resonance::EditCommand invalidVersion;
+    context.expect (resonance::parseEditCommand (
+                        commandJson.replace ("\"commandVersion\": 1", "\"commandVersion\": 3"),
                         invalidVersion).failed(),
                     "An unsupported command version must be rejected during parsing");
+
+    // Project operations are a version-2 feature and must not be smuggled into a
+    // version-1 document.
+    resonance::EditCommand legacyWithOperations;
+    context.expect (resonance::parseEditCommand (
+                        commandJson.replace ("\"summary\":",
+                                             "\"projectOperations\": [{\"type\":\"setTempo\",\"bpm\":120}], \"summary\":"),
+                        legacyWithOperations).failed(),
+                    "Project operations must be rejected in a version-1 command");
 }
 
 void testSeededVelocityVariation (TestContext& context,
@@ -1145,6 +1163,105 @@ resonance::SoundShelfEntry makeShelfEntry (const juce::String& name, const juce:
     return entry;
 }
 
+void testProjectOperations (TestContext& context, bool& operationsPassed)
+{
+    const auto before = context.assertions;
+    resonance::SongProject project;
+    juce::MemoryBlock state;
+    const juce::String payload ("project-operation-state");
+    state.append (payload.toRawUTF8(), payload.getNumBytesAsUTF8());
+    project.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    project.setPluginState (state);
+
+    const auto originalTempo = project.getTempoBpm();
+    const auto originalTracks = project.getTrackCount();
+
+    resonance::EditCommand command;
+    command.commandVersion = 2;
+    command.projectContentSha256 = project.getContentSha256();
+    command.summary = "Project operations";
+    command.projectOperations = {
+        { resonance::ProjectOperationType::setTempo, {}, {}, 132.0, 0, {}, {}, {}, {} },
+        { resonance::ProjectOperationType::setTitle, {}, "Renamed", 0.0, 0, {}, {}, {}, {} },
+        { resonance::ProjectOperationType::addTrack, "track-added", "Added", 0.0, 0, {}, {}, {}, {} },
+    };
+
+    resonance::EditCommandPreview preview;
+    context.expect (resonance::createEditCommandPreview (command, project, preview).wasOk(),
+                    "A command carrying only project operations must preview");
+    context.expect (preview.createdTrackIds.size() == 1
+                        && preview.createdTrackIds.front() == "track-added",
+                    "The preview must report the track the command created");
+    context.expect (project.getTempoBpm() == originalTempo
+                        && project.getTrackCount() == originalTracks,
+                    "A pending preview must not mutate the active project");
+
+    // The apply path replays the same operations; a mismatch against the preview hash
+    // would roll the whole thing back.
+    context.expect (preview.applyTo (project).wasOk(),
+                    "Project operations must apply atomically");
+    context.expect (project.getTempoBpm() == 132.0
+                        && project.getTitle() == "Renamed"
+                        && project.getTrackCount() == originalTracks + 1,
+                    "Every project operation must land on the active project");
+    context.expect (project.getTrackId (originalTracks) == "track-added"
+                        && project.getClipId (originalTracks) == "track-added-clip",
+                    "A command-created track must use the caller-supplied deterministic identity");
+    context.expect (project.undo() && project.getTrackCount() == originalTracks
+                        && project.getTempoBpm() == originalTempo,
+                    "One Undo must restore everything the command changed");
+
+    // Determinism is what lets preview and apply agree: the same command against the
+    // same project must produce the same content hash every time.
+    resonance::SongProject first;
+    resonance::SongProject second;
+    first.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    second.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    first.setPluginState (state);
+    second.setPluginState (state);
+    resonance::EditCommand repeatable = command;
+    repeatable.projectContentSha256 = first.getContentSha256();
+    resonance::EditCommandPreview firstPreview;
+    resonance::EditCommandPreview secondPreview;
+    const auto firstOk = resonance::createEditCommandPreview (repeatable, first, firstPreview).wasOk();
+    const auto secondOk = resonance::createEditCommandPreview (repeatable, second, secondPreview).wasOk();
+    context.expect (firstOk && secondOk
+                        && firstPreview.afterContentSha256 == secondPreview.afterContentSha256,
+                    "Identical commands must produce identical results");
+
+    resonance::SongProject ceiling;
+    ceiling.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    ceiling.setPluginState (state);
+    while (ceiling.getTrackCount() < resonance::SongProject::maxProjectTracks)
+        ceiling.duplicateActiveTrack();
+    resonance::EditCommand overflow;
+    overflow.commandVersion = 2;
+    overflow.projectContentSha256 = ceiling.getContentSha256();
+    overflow.summary = "One track too many";
+    overflow.projectOperations = {
+        { resonance::ProjectOperationType::addTrack, "track-overflow", "Overflow", 0.0, 0, {}, {}, {}, {} },
+    };
+    resonance::EditCommandPreview refused;
+    context.expect (resonance::createEditCommandPreview (overflow, ceiling, refused).failed()
+                        && ceiling.getTrackCount() == resonance::SongProject::maxProjectTracks,
+                    "A command must not exceed the published track ceiling");
+
+    resonance::EditCommand unknownTrack;
+    unknownTrack.commandVersion = 2;
+    unknownTrack.projectContentSha256 = project.getContentSha256();
+    unknownTrack.summary = "Mixer on a missing track";
+    resonance::ProjectOperation mixer;
+    mixer.type = resonance::ProjectOperationType::setTrackMixer;
+    mixer.trackId = "track-does-not-exist";
+    mixer.gainDb = -6.0;
+    unknownTrack.projectOperations = { mixer };
+    resonance::EditCommandPreview missing;
+    context.expect (resonance::createEditCommandPreview (unknownTrack, project, missing).failed(),
+                    "A mixer operation on an unknown track must fail closed");
+
+    operationsPassed = context.assertions > before;
+}
+
 void testSoundShelf (TestContext& context, bool& shelfPassed, int& shelfBytes)
 {
     const auto before = context.assertions;
@@ -1340,6 +1457,7 @@ int main (int argc, char* argv[])
     juce::String archivedSourceSha;
     bool archivedMigrationPassed = false;
     bool longCanvasPassed = false;
+    bool projectOperationsPassed = false;
     int soundShelfBytes = 0;
 
     auto* reportObject = new juce::DynamicObject();
@@ -1369,6 +1487,7 @@ int main (int argc, char* argv[])
         testSequenceSnapshot (context);
         testRelocatedPluginIdentity (context);
         testSoundSnapshotAndUndo (context);
+        testProjectOperations (context, projectOperationsPassed);
         testSoundShelf (context, soundShelfPassed, soundShelfBytes);
         testLegacyProjectMigration (context,
                                     juce::File (legacyProjectFixturePath),
@@ -1419,6 +1538,8 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("archivedMigrationPassed", archivedMigrationPassed);
         reportObject->setProperty ("archivedSourceSha256", archivedSourceSha);
         reportObject->setProperty ("longCanvasPassed", longCanvasPassed);
+        reportObject->setProperty ("projectOperationsPassed", projectOperationsPassed);
+        reportObject->setProperty ("commandVersion2", resonance::EditCommand::supportedVersion);
         reportObject->setProperty ("maximumLoopBeats", static_cast<int> (resonance::maximumLoopBeats));
         reportObject->setProperty ("soundShelfPassed", soundShelfPassed);
         reportObject->setProperty ("soundShelfBytes", soundShelfBytes);
@@ -1448,6 +1569,8 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("archivedMigrationPassed", archivedMigrationPassed);
         reportObject->setProperty ("archivedSourceSha256", archivedSourceSha);
         reportObject->setProperty ("longCanvasPassed", longCanvasPassed);
+        reportObject->setProperty ("projectOperationsPassed", projectOperationsPassed);
+        reportObject->setProperty ("commandVersion2", resonance::EditCommand::supportedVersion);
         reportObject->setProperty ("maximumLoopBeats", static_cast<int> (resonance::maximumLoopBeats));
         reportObject->setProperty ("soundShelfPassed", soundShelfPassed);
         reportObject->setProperty ("soundShelfBytes", soundShelfBytes);

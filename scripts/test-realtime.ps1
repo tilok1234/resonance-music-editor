@@ -82,7 +82,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $projectResult = Get-Content -LiteralPath $projectReport -Raw | ConvertFrom-Json
-if (-not $projectResult.passed -or $projectResult.assertions -lt 265) {
+if (-not $projectResult.passed -or $projectResult.assertions -lt 280) {
     throw "Song project report did not pass its assertion gate"
 }
 

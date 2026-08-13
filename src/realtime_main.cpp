@@ -199,17 +199,22 @@ int runApplyCommand (const juce::StringArray& args)
     // no meaning headlessly. Here the command's own target defines the selection, so an
     // agent can address any track without a session. Selection is not serialised, so
     // this does not alter the saved project.
-    auto targetTrackIndex = -1;
-    for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
-        if (project.getTrackId (trackIndex) == command.trackId)
-            targetTrackIndex = trackIndex;
-
-    if (targetTrackIndex < 0)
+    // Only a note edit needs a selection; a command carrying project operations alone
+    // has no target track and must not be resolved against one.
+    if (command.hasNoteChanges())
     {
-        std::cerr << "No track with id " << command.trackId << " in this project" << std::endl;
-        return 44;
+        auto targetTrackIndex = -1;
+        for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
+            if (project.getTrackId (trackIndex) == command.trackId)
+                targetTrackIndex = trackIndex;
+
+        if (targetTrackIndex < 0)
+        {
+            std::cerr << "No track with id " << command.trackId << " in this project" << std::endl;
+            return 44;
+        }
+        project.setActiveTrackIndex (targetTrackIndex);
     }
-    project.setActiveTrackIndex (targetTrackIndex);
 
     const auto beforeHash = project.getContentSha256();
     EditCommandPreview preview;

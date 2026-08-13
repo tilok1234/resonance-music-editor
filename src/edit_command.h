@@ -23,9 +23,40 @@ struct NoteEditChange
     std::optional<SongNote> note;
 };
 
+// Project-level operations, added in command version 2. They are applied before any
+// note changes in the same command, so a command can lengthen the song and then write
+// notes into the space it just created.
+enum class ProjectOperationType
+{
+    setTempo,
+    setSongLength,
+    setSnap,
+    setTitle,
+    setTrackMixer,
+    addTrack,
+    removeTrack
+};
+
+struct ProjectOperation
+{
+    ProjectOperationType type = ProjectOperationType::setTempo;
+    juce::String trackId;
+    juce::String text;
+    double numeric = 0.0;
+    int lengthTicks = 0;
+    // setTrackMixer changes only the fields the command actually supplied.
+    std::optional<double> gainDb;
+    std::optional<double> pan;
+    std::optional<bool> mute;
+    std::optional<bool> solo;
+};
+
 struct EditCommand
 {
-    static constexpr int supportedVersion = 1;
+    static constexpr int legacyVersion = 1;
+    static constexpr int supportedVersion = 2;
+    static constexpr std::size_t maximumNoteChanges = 1024;
+    static constexpr std::size_t maximumProjectOperations = 32;
 
     int commandVersion = supportedVersion;
     juce::String projectContentSha256;
@@ -35,6 +66,9 @@ struct EditCommand
     juce::String summary;
     std::optional<std::int64_t> seed;
     std::vector<NoteEditChange> changes;
+    std::vector<ProjectOperation> projectOperations;
+
+    bool hasNoteChanges() const noexcept { return ! changes.empty(); }
 };
 
 struct SeededVelocityVariation
@@ -70,6 +104,10 @@ public:
     juce::String beforeContentSha256;
     juce::String afterContentSha256;
     std::vector<NoteEditDiff> noteDiffs;
+    // Human-readable record of each applied project operation, and any track the
+    // command created, whose id the author could not have known in advance.
+    std::vector<juce::String> projectOperationSummaries;
+    std::vector<juce::String> createdTrackIds;
 
 private:
     friend juce::Result createEditCommandPreview (const EditCommand&,

@@ -362,10 +362,51 @@ juce::Result SongProject::setTrackMidiRoutingForTrack (int trackIndex,
     return juce::Result::ok();
 }
 
+juce::Result SongProject::addTrackWithIdentity (const juce::String& trackId,
+                                                const juce::String& name)
+{
+    const auto cleanTrackId = trackId.trim();
+    if (cleanTrackId.isEmpty())
+        return juce::Result::fail ("A new track requires a non-empty id");
+    if (getTrackCount() >= maxProjectTracks)
+        return juce::Result::fail ("The current project supports at most " + juce::String (maxProjectTracks)
+                                   + " instrument tracks");
+
+    const auto clipId = cleanTrackId + "-clip";
+    for (int index = 0; index < getTrackCount(); ++index)
+        if (getTrackId (index) == cleanTrackId || getClipId (index) == clipId)
+            return juce::Result::fail ("A track or clip already uses the id " + cleanTrackId);
+
+    const auto source = getActiveTrackTree();
+    if (! source.isValid())
+        return juce::Result::fail ("The active track does not exist");
+
+    auto copy = source.createCopy();
+    copy.setProperty ("id", cleanTrackId, nullptr);
+    copy.setProperty ("name", name.trim().isNotEmpty() ? name.trim() : cleanTrackId, nullptr);
+    copy.setProperty ("clipId", clipId, nullptr);
+    copy.setProperty ("midiOutputChannel", juce::jlimit (1, 16, getTrackCount() + 1), nullptr);
+
+    auto notes = copy.getChildWithName (notesType);
+    for (int index = 0; index < notes.getNumChildren(); ++index)
+        notes.getChild (index).setProperty ("id",
+                                            cleanTrackId + "-note-" + juce::String (index + 1),
+                                            nullptr);
+
+    // Deliberately does not open its own undo transaction. This is composed inside a
+    // larger edit-command application, and starting one here would split that command
+    // into two undo steps.
+    root.addChild (copy, -1, &undoManager);
+    activeTrackId = cleanTrackId;
+    projectChanged();
+    return juce::Result::ok();
+}
+
 juce::Result SongProject::duplicateActiveTrack (juce::String* createdTrackId)
 {
     if (getTrackCount() >= maxProjectTracks)
-        return juce::Result::fail ("The current project supports at most two instrument tracks");
+        return juce::Result::fail ("The current project supports at most " + juce::String (maxProjectTracks)
+                                   + " instrument tracks");
 
     const auto source = getActiveTrackTree();
     if (! source.isValid())
