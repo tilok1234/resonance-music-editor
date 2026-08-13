@@ -174,21 +174,21 @@ Changes made inside the native Surge editor remain live preview state until **Ca
 Opening is intentionally fail-closed:
 
 1. parse JSON into a separate candidate model;
-2. require schema version 1, 2, or 3, supported timing values, one or two tracks, one clip per track, stable unique IDs, a shared loop length, bounded notes, and valid ranges;
+2. require schema version 1 through 5, supported timing values, one through four tracks, one clip per track, stable unique IDs, a shared loop length, bounded notes, and valid ranges;
 3. Base64-decode every track state and verify every SHA-256;
 4. compare every saved VST3 identity and name with the accepted inventory record;
 5. stop and rewind transport, close the native plug-in view, and capture the current state of both runtime slots;
 6. restore every candidate track into its corresponding preloaded runtime slot, rolling restored slots back if a later restore fails;
 7. replace the active project only after every restoration succeeds;
-8. publish the two-track mixer snapshot and mark the project clean.
+8. publish the mixer snapshot for every track and mark the project clean.
 
-Version-1 and version-2 candidates become schema version 3 in memory, but Open does not rewrite their source files. A failed parse, migration, identity check, state check, or restore leaves the active project model and source file in place. Transport is stopped before restore for lifecycle safety. Unknown future schema versions fail closed.
+Version-1 through version-4 candidates become schema version 5 in memory, but Open does not rewrite their source files. A failed parse, migration, identity check, state check, or restore leaves the active project model and source file in place. Transport is stopped before restore for lifecycle safety. Unknown future schema versions fail closed.
 
 ## External edit commands
 
 M5 edit commands are proposal documents, not fields inside `.resonance.json`. Their independent version-1 contract is `schema/edit-command.schema.json`; command and song-project versions are unrelated. A command carries the SHA-256 of the complete active project's canonical material JSON, where only `editorVersion` is omitted from hashing. The hash covers ordered tracks, stable track/clip/note IDs, version-3 mixer and MIDI state, notes, timing, metadata, and every accepted opaque instrument state.
 
-Preview parses and validates the command against a separate candidate project and requires its target IDs to match the selected track and clip. Reject discards that candidate. Apply rechecks the complete-project hash and reproduces the preview through ordinary `SongProject` note operations as one Undo transaction. Commands, active-track selection, and pending previews are intentionally not saved in song-project schema version 3.
+Preview parses and validates the command against a separate candidate project and requires its target IDs to match the selected track and clip. Reject discards that candidate. Apply rechecks the complete-project hash and reproduces the preview through ordinary `SongProject` note operations as one Undo transaction. Commands, active-track selection, pending previews, and piano-roll view state are intentionally not saved in song-project schema version 5.
 
 The editor may audition a pending candidate through an immutable realtime sequence, but Save still serializes only the active accepted project. A pitch- or velocity-only update may preserve an existing note's legacy non-tick-exact timing byte-semantically; any start or length changed by a command must resolve to an integer tick at 960 PPQ. This compatibility exception prevents old accepted articulation such as `0.82` beats from being silently quantized by an unrelated edit.
 

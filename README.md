@@ -1,8 +1,12 @@
 # Resonance Music Editor
 
-Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. The project now has its first editable ensemble, sound-design, and reversible note-proposal slices: a native Windows editor with real-time WASAPI output, a piano roll, lossless one- or two-track song projects, two inventory-approved Surge XT instances, host-owned A/B sound, and an editor-owned A/B note preview.
+Resonance Music Editor is a clean-room restart of the game-music editor, with VST3 hosting as a foundation rather than a later add-on. It is a native Windows editor with real-time WASAPI output, a piano roll, lossless one- through four-track song projects on a canvas of up to 64 bars, four inventory-approved Surge XT instances, host-owned A/B sound with a named sound shelf, and an editor-owned A/B note preview.
 
-Editor 0.5.0 writes song-project schema version 3, reads versions 1 through 3 without rewriting older sources, and persists one or two ordered instrument tracks with stable track/clip/note identity, independent accepted Surge state, gain, pan, mute, solo, and MIDI routing. Add, remove, reorder, selection, mixer controls, active-track meters, notes, tempo, shared loop length, grid snap, velocity, and sound state are editable and saveable with Undo/Redo. A version-1 edit command still builds a validated non-mutating candidate for the selected track; command versioning is independent of the song schema. The production engine retains eight stable render slots while the public authoring slice deliberately caps projects at two tracks. Different plug-in products, user-facing missing-plug-in recovery, broader transforms, natural-language integration, arrangement, automation, and game-state music tools remain later work.
+Editor 0.5.0 writes song-project schema version 5, reads versions 1 through 5 without rewriting older sources, and persists one through four ordered instrument tracks with stable track/clip/note identity, independent accepted Surge state, gain, pan, mute, solo, and MIDI routing. Add, remove, reorder, selection, mixer controls, active-track meters, notes, tempo, shared clip length of one through 64 bars, grid snap, velocity, and sound state are editable and saveable with Undo/Redo.
+
+The piano roll supports vertical and horizontal zoom and scrolling with zoom-adaptive grid density, dim ghost notes for inactive tracks, multiple note selection by shift-click and marquee, and a clipboard with copy, paste, duplicate, nudge, and transpose. Sound work persists in a named shelf outside the song, so a patch survives New, Open, and restart. A version-1 edit command builds a validated non-mutating candidate for the selected track, and such commands can now be authored outside the editor and loaded through the same preview path; command versioning is independent of the song schema.
+
+The production engine retains eight stable render slots while the public authoring slice deliberately caps projects at four tracks, which is also the number of Surge instances preloaded at startup. Different plug-in products per track, user-facing missing-plug-in recovery, named sections, reusable clip instances, tempo and meter changes, broader transforms, natural-language integration, automation, offline render, and game-state music tools remain later work.
 
 ![First playable Resonance Music Editor UI](artifacts/realtime-ui-snapshot.png)
 
@@ -69,6 +73,20 @@ Orange marks the accepted before-note and blue marks the proposed after-note. Sa
 Save writes only the accepted project sound. An unapplied B remains preview state and is not silently substituted into the project. Undo/Redo restores the corresponding live Surge state as well as the saved model. The exact saved SHA-256 protects project bytes; the UI separately tracks the live-equivalent hash returned by Surge after restore because one sound can have lifecycle-dependent opaque encodings. The current snapshot-first workflow intentionally does not parse or index Surge's vendor-specific `.fxp` library; see `docs/ADR-0004-host-owned-sound-snapshots.md`.
 
 ## Proven checkpoints
+
+Entries below are historical and describe what was true at each dated checkpoint. The paragraphs above describe the editor as it stands now.
+
+### M7.1 song-length canvas
+
+Verified on 2026-08-13: clip ceiling raised from 8 to 64 bars, notes per clip from 512 to 1,024, song-project schema version 5 with version 4 archived, and a horizontally scrollable and zoomable piano roll. Two defects were caught before commit — a stack overflow from oversized snapshot structures held as stack locals, and a realtime sanitiser that clamped long songs back to the old ceiling and silently discarded every note beyond it. The second was found only by the per-track audio probe. See `docs/M7_SONG_LENGTH_CANVAS_CHECKPOINT_2026-08-13.md`.
+
+### Per-track audio probe
+
+Added on 2026-08-13 after the first user listening pass reported hearing one instrument in a four-track project. Investigation found no editor defect: the three available Surge patches differ in intrinsic output by 8.5 dB, and the mix had been authored assuming parity. `--audio-probe` renders a project through the production callback with no device attached and fails when a track that should sound is silent, when the master clips, or when samples go invalid. It is the only non-silent gate. See `docs/AUDIO_PROBE_AND_MIX_DIAGNOSIS_2026-08-13.md`.
+
+### Authoring throughput slices
+
+Verified on 2026-08-12: external edit-command loading, piano-roll visibility, multiple note selection, a note clipboard, a named sound shelf, and a four-track ceiling with schema version 4. See the five dated checkpoints of that date.
 
 ### M6 bounded two-track authoring
 
@@ -250,9 +268,10 @@ The build copies four production executables to `bin`:
 
 ## Next implementation gate
 
-1. Preserve the accepted M4 sound workflow, accepted M5 proposal lifecycle, and proven version-1/version-2-to-version-3 migrations.
-2. Run the exact packaged two-track listening/interaction pass: switching, first play, gain, pan, mute, solo, meters, native Surge targeting, Save/Open, and topology Undo/Redo.
+1. Preserve the accepted M4 sound workflow, accepted M5 proposal lifecycle, and the proven version-1 through version-4 migrations.
+2. Run the listening and interaction pass on a real multi-track project: track switching, first play, gain, pan, mute, solo, meters, native Surge targeting, Save/Open, and topology Undo/Redo. Nothing since M5 has passed a listening gate.
 3. Add user-facing preservation and recovery when a required plug-in cannot load, then decide whether M6 is ready for acceptance.
-4. Keep different plug-in products, more than two persisted tracks, arrangement, automation, broad effects, factory-preset parsing, and model-service integration outside this M6 slice.
+4. Continue M7 in slices: offline render, reusable clip instances, sections and markers, then tempo and meter changes.
+5. Keep different plug-in products per track, more than four persisted tracks, automation, broad effects, factory-preset parsing, and model-service integration outside the current slices.
 
 Architecture and evidence are recorded in `docs/ADR-0001-vst3-host-foundation.md`, `docs/ADR-0002-crash-isolated-plugin-scanning.md`, `docs/ADR-0003-realtime-audio-engine.md`, `docs/ADR-0004-host-owned-sound-snapshots.md`, `docs/ADR-0005-multitrack-project-and-mixer-ownership.md`, and the dated checkpoint files under `docs/`.

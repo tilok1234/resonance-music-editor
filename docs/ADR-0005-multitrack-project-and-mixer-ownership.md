@@ -75,3 +75,14 @@ The indexed state API captures and restores one selected slot under the same non
 ## Follow-up gate
 
 Run the explicit two-track listening and interaction pass on the packaged editor, then add user-facing missing-plug-in recovery before declaring M6 complete. Different instrument products, more than two persisted tracks, buses, arrangement, and automation remain later bounded changes.
+
+## Amendment, 2026-08-13
+
+The decision stands; two of its bounded numbers have since moved with evidence.
+
+- The persisted track ceiling rose from two to four in song-project schema version 4. ADR-0005 deliberately kept the project below the runtime's eight lanes until multi-instance rendering was proven; that proof arrived with the M6 two-track runtime slice, so the gap stopped serving a purpose. Four rather than eight because preloading is eager — prepared plug-in topology never changes at runtime — so the ceiling is also the number of Surge instances created at startup. Measured idle process CPU went from about 1,300 ms at two instances to 1,797 ms at four against a 3,000 ms ceiling; eight extrapolates to roughly 2,800 ms, which is inside the limit but with almost no margin.
+- The clip ceiling rose from 8 to 64 bars in schema version 5, and notes per clip from 512 to 1,024.
+
+The eight-lane runtime and mixer contract itself is unchanged. Raising the project ceiling to eight remains available once someone pays for it with a measurement rather than an extrapolation.
+
+One consequence worth recording: `MixerSnapshot` embeds a fixed-capacity sequence per lane, so growing note capacity grows it quadratically against lane count. At 2,048 notes an engine became roughly 1.2 MB and overflowed a default thread stack. Fixed-capacity flat storage is the wrong axis to scale indefinitely; reusable clip instances (roadmap M7.3) are the intended answer for long songs.

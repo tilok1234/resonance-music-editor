@@ -19,7 +19,7 @@ The focus is game music. General sound-effect creation is not part of this roadm
 | M4 Sound and preset workflow | Complete | Accepted as version 0.3.0 after A/B, persistence, lifecycle, and listening gates passed |
 | M5 Unified edit-command layer | Complete | explicitly accepted after packaged command, A/B, deterministic controls, listening, Apply/Undo, and cleanup gates |
 | M6 Multi-track and mixer | In progress | schema-v4 four-track authoring, the sound shelf, and the eight-slot runtime are proven; the listening pass and missing-plug-in recovery remain |
-| M7 Arrangement, automation, and effects | Planned | full sections, curves, buses, and dependable song structure |
+| M7 Arrangement, automation, and effects | In progress | M7.1 song-length canvas delivered; sections, reusable clips, tempo/meter, and render remain |
 | M8 AI music assistant | Planned | natural-language requests resolve to bounded command proposals |
 | M9 Game-music authoring and export | Planned | variants, transitions, loops, stems, renders, and engine-facing metadata |
 | M10 Release hardening | Planned | performance, recovery, packaging, licensing, compatibility, and support policy |
@@ -110,7 +110,7 @@ Manual UI actions do not all need to serialize as external JSON immediately, but
 
 ## M6: Multi-track and mixer
 
-Status: in progress. Schema/identity, two-instance runtime, and bounded two-track authoring were technically verified on 2026-08-09; editor 0.5.0 still needs listening approval and missing-plug-in recovery.
+Status: in progress. Schema/identity, multi-instance runtime, four-track authoring, and the 2026-08-12 authoring-throughput slices are technically verified; editor 0.5.0 still needs listening approval and missing-plug-in recovery.
 
 ### Goal
 
@@ -182,9 +182,21 @@ Run an explicit packaged listening and interaction pass, then add user-facing mi
 
 ## M7: Arrangement, automation, and effects
 
+Status: in progress. M7.1 delivered the song-length canvas on 2026-08-13.
+
 ### Goal
 
 Turn loop sketches into complete musical forms.
+
+### Slicing
+
+1. **M7.1 song-length canvas — delivered.** Clip ceiling 8 to 64 bars, notes per clip 512 to 1,024, schema version 5 with version 4 archived, and a horizontally scrollable and zoomable piano roll with zoom-adaptive grid density. See the [M7.1 checkpoint](M7_SONG_LENGTH_CANVAS_CHECKPOINT_2026-08-13.md).
+2. **M7.2 sections and markers.** Named spans so structure is navigable rather than merely present.
+3. **M7.3 reusable clip instances.** Multiple placed instances per track referencing shared content, with split, move, and trim. This is where arrangement actually lands, and it is what stops a long song's note list growing linearly with its length.
+4. **M7.4 tempo and meter changes** with tested scheduling.
+5. **M7.5 offline full-song render.** Also the last open finding from the 2026-08-12 authoring assessment. Cheap now that `--audio-probe` already renders a whole project through the production callback.
+
+Automation, effect slots, and buses are in this milestone's deliverables but are orthogonal to song structure; they should follow the five slices above rather than expand them.
 
 ### Deliverables
 

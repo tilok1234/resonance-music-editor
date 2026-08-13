@@ -127,7 +127,7 @@ The order matters: later scripts consume binaries and inventory artifacts create
 
 The realtime script also runs the M5 command-core cases using the portable `tests/fixtures/edit-command-note-patch-v1.json` fixture. The test replaces its schema-valid placeholder content hash in memory with the exact active-project hash; do not hard-code a machine report or mutable local path into the fixture. The same native suite resolves the seeded whole-loop velocity transform twice from reordered target IDs and records canonical command and candidate SHA-256 evidence.
 
-M6 migration coverage uses both `tests/fixtures/song-project-v1-migration.resonance.json` and `tests/fixtures/song-project-v2-migration.resonance.json`. Keep their non-default stable identities, exact four-byte state/hash pairs, and historical shapes intact: the tests prove both sources remain byte-identical, version-1 defaults are deterministic, version-2 mixer/MIDI values survive, commands use stored IDs, and a later explicit save writes schema version 3. `scripts/validate-artifacts.py` checks each fixture against its archived schema while validating the current one- and two-track real-Surge projects against version 3.
+Migration coverage uses one fixture per archived schema version: `song-project-v1-migration.resonance.json` (single track), `song-project-v2-migration.resonance.json` (non-default mixer and MIDI), `song-project-v3-migration.resonance.json` (two tracks), and `song-project-v4-migration.resonance.json` (four tracks), all under `tests/fixtures/`. Keep their non-default stable identities, exact four-byte state/hash pairs, and historical shapes intact: the tests prove every source remains byte-identical, version-1 defaults are deterministic, non-default mixer/MIDI values survive, commands use stored IDs, and a later explicit save writes schema version 5. `scripts/validate-artifacts.py` checks each fixture against its archived schema while validating the current real-Surge projects against version 5.
 
 M6 runtime coverage uses `artifacts/m4-accepted-candidate-b.resonance.json` as the exact user-accepted alternate state for slot two. Do not rewrite its schema-version-1 payload or stored `ccaf99d4...` state hash. The Release script enforces the exact fixture-file SHA-256, and the packaged gate rejects a fixture whose VST3 identity is not compatible with the accepted Surge record. Live Surge processing normalises it to the accepted `91ed214e...` equivalent; the runtime gate records both identities, allows settling through four silent blocks after each restore, and still requires exact round trips for both current live baseline states. The committed `artifacts/m6-runtime-test-report.json` stores filenames rather than absolute local paths.
 
@@ -154,7 +154,7 @@ Versioned artifacts are limited to portable evidence:
 - UI PNGs;
 - the release binary hash manifest;
 - portable `.resonance.json` fixtures;
-- the generated portable schema-v3 two-track authoring project;
+- the generated portable schema-v5 two-track authoring project;
 - the bounded, path-sanitised M6 runtime report;
 - JSON schemas and documentation.
 
