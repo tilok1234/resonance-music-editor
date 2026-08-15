@@ -55,6 +55,7 @@ A 2026-08-12 assessment found that the binding constraint on making songs was no
 11. **M8 command vocabulary.** Edit-command version 2 adds tempo, song length, snap, title, mixer, sound, and track add/remove operations alongside note changes, with the cap raised to 1,024 changes.
 12. **M8 editor layout.** The device chooser moved into a dialog, the mixer shows every track with its own meter, the keyboard and the resolver inputs became toggles, and the piano roll took the reclaimed space.
 13. **M7.3 reusable clips.** A clip is content with its own length; a placement is one occurrence of it. Song-project schema 6, edit-command version 3 with `setClipLength` and `setPlacements`.
+14. **Sound lane layout regression fix (2026-08-15).** The M8 layout rebuild left every sound-workflow and shelf control constructed and wired but never positioned, so all of M4 was invisible and unclickable and `setSound` was inert for want of a fillable shelf. A dedicated sound card restores them. See [the dated fix](docs/SOUND_LANE_LAYOUT_REGRESSION_FIX_2026-08-15.md).
 
 ## The most important thing to understand
 
@@ -87,8 +88,8 @@ Carry both lessons forward:
 | Packaged sound shelf | 10 checks against two genuinely different Surge states |
 | Packaged offline render | complete file, non-silent, no clipping, no invalid samples |
 | UI idle gate | 1,937.5 ms of CPU with four preloaded instances, below the 3,000 ms ceiling |
-| Packaged UI snapshot | 76,831 bytes; SHA-256 `95decc856a43b47f3090452b41bee7bae44f626c480a26938341f1ce17b4c8b2` |
-| Packaged editor SHA-256 | `4028ba91e27855cabdc5f7b9b70e8441b19189c3ba09c0a7600f92c5c881591b` |
+| Packaged UI snapshot | 87,189 bytes; SHA-256 `85ef37fac97d05403b6b3a83d8f6efe921ba8ecced0e67011933edf08e0f41e4` |
+| Packaged editor SHA-256 | `25308951e035bdfe8072934bf51025eeef1a3e75024c3ef79420c9dd72f63057` |
 | Surge XT | 1.3.4; 2,855 parameters; VST3 UID suffix `190e4fbd` |
 
 Device name, sample rate, block size, latency, and path-derived identifiers are machine observations. Regenerate rather than copying them.

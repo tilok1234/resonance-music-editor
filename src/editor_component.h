@@ -241,6 +241,7 @@ private:
     juce::Rectangle<int> headerBounds;
     juce::Rectangle<int> transportCardBounds;
     juce::Rectangle<int> trackCardBounds;
+    juce::Rectangle<int> soundCardBounds;
     juce::Rectangle<int> loopCardBounds;
     juce::Rectangle<int> keyboardCardBounds;
     juce::Rectangle<int> footerBounds;

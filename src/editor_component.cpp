@@ -130,6 +130,17 @@ TrackStripLayout layOutTrackStrip (juce::Rectangle<int> bounds)
 }
 
 constexpr int trackStripHeight = 9 * 2 + 24 + 5 + 22 + 3 + 22 + 5 + 22;
+// The sound lane and the shelf lane sit side by side when the window is wide
+// enough and stack when it is not, because the piano roll is the work surface
+// and should not pay 34 pixels for whitespace it could have used.
+constexpr int soundLaneWidth = 180 + 7 + 88 + 7 + 84 + 7 + 84 + 7 + 72 + 7 + 76;
+constexpr int shelfLaneWidth = 46 + 180 + 7 + 88 + 7 + 104 + 7 + 76;
+constexpr int soundLaneGap = 24;
+constexpr int soundSingleRowMinimum = soundLaneWidth + soundLaneGap + shelfLaneWidth;
+// 14 padding either side, an 18 high caption sharing its row with the live A/B
+// status, then the 30 high control row, plus a 28 high shelf row when stacked.
+constexpr int soundCardHeightSingle = 14 * 2 + 18 + 6 + 30;
+constexpr int soundCardHeightStacked = soundCardHeightSingle + 6 + 28;
 } // namespace
 
 class MainEditorComponent::PluginEditorWindow final : public juce::DocumentWindow
@@ -4447,6 +4458,7 @@ void MainEditorComponent::paint (juce::Graphics& graphics)
 
     drawCard (graphics, transportCardBounds);
     drawCard (graphics, trackCardBounds);
+    drawCard (graphics, soundCardBounds);
     drawCard (graphics, loopCardBounds);
     if (! keyboardCardBounds.isEmpty())
         drawCard (graphics, keyboardCardBounds);
@@ -4468,6 +4480,9 @@ void MainEditorComponent::paint (juce::Graphics& graphics)
     graphics.setColour (secondary);
     graphics.drawText ("EDIT PROPOSAL  /  A-B PREVIEW BEFORE APPLY",
                        editProposalBounds.reduced (14).removeFromTop (18),
+                       juce::Justification::centredLeft);
+    graphics.drawText ("SOUND  /  SELECTED TRACK",
+                       soundCardBounds.reduced (14).removeFromTop (18),
                        juce::Justification::centredLeft);
 
     // Per-track captions and meters, taken from the same layout the controls used.
@@ -4538,6 +4553,14 @@ void MainEditorComponent::resized()
     auto body = area;
     // 16 padding either side, the 40 high track header, the 6 gap, then the strips.
     trackCardBounds = body.removeFromTop (32 + 40 + 6 + trackStripHeight);
+    body.removeFromTop (12);
+
+    // The sound workflow belongs to the selected track, so it sits directly under
+    // the mixer. It is not optional: a control with no bounds is unreachable, which
+    // is exactly how the whole A/B and shelf lane went missing in the layout rebuild.
+    const auto soundFitsOneRow = body.getWidth() - 28 >= soundSingleRowMinimum;
+    soundCardBounds = body.removeFromTop (soundFitsOneRow ? soundCardHeightSingle
+                                                          : soundCardHeightStacked);
     body.removeFromTop (12);
 
     // The keyboard is optional, and it yields before the piano roll does.
@@ -4633,6 +4656,48 @@ void MainEditorComponent::resized()
         strip.muteButton.setBounds (layout.mute);
         strip.soloButton.setBounds (layout.solo);
     }
+
+    // Sound card: capture and audition on the first row, the named shelf on the
+    // second. Widths match the pre-rebuild layout so the buttons read the same.
+    auto sound = soundCardBounds.reduced (14);
+    auto soundCaption = sound.removeFromTop (18);
+    soundCaption.removeFromLeft (188);
+    soundWorkflowLabel.setBounds (soundCaption);
+    sound.removeFromTop (6);
+
+    auto soundControls = sound.removeFromTop (30);
+    juce::Rectangle<int> shelfControls;
+    if (soundFitsOneRow)
+    {
+        shelfControls = soundControls.removeFromRight (shelfLaneWidth);
+        soundControls.removeFromRight (soundLaneGap);
+    }
+    else
+    {
+        sound.removeFromTop (6);
+        shelfControls = sound.removeFromTop (28);
+    }
+
+    soundNameEditor.setBounds (soundControls.removeFromLeft (180));
+    soundControls.removeFromLeft (7);
+    captureSoundButton.setBounds (soundControls.removeFromLeft (88));
+    soundControls.removeFromLeft (7);
+    auditionProjectSoundButton.setBounds (soundControls.removeFromLeft (84));
+    soundControls.removeFromLeft (7);
+    auditionCandidateButton.setBounds (soundControls.removeFromLeft (84));
+    soundControls.removeFromLeft (7);
+    applySoundButton.setBounds (soundControls.removeFromLeft (72));
+    soundControls.removeFromLeft (7);
+    rejectSoundButton.setBounds (soundControls.removeFromLeft (76));
+
+    shelfLabel.setBounds (shelfControls.removeFromLeft (46));
+    shelfCombo.setBounds (shelfControls.removeFromLeft (180).reduced (0, 1));
+    shelfControls.removeFromLeft (7);
+    loadShelfButton.setBounds (shelfControls.removeFromLeft (88));
+    shelfControls.removeFromLeft (7);
+    saveShelfButton.setBounds (shelfControls.removeFromLeft (104));
+    shelfControls.removeFromLeft (7);
+    removeShelfButton.setBounds (shelfControls.removeFromLeft (76));
 
     auto loop = loopCardBounds.reduced (12);
     loop.removeFromTop (21);
