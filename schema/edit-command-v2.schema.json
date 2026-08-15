@@ -1,0 +1,355 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resonance.local/schema/edit-command-v2.json",
+  "title": "Resonance Edit Command v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "commandVersion",
+    "projectContentSha256",
+    "summary"
+  ],
+  "properties": {
+    "commandVersion": {
+      "type": "integer",
+      "enum": [
+        1,
+        2
+      ]
+    },
+    "projectContentSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "operation": {
+      "const": "editNotes"
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trackId",
+        "clipId"
+      ],
+      "properties": {
+        "trackId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clipId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "changes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1024,
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/addChange"
+          },
+          {
+            "$ref": "#/$defs/updateChange"
+          },
+          {
+            "$ref": "#/$defs/removeChange"
+          }
+        ]
+      }
+    },
+    "projectOperations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "bpm"
+            ],
+            "properties": {
+              "type": {
+                "const": "setTempo"
+              },
+              "bpm": {
+                "type": "number",
+                "minimum": 40,
+                "maximum": 240
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "lengthTicks"
+            ],
+            "properties": {
+              "type": {
+                "const": "setSongLength"
+              },
+              "lengthTicks": {
+                "type": "integer",
+                "minimum": 3840,
+                "maximum": 245760
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "snapBeats"
+            ],
+            "properties": {
+              "type": {
+                "const": "setSnap"
+              },
+              "snapBeats": {
+                "type": "number",
+                "enum": [
+                  0.125,
+                  0.25,
+                  0.5,
+                  1.0
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "title"
+            ],
+            "properties": {
+              "type": {
+                "const": "setTitle"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "trackId"
+            ],
+            "properties": {
+              "type": {
+                "const": "setTrackMixer"
+              },
+              "trackId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "gainDb": {
+                "type": "number",
+                "minimum": -60,
+                "maximum": 12
+              },
+              "pan": {
+                "type": "number",
+                "minimum": -1,
+                "maximum": 1
+              },
+              "mute": {
+                "type": "boolean"
+              },
+              "solo": {
+                "type": "boolean"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "trackId"
+            ],
+            "properties": {
+              "type": {
+                "const": "addTrack"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "trackId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "trackId"
+            ],
+            "properties": {
+              "type": {
+                "const": "removeTrack"
+              },
+              "trackId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "trackId",
+              "soundName"
+            ],
+            "properties": {
+              "type": {
+                "const": "setSound"
+              },
+              "trackId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "soundName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "startTick",
+        "lengthTicks",
+        "midiNote",
+        "velocity"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "startTick": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 245759
+        },
+        "lengthTicks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 245760
+        },
+        "midiNote": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 127
+        },
+        "velocity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 127
+        }
+      }
+    },
+    "addChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "note"
+      ],
+      "properties": {
+        "action": {
+          "const": "add"
+        },
+        "note": {
+          "$ref": "#/$defs/note"
+        }
+      }
+    },
+    "updateChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "note"
+      ],
+      "properties": {
+        "action": {
+          "const": "update"
+        },
+        "note": {
+          "$ref": "#/$defs/note"
+        }
+      }
+    },
+    "removeChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "noteId"
+      ],
+      "properties": {
+        "action": {
+          "const": "remove"
+        },
+        "noteId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "changes"
+      ]
+    },
+    {
+      "required": [
+        "projectOperations"
+      ]
+    }
+  ]
+}

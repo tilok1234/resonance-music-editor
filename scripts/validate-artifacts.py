@@ -20,6 +20,7 @@ VALIDATION_GROUPS = (
         PROJECT_ROOT / "schema" / "song-project.schema.json",
         (
             PROJECT_ROOT / "artifacts" / "realtime-song-project.resonance.json",
+            PROJECT_ROOT / "artifacts" / "m6-two-track-authoring.resonance.json",
         ),
     ),
     (
@@ -31,6 +32,33 @@ VALIDATION_GROUPS = (
             / "song-project-v1-migration.resonance.json",
             PROJECT_ROOT / "artifacts" / "ui-save-open-roundtrip.resonance.json",
             PROJECT_ROOT / "artifacts" / "m4-accepted-candidate-b.resonance.json",
+        ),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "song-project-v2.schema.json",
+        (
+            PROJECT_ROOT
+            / "tests"
+            / "fixtures"
+            / "song-project-v2-migration.resonance.json",
+        ),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "song-project-v3.schema.json",
+        (
+            PROJECT_ROOT
+            / "tests"
+            / "fixtures"
+            / "song-project-v3-migration.resonance.json",
+        ),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "song-project-v4.schema.json",
+        (
+            PROJECT_ROOT
+            / "tests"
+            / "fixtures"
+            / "song-project-v4-migration.resonance.json",
         ),
     ),
     (
@@ -62,12 +90,36 @@ VALIDATION_GROUPS = (
         (PROJECT_ROOT / "artifacts" / "m6-runtime-test-report.json",),
     ),
     (
+        PROJECT_ROOT / "schema" / "m6-authoring-test.schema.json",
+        (PROJECT_ROOT / "artifacts" / "m6-authoring-test-report.json",),
+    ),
+    (
         PROJECT_ROOT / "schema" / "song-project-test.schema.json",
         (PROJECT_ROOT / "artifacts" / "song-project-test-report.json",),
     ),
     (
         PROJECT_ROOT / "schema" / "m5-workflow-test.schema.json",
         (PROJECT_ROOT / "artifacts" / "m5-workflow-test-report.json",),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "command-load-test.schema.json",
+        (PROJECT_ROOT / "artifacts" / "command-load-test-report.json",),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "selection-test.schema.json",
+        (PROJECT_ROOT / "artifacts" / "selection-test-report.json",),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "sound-shelf-test.schema.json",
+        (PROJECT_ROOT / "artifacts" / "sound-shelf-test-report.json",),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "audio-probe.schema.json",
+        (PROJECT_ROOT / "artifacts" / "audio-probe-report.json",),
+    ),
+    (
+        PROJECT_ROOT / "schema" / "render-report.schema.json",
+        (PROJECT_ROOT / "artifacts" / "render-report.json",),
     ),
 )
 

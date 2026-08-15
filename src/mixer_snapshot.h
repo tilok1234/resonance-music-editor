@@ -23,6 +23,9 @@ struct MixerTrackSnapshot
     bool solo = false;
 };
 
+// A MixerSnapshot embeds a fixed-capacity sequence per lane, so it is hundreds of
+// kilobytes. It must live on the heap or as a member of a heap-allocated owner;
+// constructing one as a stack local overflows a default 1 MB thread stack.
 struct MixerSnapshot
 {
     std::array<MixerTrackSnapshot, maxMixerTracks> tracks {};

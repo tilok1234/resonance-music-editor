@@ -12,11 +12,22 @@ $engineReport = Join-Path $artifacts "realtime-engine-test-report.json"
 $projectReport = Join-Path $artifacts "song-project-test-report.json"
 $selfTestReport = Join-Path $artifacts "realtime-self-test.json"
 $m6RuntimeReport = Join-Path $artifacts "m6-runtime-test-report.json"
+$m6AuthoringReport = Join-Path $artifacts "m6-authoring-test-report.json"
 $m5WorkflowReport = Join-Path $artifacts "m5-workflow-test-report.json"
+$commandLoadReport = Join-Path $artifacts "command-load-test-report.json"
+$selectionReport = Join-Path $artifacts "selection-test-report.json"
+$soundShelfReport = Join-Path $artifacts "sound-shelf-test-report.json"
+$audioProbeReport = Join-Path $artifacts "audio-probe-report.json"
+$renderReport = Join-Path $artifacts "render-report.json"
 $songProjectArtifact = Join-Path $artifacts "realtime-song-project.resonance.json"
+$m6AuthoringProject = Join-Path $artifacts "m6-two-track-authoring.resonance.json"
 $uiSnapshot = Join-Path $artifacts "realtime-ui-snapshot.png"
 $editCommandFixture = Join-Path $projectRoot "tests\fixtures\edit-command-note-patch-v1.json"
 $legacyProjectFixture = Join-Path $projectRoot "tests\fixtures\song-project-v1-migration.resonance.json"
+$previousProjectFixture = Join-Path $projectRoot "tests\fixtures\song-project-v2-migration.resonance.json"
+$priorProjectFixture = Join-Path $projectRoot "tests\fixtures\song-project-v3-migration.resonance.json"
+$archivedProjectFixture = Join-Path $projectRoot "tests\fixtures\song-project-v4-migration.resonance.json"
+$archivedV5ProjectFixture = Join-Path $projectRoot "tests\fixtures\song-project-v5-migration.resonance.json"
 $m4AcceptedFixture = Join-Path $artifacts "m4-accepted-candidate-b.resonance.json"
 $expectedM4AcceptedFixtureSha256 = "B0265238EF823D660B198C6730066CAACE09E001EAE3B3D3410521938FE74172"
 
@@ -41,7 +52,7 @@ if (-not (Test-Path -LiteralPath $editor)) {
 }
 
 New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
-Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m5WorkflowReport,$songProjectArtifact,$uiSnapshot -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $engineReport,$projectReport,$selfTestReport,$m6RuntimeReport,$m6AuthoringReport,$m5WorkflowReport,$commandLoadReport,$selectionReport,$soundShelfReport,$audioProbeReport,$renderReport,$songProjectArtifact,$m6AuthoringProject,$uiSnapshot -Force -ErrorAction SilentlyContinue
 
 if (-not (Test-Path -LiteralPath $m4AcceptedFixture) -or
     (Get-FileHash -Algorithm SHA256 -LiteralPath $m4AcceptedFixture).Hash -ne
@@ -63,22 +74,40 @@ if (-not $engineResult.passed -or $engineResult.assertions -lt 124 -or
 }
 
 & $projectTests --report $projectReport --edit-command-fixture $editCommandFixture `
-    --legacy-project-fixture $legacyProjectFixture
+    --legacy-project-fixture $legacyProjectFixture `
+    --previous-project-fixture $previousProjectFixture `
+    --prior-project-fixture $priorProjectFixture `
+    --archived-project-fixture $archivedProjectFixture `
+    --archived-v5-project-fixture $archivedV5ProjectFixture
 if ($LASTEXITCODE -ne 0) {
     throw "Song project tests failed with exit code $LASTEXITCODE"
 }
 
 $projectResult = Get-Content -LiteralPath $projectReport -Raw | ConvertFrom-Json
-if (-not $projectResult.passed -or $projectResult.assertions -lt 50) {
+if (-not $projectResult.passed -or $projectResult.assertions -lt 326) {
     throw "Song project report did not pass its assertion gate"
 }
 
-if ($projectResult.projectSchemaVersion -ne 2 -or
+if ($projectResult.projectSchemaVersion -ne 6 -or
     $projectResult.legacySchemaVersion -ne 1 -or
+    $projectResult.previousSchemaVersion -ne 2 -or
+    $projectResult.priorSchemaVersion -ne 3 -or
+    $projectResult.lastArchivedSchemaVersion -ne 5 -or
+    -not $projectResult.archivedMigrationPassed -or
+    -not $projectResult.archivedV5MigrationPassed -or
+    -not $projectResult.clipPlacementsPassed -or
+    -not $projectResult.longCanvasPassed -or
+    $projectResult.maximumLoopBeats -ne 256 -or
+    $projectResult.maxClipPlacements -ne 64 -or
     -not $projectResult.legacyMigrationPassed -or
+    -not $projectResult.previousMigrationPassed -or
+    -not $projectResult.priorMigrationPassed -or
+    $projectResult.maxProjectTracks -ne 4 -or
+    -not $projectResult.twoTrackTopologyPassed -or
+    -not $projectResult.fourTrackCeilingPassed -or
     $projectResult.stableTrackId -ne "track-migrated" -or
     $projectResult.stableClipId -ne "clip-migrated") {
-    throw "The version-1 to version-2 project migration gate did not pass"
+    throw "The version-1 through 5 migration, four-track ceiling, clip-placement, or long-canvas gate did not pass"
 }
 
 if ($projectResult.seededVelocitySeed -ne 18421 -or
@@ -126,7 +155,7 @@ if (-not $result.songProject.soundNameRoundTrip -or $result.songProject.soundNam
     throw "The host-owned sound name did not round-trip with the real Surge state"
 }
 
-if ($result.songProject.schemaVersion -ne 2 -or
+if ($result.songProject.schemaVersion -ne 6 -or
     $result.songProject.trackId -ne "track-1" -or
     $result.songProject.clipId -ne "loop-1" -or
     $result.songProject.mixerGainDb -ne 0 -or
@@ -134,7 +163,7 @@ if ($result.songProject.schemaVersion -ne 2 -or
     $result.songProject.mixerMuted -or $result.songProject.mixerSolo -or
     $result.songProject.midiInputChannel -ne 0 -or
     $result.songProject.midiOutputChannel -ne 1) {
-    throw "The packaged editor did not preserve the version-2 identity, mixer, and MIDI defaults"
+    throw "The packaged editor did not preserve the schema-v6 identity, mixer, and MIDI defaults"
 }
 
 if ($result.songProject.noteCount -ne 9 -or $result.songProject.loopLengthBeats -ne 16 -or
@@ -194,6 +223,53 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     throw "The M6 runtime test left an editor process running"
 }
 
+$m6AuthoringTest = Start-Process -FilePath $editor -ArgumentList `
+    "--m6-authoring-test","--project",$m6AuthoringProject,"--report",$m6AuthoringReport `
+    -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($m6AuthoringTest.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $m6AuthoringReport) {
+        Get-Content -LiteralPath $m6AuthoringReport
+    }
+    throw "M6 two-track authoring test failed with exit code $($m6AuthoringTest.ExitCode)"
+}
+
+$m6AuthoringResult = Get-Content -LiteralPath $m6AuthoringReport -Raw | ConvertFrom-Json
+if (-not $m6AuthoringResult.passed -or $m6AuthoringResult.audioEmitted -or
+    $m6AuthoringResult.preloadedPluginCount -ne 4 -or
+    -not $m6AuthoringResult.distinctRuntimeInstances -or
+    -not $m6AuthoringResult.addTrackSucceeded -or
+    -not $m6AuthoringResult.stableDistinctIds -or
+    -not $m6AuthoringResult.duplicatedStateExact -or
+    -not $m6AuthoringResult.runtimeStateAlignedAfterAdd -or
+    -not $m6AuthoringResult.independentNotes -or
+    -not $m6AuthoringResult.independentMixerSettings) {
+    throw "The M6 visible add-track, independent state, note, or mixer authoring gate failed"
+}
+
+if (-not $m6AuthoringResult.reorderSucceeded -or
+    -not $m6AuthoringResult.runtimeStateAlignedAfterReorder -or
+    -not $m6AuthoringResult.undoReorderRestored -or
+    -not $m6AuthoringResult.removeSucceeded -or
+    -not $m6AuthoringResult.undoRemoveRestored) {
+    throw "The M6 track reorder/remove runtime remap or Undo gate failed"
+}
+
+if (-not $m6AuthoringResult.saveSucceeded -or
+    $m6AuthoringResult.reopenedSchemaVersion -ne 6 -or
+    $m6AuthoringResult.reopenedTrackCount -ne 2 -or
+    -not $m6AuthoringResult.reopenedOrderPreserved -or
+    -not $m6AuthoringResult.reopenedMixerPreserved -or
+    -not $m6AuthoringResult.reopenedIndependentNotes -or
+    $m6AuthoringResult.invalidSampleCount -ne 0 -or
+    $m6AuthoringResult.processorExceptionCount -ne 0) {
+    throw "The M6 two-track Save/Open or runtime-safety authoring gate failed"
+}
+
+if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
+    throw "The M6 authoring test left an editor process running"
+}
+
 $m5WorkflowTest = Start-Process -FilePath $editor -ArgumentList "--m5-workflow-test","--report",$m5WorkflowReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
 
 if ($m5WorkflowTest.ExitCode -ne 0) {
@@ -228,6 +304,139 @@ if (-not $m5Result.stalePreviewInvalidated -or -not $m5Result.finalRestored -or
     -not $m5Result.closeAcceptedWithoutWarning) {
     throw "The M5 stale-preview or lifecycle cleanup contract failed"
 }
+
+$commandLoadTest = Start-Process -FilePath $editor -ArgumentList "--command-load-test","--report",$commandLoadReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($commandLoadTest.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $commandLoadReport) {
+        Get-Content -LiteralPath $commandLoadReport
+    }
+    throw "External command-load test failed with exit code $($commandLoadTest.ExitCode)"
+}
+
+$commandLoadResult = Get-Content -LiteralPath $commandLoadReport -Raw | ConvertFrom-Json
+if (-not $commandLoadResult.staleHashRefused -or -not $commandLoadResult.wrongTrackRefused -or
+    -not $commandLoadResult.wrongClipRefused -or -not $commandLoadResult.malformedRefused -or
+    -not $commandLoadResult.oversizeRefused -or -not $commandLoadResult.missingFileRefused) {
+    throw "An invalid external edit command was not refused"
+}
+
+if (-not $commandLoadResult.previewCreated -or -not $commandLoadResult.candidateCarriesEdit -or
+    -not $commandLoadResult.activeUnchangedDuringPreview -or
+    -not $commandLoadResult.soundLaneInterlocked) {
+    throw "The external command preview failed or mutated the active project"
+}
+
+if (-not $commandLoadResult.appliedAsOneTransaction -or -not $commandLoadResult.undoneInOneStep -or
+    -not $commandLoadResult.replayAfterApplyRefused) {
+    throw "The external command Apply/Undo contract failed"
+}
+
+$selectionTest = Start-Process -FilePath $editor -ArgumentList "--selection-test","--report",$selectionReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($selectionTest.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $selectionReport) {
+        Get-Content -LiteralPath $selectionReport
+    }
+    throw "Multiple note selection test failed with exit code $($selectionTest.ExitCode)"
+}
+
+$selectionResult = Get-Content -LiteralPath $selectionReport -Raw | ConvertFrom-Json
+if (-not $selectionResult.selectedThree -or -not $selectionResult.rejectedUnknownAndDuplicate -or
+    -not $selectionResult.prunedAfterRemoval -or -not $selectionResult.clearedSelection) {
+    throw "The multiple note selection model failed"
+}
+
+if (-not $selectionResult.velocityAppliedAcrossSelection -or
+    -not $selectionResult.velocityUndoneInOneStep -or
+    -not $selectionResult.transposeAppliedAcrossSelection -or
+    -not $selectionResult.transposeUndoneInOneStep -or
+    -not $selectionResult.activeUnchangedDuringPreview) {
+    throw "A selection-wide edit did not apply or undo as one transaction"
+}
+
+if (-not $selectionResult.copiedToClipboard -or -not $selectionResult.pasteAddedNewNotes -or
+    -not $selectionResult.pasteUndoneInOneStep -or
+    -not $selectionResult.duplicateLandedOnGrid -or
+    -not $selectionResult.duplicateUndoneInOneStep) {
+    throw "The note clipboard did not paste or duplicate correctly"
+}
+
+if (-not $selectionResult.octaveTransposeApplied -or -not $selectionResult.nudgeApplied -or
+    -not $selectionResult.keyboardEditsUndone) {
+    throw "Keyboard nudge or transpose did not apply or undo as one transaction"
+}
+
+$soundShelfTest = Start-Process -FilePath $editor -ArgumentList "--sound-shelf-test","--alternate-project",$m4AcceptedFixture,"--report",$soundShelfReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($soundShelfTest.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $soundShelfReport) {
+        Get-Content -LiteralPath $soundShelfReport
+    }
+    throw "Sound shelf test failed with exit code $($soundShelfTest.ExitCode)"
+}
+
+$soundShelfResult = Get-Content -LiteralPath $soundShelfReport -Raw | ConvertFrom-Json
+if (-not $soundShelfResult.soundsDiffer -or -not $soundShelfResult.savedAcceptedToShelf -or
+    -not $soundShelfResult.addedSecondSound -or -not $soundShelfResult.shelfSurvivesReload) {
+    throw "The sound shelf did not persist two distinct sounds"
+}
+
+if (-not $soundShelfResult.loadedAsCandidate -or -not $soundShelfResult.acceptedUnchangedByLoad -or
+    -not $soundShelfResult.rejectRestoredAccepted -or -not $soundShelfResult.appliedShelfSound -or
+    -not $soundShelfResult.undoRestoredAccepted) {
+    throw "A shelf sound did not flow through the accepted candidate B lane"
+}
+
+if (-not $soundShelfResult.foreignInstrumentRefused) {
+    throw "A shelf sound from a different plug-in was not refused"
+}
+
+# The only gate that renders signal. Every other packaged test is deliberately
+# silent, so a track that produces no audio would otherwise reach a listener first.
+$audioProbe = Start-Process -FilePath $editor -ArgumentList "--audio-probe","--project",$m6AuthoringProject,"--report",$audioProbeReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($audioProbe.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $audioProbeReport) {
+        Get-Content -LiteralPath $audioProbeReport
+    }
+    throw "Per-track audio probe failed with exit code $($audioProbe.ExitCode)"
+}
+
+$audioProbeResult = Get-Content -LiteralPath $audioProbeReport -Raw | ConvertFrom-Json
+if ($audioProbeResult.audibleTrackCount -ne $audioProbeResult.expectedAudibleTrackCount) {
+    throw "A track that should have produced signal was silent"
+}
+
+if ($audioProbeResult.clipped -or $audioProbeResult.invalidSampleCount -ne 0 -or
+    $audioProbeResult.masterPeak -le 0) {
+    throw "The rendered probe clipped, produced invalid samples, or produced silence"
+}
+
+# Renders the committed artifact to a temporary WAV. The audio is discarded; only the
+# fact that a complete, non-silent, non-clipping file was written is evidence.
+$renderWav = Join-Path ([IO.Path]::GetTempPath()) "resonance-gate-render.wav"
+Remove-Item -LiteralPath $renderWav -Force -ErrorAction SilentlyContinue
+$renderTest = Start-Process -FilePath $editor -ArgumentList "--render","--project",$m6AuthoringProject,"--wav",$renderWav,"--tail-seconds","1","--report",$renderReport -WorkingDirectory $projectRoot -Wait -PassThru -WindowStyle Hidden
+
+if ($renderTest.ExitCode -ne 0) {
+    if (Test-Path -LiteralPath $renderReport) {
+        Get-Content -LiteralPath $renderReport
+    }
+    throw "Offline render failed with exit code $($renderTest.ExitCode)"
+}
+
+$renderResult = Get-Content -LiteralPath $renderReport -Raw | ConvertFrom-Json
+if (-not (Test-Path -LiteralPath $renderWav) -or (Get-Item $renderWav).Length -ne $renderResult.fileBytes) {
+    throw "The rendered WAV is missing or does not match its reported size"
+}
+
+if ($renderResult.clippedSamples -ne 0 -or $renderResult.invalidSampleCount -ne 0 -or
+    $renderResult.peak -le 0) {
+    throw "The offline render clipped, produced invalid samples, or was silent"
+}
+
+Remove-Item -LiteralPath $renderWav -Force -ErrorAction SilentlyContinue
 
 if ($m5Result.seededVelocitySeed -ne 18421 -or
     $m5Result.seededVelocityMaximumDelta -ne 8 -or
@@ -323,8 +532,11 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     ProjectAssertions = $projectResult.assertions
     ProjectSchemaVersion = $projectResult.projectSchemaVersion
     LegacySchemaVersion = $projectResult.legacySchemaVersion
+    PreviousSchemaVersion = $projectResult.previousSchemaVersion
     LegacyMigrationPassed = $projectResult.legacyMigrationPassed
     LegacyMigrationSourceSha256 = $projectResult.legacySourceSha256
+    PreviousMigrationPassed = $projectResult.previousMigrationPassed
+    PreviousMigrationSourceSha256 = $projectResult.previousSourceSha256
     MigratedTrackId = $projectResult.stableTrackId
     MigratedClipId = $projectResult.stableClipId
     ProjectRoundTripBytes = $projectResult.roundTripBytes
@@ -349,6 +561,28 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     ParameterizedDynamicsCandidateSha256 = $m5Result.parameterizedCandidateSha256
     ParameterizedDynamicsDiffs = $m5Result.parameterizedDiffCount
     InvalidDynamicsSettingsBlocked = $m5Result.invalidDynamicsSettingsBlocked
+    RenderSeconds = [math]::Round($renderResult.renderedSeconds, 1)
+    RenderPeakDbfs = [math]::Round($renderResult.peakDbfs, 1)
+    RenderRmsDbfs = [math]::Round($renderResult.rmsDbfs, 1)
+    AudioProbeAudibleTracks = "$($audioProbeResult.audibleTrackCount)/$($audioProbeResult.expectedAudibleTrackCount)"
+    AudioProbeMasterPeak = [math]::Round($audioProbeResult.masterPeak, 4)
+    SoundShelfAcceptedSha256 = $soundShelfResult.acceptedSoundSha256
+    SoundShelfLoadedSha256 = $soundShelfResult.shelfSoundSha256
+    SoundShelfLanePassed = ($soundShelfResult.loadedAsCandidate -and
+        $soundShelfResult.acceptedUnchangedByLoad -and $soundShelfResult.appliedShelfSound -and
+        $soundShelfResult.undoRestoredAccepted -and $soundShelfResult.foreignInstrumentRefused)
+    SoundShelfBytes = $projectResult.soundShelfBytes
+    SelectionTransposeDiffs = $selectionResult.transposeDiffCount
+    SelectionEditsPassed = ($selectionResult.velocityAppliedAcrossSelection -and
+        $selectionResult.velocityUndoneInOneStep -and
+        $selectionResult.transposeAppliedAcrossSelection -and
+        $selectionResult.transposeUndoneInOneStep)
+    CommandLoadCandidateSha256 = $commandLoadResult.candidateContentSha256
+    CommandLoadDiffs = $commandLoadResult.noteDiffCount
+    CommandLoadRefusalsPassed = ($commandLoadResult.staleHashRefused -and
+        $commandLoadResult.wrongTrackRefused -and $commandLoadResult.wrongClipRefused -and
+        $commandLoadResult.malformedRefused -and $commandLoadResult.oversizeRefused -and
+        $commandLoadResult.missingFileRefused -and $commandLoadResult.replayAfterApplyRefused)
     LiveSurgeStateBytes = $result.songProject.stateBytes
     LiveSurgeStateSha256 = $result.songProject.stateSha256
     LiveSoundName = $result.songProject.soundName
@@ -371,6 +605,13 @@ if (Get-Process -Name "ResonanceMusicEditor" -ErrorAction SilentlyContinue) {
     M6RuntimeTrackTwoPeak = $m6Result.runtime.maximumTrackTwoPeak
     M6RuntimeStateRoundTrip = $m6Result.plugin.completeStateRoundTrip
     M6RuntimeMissingPluginPreserved = $m6Result.runtime.missingPluginPreserved
+    M6AuthoringPreloadedInstances = $m6AuthoringResult.preloadedPluginCount
+    M6AuthoringAddTrack = $m6AuthoringResult.addTrackSucceeded
+    M6AuthoringIndependentNotes = $m6AuthoringResult.independentNotes
+    M6AuthoringIndependentMixer = $m6AuthoringResult.independentMixerSettings
+    M6AuthoringReorderRemapped = $m6AuthoringResult.runtimeStateAlignedAfterReorder
+    M6AuthoringSaveOpen = $m6AuthoringResult.reopenedOrderPreserved
+    M6AuthoringRemoveUndo = $m6AuthoringResult.undoRemoveRestored
     NoRescanPerformed = $result.noRescanPerformed
     AudioEmitted = $result.audioEmitted
     UiSnapshotBytes = $snapshotBytes

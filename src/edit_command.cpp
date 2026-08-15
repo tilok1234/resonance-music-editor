@@ -10,7 +10,8 @@ namespace resonance
 namespace
 {
 constexpr int projectPpq = 960;
-constexpr int maximumCommandChanges = 128;
+constexpr int maximumCommandChanges = 128;   // seeded-variation target bound
+constexpr int maximumNoteChanges = static_cast<int> (EditCommand::maximumNoteChanges);
 constexpr std::int64_t maximumSeed = 2147483647;
 constexpr int maximumVelocityDelta = 32;
 
@@ -59,6 +60,19 @@ juce::String requireString (juce::DynamicObject& object, const juce::Identifier&
 
     const auto value = object.getProperty (property);
     return value.isString() ? value.toString() : juce::String {};
+}
+
+bool readNumber (juce::DynamicObject& object, const juce::Identifier& property, double& destination)
+{
+    if (! object.hasProperty (property))
+        return false;
+
+    const auto value = object.getProperty (property);
+    if (! value.isInt() && ! value.isInt64() && ! value.isDouble())
+        return false;
+
+    destination = static_cast<double> (value);
+    return std::isfinite (destination);
 }
 
 bool readInt (juce::DynamicObject& object, const juce::Identifier& property, int& destination)
@@ -115,10 +129,13 @@ juce::Result parseNote (const juce::var& value, SongNote& destination)
     int velocity = 0;
     if (id.isEmpty())
         return juce::Result::fail ("A command note id is required");
-    if (! readInt (*object, "startTick", startTick) || startTick < 0 || startTick >= 32 * projectPpq)
-        return juce::Result::fail ("Command note startTick must be from 0 through 30719");
-    if (! readInt (*object, "lengthTicks", lengthTicks) || lengthTicks < 1 || lengthTicks > 32 * projectPpq)
-        return juce::Result::fail ("Command note lengthTicks must be from 1 through 30720");
+    const auto maximumTicks = static_cast<int> (maximumLoopBeats) * projectPpq;
+    if (! readInt (*object, "startTick", startTick) || startTick < 0 || startTick >= maximumTicks)
+        return juce::Result::fail ("Command note startTick must be from 0 through "
+                                   + juce::String (maximumTicks - 1));
+    if (! readInt (*object, "lengthTicks", lengthTicks) || lengthTicks < 1 || lengthTicks > maximumTicks)
+        return juce::Result::fail ("Command note lengthTicks must be from 1 through "
+                                   + juce::String (maximumTicks));
     if (! readInt (*object, "midiNote", midiNote) || midiNote < 0 || midiNote > 127)
         return juce::Result::fail ("Command note midiNote must be from 0 through 127");
     if (! readInt (*object, "velocity", velocity) || velocity < 1 || velocity > 127)
@@ -225,6 +242,183 @@ juce::Result applyChange (const NoteEditChange& change, SongProject& project)
 }
 } // namespace
 
+juce::Result parseProjectOperations (juce::DynamicObject& root,
+                                     std::vector<ProjectOperation>& destination)
+{
+    const auto* operations = root.getProperty ("projectOperations").getArray();
+    if (operations == nullptr || operations->isEmpty()
+        || operations->size() > static_cast<int> (EditCommand::maximumProjectOperations))
+        return juce::Result::fail ("projectOperations must contain from 1 through "
+                                   + juce::String (static_cast<int> (EditCommand::maximumProjectOperations))
+                                   + " entries");
+
+    for (const auto& value : *operations)
+    {
+        auto* object = requireObject (value);
+        if (object == nullptr)
+            return juce::Result::fail ("Every project operation must be a JSON object");
+
+        const auto type = requireString (*object, "type");
+        ProjectOperation operation;
+
+        if (type == "setTempo")
+        {
+            if (! hasOnlyProperties (*object, { "type", "bpm" })
+                || ! readNumber (*object, "bpm", operation.numeric)
+                || operation.numeric < 40.0 || operation.numeric > 240.0)
+                return juce::Result::fail ("setTempo requires bpm from 40 through 240");
+            operation.type = ProjectOperationType::setTempo;
+        }
+        else if (type == "setSongLength")
+        {
+            if (! hasOnlyProperties (*object, { "type", "lengthTicks" })
+                || ! readInt (*object, "lengthTicks", operation.lengthTicks)
+                || operation.lengthTicks < static_cast<int> (minimumLoopBeats) * projectPpq
+                || operation.lengthTicks > static_cast<int> (maximumLoopBeats) * projectPpq)
+                return juce::Result::fail ("setSongLength requires lengthTicks within the published canvas");
+            operation.type = ProjectOperationType::setSongLength;
+        }
+        else if (type == "setSnap")
+        {
+            if (! hasOnlyProperties (*object, { "type", "snapBeats" })
+                || ! readNumber (*object, "snapBeats", operation.numeric))
+                return juce::Result::fail ("setSnap requires snapBeats");
+            auto supported = false;
+            for (const auto allowed : { 0.125, 0.25, 0.5, 1.0 })
+                supported = supported || std::abs (operation.numeric - allowed) < 1.0e-9;
+            if (! supported)
+                return juce::Result::fail ("setSnap requires snapBeats of 0.125, 0.25, 0.5, or 1.0");
+            operation.type = ProjectOperationType::setSnap;
+        }
+        else if (type == "setTitle")
+        {
+            if (! hasOnlyProperties (*object, { "type", "title" }))
+                return juce::Result::fail ("setTitle requires only a title");
+            operation.text = requireString (*object, "title").trim();
+            if (operation.text.isEmpty() || operation.text.length() > 120)
+                return juce::Result::fail ("setTitle requires a title of 1 through 120 characters");
+            operation.type = ProjectOperationType::setTitle;
+        }
+        else if (type == "setTrackMixer")
+        {
+            if (! hasOnlyProperties (*object, { "type", "trackId", "gainDb", "pan", "mute", "solo" }))
+                return juce::Result::fail ("setTrackMixer contains an unsupported field");
+            operation.trackId = requireString (*object, "trackId");
+            if (operation.trackId.isEmpty())
+                return juce::Result::fail ("setTrackMixer requires a trackId");
+
+            double numeric = 0.0;
+            if (object->hasProperty ("gainDb"))
+            {
+                if (! readNumber (*object, "gainDb", numeric) || numeric < -60.0 || numeric > 12.0)
+                    return juce::Result::fail ("setTrackMixer gainDb must be from -60 through 12");
+                operation.gainDb = numeric;
+            }
+            if (object->hasProperty ("pan"))
+            {
+                if (! readNumber (*object, "pan", numeric) || numeric < -1.0 || numeric > 1.0)
+                    return juce::Result::fail ("setTrackMixer pan must be from -1 through 1");
+                operation.pan = numeric;
+            }
+            if (object->hasProperty ("mute"))
+            {
+                const auto value = object->getProperty ("mute");
+                if (! value.isBool())
+                    return juce::Result::fail ("setTrackMixer mute must be a boolean");
+                operation.mute = static_cast<bool> (value);
+            }
+            if (object->hasProperty ("solo"))
+            {
+                const auto value = object->getProperty ("solo");
+                if (! value.isBool())
+                    return juce::Result::fail ("setTrackMixer solo must be a boolean");
+                operation.solo = static_cast<bool> (value);
+            }
+            if (! operation.gainDb && ! operation.pan && ! operation.mute && ! operation.solo)
+                return juce::Result::fail ("setTrackMixer must change at least one value");
+            operation.type = ProjectOperationType::setTrackMixer;
+        }
+        else if (type == "setSound")
+        {
+            if (! hasOnlyProperties (*object, { "type", "trackId", "soundName" }))
+                return juce::Result::fail ("setSound contains an unsupported field");
+            operation.trackId = requireString (*object, "trackId");
+            operation.text = requireString (*object, "soundName").trim();
+            if (operation.trackId.isEmpty() || operation.text.isEmpty())
+                return juce::Result::fail ("setSound requires a trackId and a soundName");
+            operation.type = ProjectOperationType::setSound;
+        }
+        else if (type == "addTrack")
+        {
+            if (! hasOnlyProperties (*object, { "type", "trackId", "name" }))
+                return juce::Result::fail ("addTrack contains an unsupported field");
+            operation.trackId = requireString (*object, "trackId").trim();
+            if (operation.trackId.isEmpty() || operation.trackId.length() > 80)
+                return juce::Result::fail ("addTrack requires a trackId of 1 through 80 characters");
+            operation.text = requireString (*object, "name").trim();
+            if (operation.text.length() > 80)
+                return juce::Result::fail ("addTrack name must be at most 80 characters");
+            operation.type = ProjectOperationType::addTrack;
+        }
+        else if (type == "removeTrack")
+        {
+            if (! hasOnlyProperties (*object, { "type", "trackId" }))
+                return juce::Result::fail ("removeTrack contains an unsupported field");
+            operation.trackId = requireString (*object, "trackId");
+            if (operation.trackId.isEmpty())
+                return juce::Result::fail ("removeTrack requires a trackId");
+            operation.type = ProjectOperationType::removeTrack;
+        }
+        else if (type == "setClipLength")
+        {
+            if (! hasOnlyProperties (*object, { "type", "trackId", "lengthTicks" }))
+                return juce::Result::fail ("setClipLength contains an unsupported field");
+            operation.trackId = requireString (*object, "trackId");
+            if (operation.trackId.isEmpty())
+                return juce::Result::fail ("setClipLength requires a trackId");
+            if (! readInt (*object, "lengthTicks", operation.lengthTicks)
+                || operation.lengthTicks < static_cast<int> (minimumLoopBeats) * projectPpq
+                || operation.lengthTicks > static_cast<int> (maximumLoopBeats) * projectPpq)
+                return juce::Result::fail ("setClipLength requires lengthTicks within the published canvas");
+            operation.type = ProjectOperationType::setClipLength;
+        }
+        else if (type == "setPlacements")
+        {
+            if (! hasOnlyProperties (*object, { "type", "trackId", "startTicks" }))
+                return juce::Result::fail ("setPlacements contains an unsupported field");
+            operation.trackId = requireString (*object, "trackId");
+            if (operation.trackId.isEmpty())
+                return juce::Result::fail ("setPlacements requires a trackId");
+
+            const auto* startTicks = object->getProperty ("startTicks").getArray();
+            if (startTicks == nullptr || startTicks->isEmpty()
+                || startTicks->size() > static_cast<int> (EditCommand::maximumPlacements))
+                return juce::Result::fail ("setPlacements requires from 1 through "
+                                           + juce::String (static_cast<int> (EditCommand::maximumPlacements))
+                                           + " startTicks");
+            for (const auto& tickValue : *startTicks)
+            {
+                if (! tickValue.isInt() && ! tickValue.isInt64() && ! tickValue.isDouble())
+                    return juce::Result::fail ("Every setPlacements startTick must be a number");
+                const auto tick = static_cast<double> (tickValue);
+                if (std::floor (tick) != tick || tick < 0.0
+                    || tick > static_cast<double> (maximumLoopBeats) * projectPpq)
+                    return juce::Result::fail ("A setPlacements startTick is outside the published canvas");
+                operation.placementStartTicks.push_back (static_cast<int> (tick));
+            }
+            operation.type = ProjectOperationType::setPlacements;
+        }
+        else
+        {
+            return juce::Result::fail ("Unsupported project operation type: " + type);
+        }
+
+        destination.push_back (std::move (operation));
+    }
+
+    return juce::Result::ok();
+}
+
 juce::Result parseEditCommand (const juce::String& json, EditCommand& destination)
 {
     juce::var parsed;
@@ -235,29 +429,59 @@ juce::Result parseEditCommand (const juce::String& json, EditCommand& destinatio
     auto* root = requireObject (parsed);
     if (root == nullptr
         || ! hasOnlyProperties (*root, { "commandVersion", "projectContentSha256", "operation",
-                                        "target", "summary", "seed", "changes" }))
+                                        "target", "summary", "seed", "changes",
+                                        "projectOperations" }))
         return juce::Result::fail ("Edit command root contains unsupported fields");
 
     EditCommand command;
     if (! readInt (*root, "commandVersion", command.commandVersion)
-        || command.commandVersion != EditCommand::supportedVersion)
-        return juce::Result::fail ("Only edit-command version 1 is supported");
+        || (command.commandVersion != EditCommand::legacyVersion
+            && command.commandVersion != EditCommand::previousVersion
+            && command.commandVersion != EditCommand::supportedVersion))
+        return juce::Result::fail ("Only edit-command versions 1 through "
+                                   + juce::String (EditCommand::supportedVersion) + " are supported");
+
+    const auto hasProjectOperations = root->hasProperty ("projectOperations");
+    if (hasProjectOperations && command.commandVersion == EditCommand::legacyVersion)
+        return juce::Result::fail ("Project operations require edit-command version 2");
+
+    if (hasProjectOperations && command.commandVersion < EditCommand::supportedVersion)
+    {
+        // Parsed early so an older command naming a newer operation is refused rather
+        // than silently applying something its declared version does not cover.
+        std::vector<ProjectOperation> probe;
+        const auto probeResult = parseProjectOperations (*root, probe);
+        if (probeResult.failed())
+            return probeResult;
+        for (const auto& operation : probe)
+            if (operation.type == ProjectOperationType::setClipLength
+                || operation.type == ProjectOperationType::setPlacements)
+                return juce::Result::fail ("Clip operations require edit-command version "
+                                           + juce::String (EditCommand::supportedVersion));
+    }
 
     command.projectContentSha256 = requireString (*root, "projectContentSha256").toLowerCase();
     if (! isSha256 (command.projectContentSha256))
         return juce::Result::fail ("Edit command projectContentSha256 must contain 64 hexadecimal characters");
 
-    command.operation = requireString (*root, "operation");
-    if (command.operation != "editNotes")
-        return juce::Result::fail ("Only the editNotes operation is supported in command version 1");
+    const auto hasNoteEdit = root->hasProperty ("changes");
+    if (! hasNoteEdit && ! hasProjectOperations)
+        return juce::Result::fail ("An edit command must contain note changes, project operations, or both");
 
-    auto* target = requireObject (root->getProperty ("target"));
-    if (target == nullptr || ! hasOnlyProperties (*target, { "trackId", "clipId" }))
-        return juce::Result::fail ("Edit command target must contain only trackId and clipId");
-    command.trackId = requireString (*target, "trackId");
-    command.clipId = requireString (*target, "clipId");
-    if (command.trackId.isEmpty() || command.clipId.isEmpty())
-        return juce::Result::fail ("Edit command target IDs are required");
+    if (hasNoteEdit)
+    {
+        command.operation = requireString (*root, "operation");
+        if (command.operation != "editNotes")
+            return juce::Result::fail ("Only the editNotes operation is supported");
+
+        auto* target = requireObject (root->getProperty ("target"));
+        if (target == nullptr || ! hasOnlyProperties (*target, { "trackId", "clipId" }))
+            return juce::Result::fail ("Edit command target must contain only trackId and clipId");
+        command.trackId = requireString (*target, "trackId");
+        command.clipId = requireString (*target, "clipId");
+        if (command.trackId.isEmpty() || command.clipId.isEmpty())
+            return juce::Result::fail ("Edit command target IDs are required");
+    }
 
     command.summary = requireString (*root, "summary").trim();
     if (command.summary.isEmpty() || command.summary.length() > 160)
@@ -271,9 +495,23 @@ juce::Result parseEditCommand (const juce::String& json, EditCommand& destinatio
         command.seed = seed;
     }
 
+    if (hasProjectOperations)
+    {
+        const auto operationsResult = parseProjectOperations (*root, command.projectOperations);
+        if (operationsResult.failed())
+            return operationsResult;
+    }
+
+    if (! hasNoteEdit)
+    {
+        destination = std::move (command);
+        return juce::Result::ok();
+    }
+
     const auto* changes = root->getProperty ("changes").getArray();
-    if (changes == nullptr || changes->isEmpty() || changes->size() > maximumCommandChanges)
-        return juce::Result::fail ("Edit command changes must contain from 1 through 128 entries");
+    if (changes == nullptr || changes->isEmpty() || changes->size() > maximumNoteChanges)
+        return juce::Result::fail ("Edit command changes must contain from 1 through "
+                                   + juce::String (maximumNoteChanges) + " entries");
 
     std::set<juce::String> touchedIds;
     for (const auto& value : *changes)
@@ -326,12 +564,17 @@ juce::String serialiseEditCommand (const EditCommand& command)
     auto* object = root.getDynamicObject();
     object->setProperty ("commandVersion", command.commandVersion);
     object->setProperty ("projectContentSha256", command.projectContentSha256.toLowerCase());
-    object->setProperty ("operation", command.operation);
 
-    auto target = makeObject();
-    target.getDynamicObject()->setProperty ("trackId", command.trackId);
-    target.getDynamicObject()->setProperty ("clipId", command.clipId);
-    object->setProperty ("target", target);
+    // Only emit the note-edit fields when there are note changes, so a command that
+    // carries project operations alone round-trips through the version-2 schema.
+    if (command.hasNoteChanges())
+    {
+        object->setProperty ("operation", command.operation);
+        auto target = makeObject();
+        target.getDynamicObject()->setProperty ("trackId", command.trackId);
+        target.getDynamicObject()->setProperty ("clipId", command.clipId);
+        object->setProperty ("target", target);
+    }
     object->setProperty ("summary", command.summary);
     if (command.seed.has_value())
         object->setProperty ("seed", static_cast<juce::int64> (*command.seed));
@@ -348,7 +591,77 @@ juce::String serialiseEditCommand (const EditCommand& command)
             changeObject->setProperty ("note", noteToJson (*change.note));
         changes.add (value);
     }
-    object->setProperty ("changes", changes);
+    if (command.hasNoteChanges())
+        object->setProperty ("changes", changes);
+
+    if (! command.projectOperations.empty())
+    {
+        juce::Array<juce::var> operations;
+        for (const auto& operation : command.projectOperations)
+        {
+            auto value = makeObject();
+            auto* operationObject = value.getDynamicObject();
+            switch (operation.type)
+            {
+                case ProjectOperationType::setTempo:
+                    operationObject->setProperty ("type", "setTempo");
+                    operationObject->setProperty ("bpm", operation.numeric);
+                    break;
+                case ProjectOperationType::setSongLength:
+                    operationObject->setProperty ("type", "setSongLength");
+                    operationObject->setProperty ("lengthTicks", operation.lengthTicks);
+                    break;
+                case ProjectOperationType::setSnap:
+                    operationObject->setProperty ("type", "setSnap");
+                    operationObject->setProperty ("snapBeats", operation.numeric);
+                    break;
+                case ProjectOperationType::setTitle:
+                    operationObject->setProperty ("type", "setTitle");
+                    operationObject->setProperty ("title", operation.text);
+                    break;
+                case ProjectOperationType::setTrackMixer:
+                    operationObject->setProperty ("type", "setTrackMixer");
+                    operationObject->setProperty ("trackId", operation.trackId);
+                    if (operation.gainDb) operationObject->setProperty ("gainDb", *operation.gainDb);
+                    if (operation.pan) operationObject->setProperty ("pan", *operation.pan);
+                    if (operation.mute) operationObject->setProperty ("mute", *operation.mute);
+                    if (operation.solo) operationObject->setProperty ("solo", *operation.solo);
+                    break;
+                case ProjectOperationType::setSound:
+                    operationObject->setProperty ("type", "setSound");
+                    operationObject->setProperty ("trackId", operation.trackId);
+                    operationObject->setProperty ("soundName", operation.text);
+                    break;
+                case ProjectOperationType::addTrack:
+                    operationObject->setProperty ("type", "addTrack");
+                    if (operation.text.isNotEmpty())
+                        operationObject->setProperty ("name", operation.text);
+                    break;
+                case ProjectOperationType::removeTrack:
+                    operationObject->setProperty ("type", "removeTrack");
+                    operationObject->setProperty ("trackId", operation.trackId);
+                    break;
+                case ProjectOperationType::setClipLength:
+                    operationObject->setProperty ("type", "setClipLength");
+                    operationObject->setProperty ("trackId", operation.trackId);
+                    operationObject->setProperty ("lengthTicks", operation.lengthTicks);
+                    break;
+                case ProjectOperationType::setPlacements:
+                {
+                    operationObject->setProperty ("type", "setPlacements");
+                    operationObject->setProperty ("trackId", operation.trackId);
+                    juce::Array<juce::var> startTicks;
+                    for (const auto tick : operation.placementStartTicks)
+                        startTicks.add (tick);
+                    operationObject->setProperty ("startTicks", startTicks);
+                    break;
+                }
+            }
+            operations.add (value);
+        }
+        object->setProperty ("projectOperations", operations);
+    }
+
     return juce::JSON::toString (root, true);
 }
 
@@ -408,23 +721,186 @@ juce::Result resolveSeededVelocityVariation (const SongProject& activeProject,
     return juce::Result::ok();
 }
 
+juce::Result applyProjectOperations (const std::vector<ProjectOperation>& operations,
+                                     SongProject& project,
+                                     const SoundShelf* shelf,
+                                     std::vector<juce::String>* summaries,
+                                     std::vector<juce::String>* createdTrackIds)
+{
+    const auto trackIndexFor = [&project] (const juce::String& id)
+    {
+        for (int index = 0; index < project.getTrackCount(); ++index)
+            if (project.getTrackId (index) == id)
+                return index;
+        return -1;
+    };
+
+    const auto note = [summaries] (const juce::String& text)
+    {
+        if (summaries != nullptr)
+            summaries->push_back (text);
+    };
+
+    for (const auto& operation : operations)
+    {
+        switch (operation.type)
+        {
+            case ProjectOperationType::setTempo:
+                project.setTempoBpm (operation.numeric);
+                note ("tempo " + juce::String (operation.numeric, 2) + " BPM");
+                break;
+
+            case ProjectOperationType::setSongLength:
+            {
+                const auto beats = static_cast<double> (operation.lengthTicks) / projectPpq;
+                project.setLoopLengthBeats (beats);
+                note ("length " + juce::String (beats, 2) + " beats");
+                break;
+            }
+
+            case ProjectOperationType::setSnap:
+                project.setSnapBeats (operation.numeric);
+                note ("snap " + juce::String (operation.numeric, 3));
+                break;
+
+            case ProjectOperationType::setTitle:
+                project.setTitle (operation.text);
+                note ("title " + operation.text);
+                break;
+
+            case ProjectOperationType::setTrackMixer:
+            {
+                const auto index = trackIndexFor (operation.trackId);
+                if (index < 0)
+                    return juce::Result::fail ("setTrackMixer targets an unknown track: " + operation.trackId);
+
+                auto settings = project.getTrackMixerSettings (index);
+                if (operation.gainDb) settings.gainDecibels = *operation.gainDb;
+                if (operation.pan) settings.pan = *operation.pan;
+                if (operation.mute) settings.muted = *operation.mute;
+                if (operation.solo) settings.solo = *operation.solo;
+                const auto applied = project.setTrackMixerSettingsForTrack (index, settings);
+                if (applied.failed())
+                    return applied;
+                note ("mixer on " + operation.trackId);
+                break;
+            }
+
+            case ProjectOperationType::setSound:
+            {
+                const auto index = trackIndexFor (operation.trackId);
+                if (index < 0)
+                    return juce::Result::fail ("setSound targets an unknown track: " + operation.trackId);
+                if (shelf == nullptr)
+                    return juce::Result::fail ("setSound requires a sound shelf, which is unavailable here");
+
+                const auto* entry = shelf->find (operation.text);
+                if (entry == nullptr)
+                    return juce::Result::fail ("No shelf sound named " + operation.text);
+
+                // applyPluginSound writes to the selected track, so the selection is
+                // moved for the write and restored immediately. Any note changes later
+                // in the same command still resolve against their own target.
+                const auto previousActive = project.getActiveTrackIndex();
+                project.setActiveTrackIndex (index);
+                const auto applied = project.applyPluginSound (entry->name, entry->state);
+                project.setActiveTrackIndex (previousActive);
+                if (applied.failed())
+                    return applied;
+                note ("sound " + entry->name + " on " + operation.trackId);
+                break;
+            }
+
+            case ProjectOperationType::addTrack:
+            {
+                const auto added = project.addTrackWithIdentity (operation.trackId, operation.text);
+                if (added.failed())
+                    return added;
+                if (createdTrackIds != nullptr)
+                    createdTrackIds->push_back (operation.trackId);
+                note ("added track " + operation.trackId);
+                break;
+            }
+
+            case ProjectOperationType::removeTrack:
+            {
+                const auto removed = project.removeTrack (operation.trackId);
+                if (removed.failed())
+                    return removed;
+                note ("removed track " + operation.trackId);
+                break;
+            }
+
+            case ProjectOperationType::setClipLength:
+            {
+                const auto index = trackIndexFor (operation.trackId);
+                if (index < 0)
+                    return juce::Result::fail ("setClipLength targets an unknown track: "
+                                               + operation.trackId);
+
+                const auto beats = static_cast<double> (operation.lengthTicks) / projectPpq;
+                const auto applied = project.setClipLengthBeats (index, beats);
+                if (applied.failed())
+                    return applied;
+                note ("clip length " + juce::String (beats, 2) + " beats on " + operation.trackId);
+                break;
+            }
+
+            case ProjectOperationType::setPlacements:
+            {
+                const auto index = trackIndexFor (operation.trackId);
+                if (index < 0)
+                    return juce::Result::fail ("setPlacements targets an unknown track: "
+                                               + operation.trackId);
+
+                std::vector<double> startBeats;
+                startBeats.reserve (operation.placementStartTicks.size());
+                for (const auto tick : operation.placementStartTicks)
+                    startBeats.push_back (static_cast<double> (tick) / projectPpq);
+
+                const auto applied = project.setPlacements (index, startBeats);
+                if (applied.failed())
+                    return applied;
+                note (juce::String (static_cast<int> (startBeats.size())) + " placements on "
+                      + operation.trackId);
+                break;
+            }
+        }
+    }
+
+    return juce::Result::ok();
+}
+
 juce::Result createEditCommandPreview (const EditCommand& command,
                                        const SongProject& activeProject,
-                                       EditCommandPreview& destination)
+                                       EditCommandPreview& destination,
+                                       const SoundShelf* shelf)
 {
-    if (command.commandVersion != EditCommand::supportedVersion)
-        return juce::Result::fail ("Only edit-command version 1 is supported");
+    if (command.commandVersion != EditCommand::legacyVersion
+        && command.commandVersion != EditCommand::previousVersion
+        && command.commandVersion != EditCommand::supportedVersion)
+        return juce::Result::fail ("Only edit-command versions 1 through "
+                                   + juce::String (EditCommand::supportedVersion)
+                                   + " are supported");
     if (! isSha256 (command.projectContentSha256))
         return juce::Result::fail ("The edit command content-hash precondition is invalid");
-    if (command.operation != "editNotes")
-        return juce::Result::fail ("Only the editNotes operation is supported");
-    if (command.trackId != activeProject.getTrackId()
-        || command.clipId != activeProject.getClipId())
-        return juce::Result::fail ("The edit command targets an unknown track or clip");
     if (command.summary.trim().isEmpty() || command.summary.length() > 160)
         return juce::Result::fail ("The edit command summary is invalid");
-    if (command.changes.empty() || command.changes.size() > maximumCommandChanges)
-        return juce::Result::fail ("The edit command must contain from 1 through 128 changes");
+    if (command.changes.empty() && command.projectOperations.empty())
+        return juce::Result::fail ("The edit command does nothing");
+    if (command.projectOperations.size() > EditCommand::maximumProjectOperations)
+        return juce::Result::fail ("The edit command contains too many project operations");
+
+    if (command.hasNoteChanges())
+    {
+        if (command.operation != "editNotes")
+            return juce::Result::fail ("Only the editNotes operation is supported");
+        if (command.trackId != activeProject.getTrackId()
+            || command.clipId != activeProject.getClipId())
+            return juce::Result::fail ("The edit command targets an unknown track or clip");
+        if (command.changes.size() > EditCommand::maximumNoteChanges)
+            return juce::Result::fail ("The edit command contains too many note changes");
+    }
 
     const auto beforeHash = activeProject.getContentSha256();
     if (! command.projectContentSha256.equalsIgnoreCase (beforeHash))
@@ -433,6 +909,16 @@ juce::Result createEditCommandPreview (const EditCommand& command,
     auto candidate = std::make_unique<SongProject>();
     candidate->replaceWith (activeProject);
     candidate->beginUndoTransaction ("Preview edit: " + command.summary);
+
+    std::vector<juce::String> operationSummaries;
+    std::vector<juce::String> createdTrackIds;
+    const auto operationsResult = applyProjectOperations (command.projectOperations,
+                                                          *candidate,
+                                                          shelf,
+                                                          &operationSummaries,
+                                                          &createdTrackIds);
+    if (operationsResult.failed())
+        return operationsResult;
 
     std::set<juce::String> touchedIds;
     std::vector<NoteEditDiff> diffs;
@@ -504,12 +990,14 @@ juce::Result createEditCommandPreview (const EditCommand& command,
     preview.beforeContentSha256 = beforeHash;
     preview.afterContentSha256 = afterHash;
     preview.noteDiffs = std::move (diffs);
+    preview.projectOperationSummaries = std::move (operationSummaries);
+    preview.createdTrackIds = std::move (createdTrackIds);
     preview.candidate = std::move (candidate);
     destination = std::move (preview);
     return juce::Result::ok();
 }
 
-juce::Result EditCommandPreview::applyTo (SongProject& activeProject)
+juce::Result EditCommandPreview::applyTo (SongProject& activeProject, const SoundShelf* shelf)
 {
     if (! isPending())
         return juce::Result::fail ("This edit preview has already been applied or rejected");
@@ -518,6 +1006,25 @@ juce::Result EditCommandPreview::applyTo (SongProject& activeProject)
 
     activeProject.beginUndoTransaction ("Apply edit: " + command.summary);
     bool mutated = false;
+
+    // Identical execution to the preview. Any divergence is caught by the hash
+    // comparison below and rolled back.
+    if (! command.projectOperations.empty())
+    {
+        const auto operationsResult = applyProjectOperations (command.projectOperations,
+                                                              activeProject,
+                                                              shelf,
+                                                              nullptr,
+                                                              nullptr);
+        if (operationsResult.failed())
+        {
+            activeProject.undo();
+            return juce::Result::fail ("The project operations could not be applied: "
+                                       + operationsResult.getErrorMessage());
+        }
+        mutated = true;
+    }
+
     for (const auto& change : command.changes)
     {
         const auto result = applyChange (change, activeProject);

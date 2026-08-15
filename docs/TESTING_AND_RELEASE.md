@@ -1,6 +1,6 @@
 # Testing and release
 
-Status: current validation contract for the single-track authoring prototype and bounded two-instance runtime
+Status: current validation contract for four-track, 64-bar authoring and the eight-slot runtime
 
 ## Gate philosophy
 
@@ -73,18 +73,18 @@ The optional `--state-project <song.resonance.json>` probe input restores an exa
 
 | Suite | Current passed assertions |
 | --- | ---: |
-| Real-time loop scheduler and two-track runtime | 124 |
-| Song project, migration, round trip, and edit commands | 162 |
+| Real-time loop scheduler and multi-track runtime | 124 |
+| Song project, migration, round trip, topology, canvas, shelf, and edit commands | 270 |
 
-The tests cover timing boundaries, the real 44.1 kHz / 441-sample exact-block case, loop wrap, note-off behavior, event balance, project defaults, edit constraints, stable IDs, note and sound Undo/Redo, named opaque sound integrity, backward-compatible `soundName` loading, JSON round trips, malformed data, state hashes, and relocation-compatible VST3 identity. M6 project cases additionally prove lossless version-1-to-version-2 migration, source-file immutability, non-default track/clip ID preservation, neutral mixer/MIDI defaults, bounded non-default round trips, strict future/missing/out-of-range rejection, and command targeting against migrated IDs. Runtime cases use deterministic fake processors to prove eight stable slots, two separate note/channel schedules, exact summing, stereo balance, gain, mute, solo, bounded track/master meters, clipping and invalid/exception fallback, oversize-block refusal without resizing, independent state, missing-slot preservation, CPU measurement, release, and shutdown. The M5 and seeded velocity cases continue to prove their full command, candidate, deterministic resolver, Apply/Reject, stale, and one-Undo contracts.
+The tests cover timing boundaries, the real 44.1 kHz / 441-sample exact-block case, loop wrap, note-off behavior, event balance, project defaults, edit constraints, stable IDs, note and sound Undo/Redo, named opaque sound integrity, backward-compatible `soundName` loading, JSON round trips, malformed data, state hashes, and relocation-compatible VST3 identity. Project cases prove lossless version-1 through version-4 migration to version 5, source-file immutability, non-default identity/mixer/MIDI preservation, track add/remove/reorder and Undo/Redo up to the four-track ceiling with a fifth failing closed, project-wide unique IDs, shared-loop enforcement, independent states and notes, the full 64-bar canvas including a note beyond the former ceiling surviving publication, sound-shelf naming/capacity/integrity, bounded round trips, strict future/missing/out-of-range rejection, and command targeting against the selected stored IDs. Runtime cases use deterministic fake processors to prove eight stable slots, two separate note/channel schedules, exact summing, stereo balance, gain, mute, solo, bounded track/master meters, clipping and invalid/exception fallback, oversize-block refusal without resizing, independent state, missing-slot preservation, CPU measurement, release, and shutdown. The M5 and seeded velocity cases continue to prove their full command, candidate, deterministic resolver, Apply/Reject, stale, and one-Undo contracts.
 
 ### M6 migration and mixer-contract gate
 
-`scripts/test-realtime.ps1` passes `tests/fixtures/song-project-v1-migration.resonance.json` to `SongProjectTests.exe`. The fixture uses `track-migrated` and `clip-migrated`, preventing hard-coded starter identities from satisfying the test. The report must declare song schema 2, legacy schema 1, `legacyMigrationPassed: true`, both stable IDs, and the exact source SHA-256. `RealtimeEngineTests.exe` must report capacity 8 and `mixerContractPassed: true`.
+`scripts/test-realtime.ps1` passes one migration fixture per archived schema version to `SongProjectTests.exe`. The version-1 fixture uses `track-migrated` and `clip-migrated`, preventing hard-coded starter identities from satisfying the test; version 2 carries non-default mixer/MIDI data and exact state; version 3 is a two-track project with non-default identity on both tracks; version 4 is a four-track project. The report must declare current schema 5, legacy 1, previous 2, prior 3, last archived 4, every migration flag, every exact source SHA-256, capacity 4, `twoTrackTopologyPassed`, `fourTrackCeilingPassed`, `longCanvasPassed`, and `maximumLoopBeats: 256`. `RealtimeEngineTests.exe` must report capacity 8 and `mixerContractPassed: true`.
 
-The portable version-1 fixture and historical version-1 UI round-trip artifact validate against `schema/song-project-v1.schema.json`. The current real-Surge project validates against canonical `schema/song-project.schema.json`. The visible project still publishes exactly one persisted track to runtime slot zero; schema migration proof remains separate from the two-slot engine proof.
+Each archived fixture validates against its own archived schema: versions 1, 2, 3, and 4. Current real-Surge projects validate against canonical `schema/song-project.schema.json`, which is version 5.
 
-### M6 two-track runtime gate
+### M6 multi-instance runtime gate
 
 The Release editor exercises the production runtime without browser automation or audible output:
 
@@ -96,7 +96,17 @@ The mode opens the configured Windows Audio device only to obtain the real sampl
 
 State isolation uses the exact accepted M4 B fixture. Its stored `ccaf99d4...` bytes normalise through live Surge processing to the accepted `91ed214e...` equivalent; four silent settle blocks follow the alternate restore and four follow the baseline restore. The gate requires only slot two to change, requires exact round trips for both current live baseline states, removes slot two without changing slot one, and proves clean shutdown. `schema/m6-runtime-test.schema.json` requires every condition, while deterministic fake-processor tests establish exact mix mathematics independently of Surge's opaque state normalisation.
 
-The versioned report records 100 rendered blocks plus eight settle blocks at the observed 44.1 kHz / 441-sample device format, average callback load `0.0079110`, maximum load `0.3994600`, zero safety counters, missing-slot preservation, and clean shutdown. This is technical evidence, not an audible mix or UI acceptance.
+The current versioned report records 100 rendered blocks plus eight settle blocks at the observed 44.1 kHz / 441-sample device format, average callback load `0.007391499998048`, maximum load `0.387239992618561`, zero safety counters, missing-slot preservation, and clean shutdown. This is technical evidence, not an audible mix or UI acceptance.
+
+### M6 authoring gate
+
+The Release editor exercises normal multi-track project and UI ownership without browser automation or audible output:
+
+```powershell
+.\bin\ResonanceMusicEditor.exe --m6-authoring-test --project <song.resonance.json> --report <report.json>
+```
+
+The hidden mode starts the ordinary editor with all four accepted Surge instances preloaded, keeps transport stopped, duplicates the starter track, verifies distinct runtime instances and exact duplicated state, changes only track two's note data, persists different mixer values, reorders and remaps both runtime states, undoes the reorder, saves and reopens schema version 5, removes a track, and undoes removal. It requires zero invalid samples or processor exceptions and `audioEmitted: false`. `schema/m6-authoring-test.schema.json` requires every lifecycle result.
 
 ### M5 edit-command core gate
 
@@ -110,7 +120,7 @@ The same script launches `bin\ResonanceMusicEditor.exe --self-test`. It must:
 - load the accepted current Surge record without scanning;
 - match the current plug-in identity and 2,855-parameter inventory count;
 - preserve exact state and song-project payloads through save/open;
-- write and reopen song-project schema version 2 with stable track/clip IDs and neutral mixer/MIDI defaults;
+- write and reopen song-project schema version 5 with stable track/clip IDs and neutral mixer/MIDI defaults;
 - preserve the host-owned sound name with the exact real Surge state;
 - report `passed: true`;
 - report `noRescanPerformed: true`;
@@ -147,7 +157,7 @@ This hidden mode keeps transport stopped. It first creates a selected-note `+1` 
 
 ### Artifact-schema gate
 
-`scripts/validate-artifacts.py` validates the current JSON reports, versioned project fixtures, historical version-1 project artifact, and edit-command fixture against the schemas under `schema/`. The current full sequence validates 16 artifacts and fixtures.
+`scripts/validate-artifacts.py` validates the current JSON reports, current one- and two-track projects, both historical migration fixtures, historical version-1 artifacts, and the edit-command fixture against the schemas under `schema/`. The current full sequence validates 19 artifacts and fixtures.
 
 Most machine-specific reports are ignored by Git. Schemas, portable `.resonance.json` fixtures, and the bounded M6 runtime checkpoint report are versioned; the M6 report stores artifact filenames rather than absolute local paths.
 
@@ -155,14 +165,39 @@ Most machine-specific reports are ignored by Git. Schemas, portable `.resonance.
 
 `scripts/check-docs.py` scans root and `docs/` Markdown files and fails on missing repository-local link or image targets. It intentionally skips external URLs and same-document anchors.
 
+## Packaged self-test modes
+
+| Mode | Proves |
+| --- | --- |
+| `--self-test` | silent startup, device, plug-in identity, exact state round trip |
+| `--m4-workflow-test` | accepted sound A/B, Apply, Undo, Save isolation |
+| `--m5-workflow-test` | accepted command/proposal lifecycle and deterministic resolver |
+| `--m6-runtime-test` | two distinct real Surge instances through the render/mix path |
+| `--m6-authoring-test` | multi-track topology, independent state, schema round trip |
+| `--command-load-test` | external command load, six refusal paths, Apply and Undo |
+| `--selection-test` | multiple selection, clipboard, nudge, transpose, one-step Undo |
+| `--sound-shelf-test` | shelf persistence and the shelf-to-candidate-B lane |
+| `--audio-probe` | **per-track rendered signal**, clipping, invalid samples |
+| `--ui-snapshot` | packaged UI capture, optionally of a named `--project` |
+| `--ui-idle-test` | idle process-CPU ceiling |
+
+Every mode except `--audio-probe` is silent by contract. That is correct for the invariants they protect, but it means none of them can observe that a track produces no sound. `--audio-probe` renders a project through the production callback with no audio device attached, and requires every track that should sound to produce signal, every muted or solo-suppressed track to stay silent, and the master to avoid clipping and invalid samples.
+
+It was added on 2026-08-13 after a listener reported hearing one instrument in a four-track project, and it caught a second, unrelated defect the same day: the realtime snapshot sanitiser was clamping long songs back to an older clip ceiling and silently discarding every note beyond it.
+
+A passing probe is still not a listening approval. It catches silence, not badness — the mix that prompted it was audible and still wrong.
+
 ## Manual interaction gates
 
 Before calling an interaction milestone complete, verify the exact packaged Release executable:
 
 - startup and shutdown;
-- device selector behavior;
+- device selector behavior, opened from the **Audio** button;
 - Play/Pause, Stop/Rewind, and Panic;
 - piano-roll add, select, drag, resize, velocity, delete, and vertical scroll;
+- add a second track, switch both directions, verify the piano roll and native Surge window follow selection, and check that pending sound/note B blocks track switching;
+- set independent gain and pan, then verify mute, solo, and the selected-track meters while both loops play;
+- remove, reorder, Undo, Redo, Save, close, and reopen two tracks without identity, state, mix, or note crossover;
 - gesture-level Undo/Redo and keyboard shortcuts;
 - save, overwrite warning, open, unsaved-change confirmation, and failed-open preservation;
 - native Surge open, audition strip, keyboard, close, and reopen;
@@ -183,6 +218,7 @@ Listening review is an explicit user gate. Use a named exact render or saved pro
 - loop seam;
 - preset and timbre suitability;
 - balance and masking;
+- two-track gain, pan, mute, solo, and first-play behavior;
 - dynamics and fatigue;
 - musical coherence and emotional fit;
 - behavior across headphones or speakers when relevant.
@@ -198,6 +234,7 @@ Do not silently replace an approved track or treat an automated render as catalo
 - current documentation and ADRs;
 - bounded dated checkpoint evidence;
 - portable project fixtures;
+- the portable generated schema-v3 two-track authoring project;
 - the bounded, path-sanitised M6 runtime report;
 - selected UI screenshots;
 - `artifacts/release-binaries.sha256`.

@@ -51,6 +51,286 @@ bool writeReport (const juce::File& reportFile, const juce::var& report)
     return reportFile.replaceWithText (juce::JSON::toString (report, true));
 }
 
+juce::File resolveSoundShelfPath (const juce::StringArray& args)
+{
+    const auto supplied = getArgumentValue (args, "--sound-shelf");
+    if (supplied.isNotEmpty())
+        return juce::File (supplied);
+
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+               .getChildFile ("ResonanceMusicEditor")
+               .getChildFile ("sound-shelf.json");
+}
+
+// Compact, agent-facing view of a project: everything needed to reason about the music
+// and author a valid edit command, with the Base64 instrument state deliberately
+// omitted. A 32-bar four-track song is roughly 60 KB here against 438 KB on disk.
+juce::var describeProject (const SongProject& project, const SoundShelf& shelf)
+{
+    auto* root = new juce::DynamicObject();
+    juce::var description (root);
+    root->setProperty ("schemaVersion", project.getSchemaVersion());
+    root->setProperty ("title", project.getTitle());
+    root->setProperty ("tempoBpm", project.getTempoBpm());
+    root->setProperty ("sampleRate", project.getSampleRate());
+    root->setProperty ("snapBeats", project.getSnapBeats());
+    root->setProperty ("loopLengthBeats", project.getLoopLengthBeats());
+    root->setProperty ("loopLengthTicks",
+                       juce::roundToInt (project.getLoopLengthBeats() * 960.0));
+    root->setProperty ("ppq", 960);
+    // The precondition for any command against this exact state.
+    root->setProperty ("projectContentSha256", project.getContentSha256());
+    root->setProperty ("trackCount", project.getTrackCount());
+    root->setProperty ("activeTrackIndex", project.getActiveTrackIndex());
+    root->setProperty ("maxProjectTracks", SongProject::maxProjectTracks);
+    root->setProperty ("maxNotesPerClip", static_cast<int> (maxSequenceNotes));
+    root->setProperty ("minimumLoopBeats", minimumLoopBeats);
+    root->setProperty ("maximumLoopBeats", maximumLoopBeats);
+    root->setProperty ("maxClipPlacements", static_cast<int> (maxClipPlacements));
+
+    juce::Array<juce::var> tracks;
+    for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
+    {
+        auto* trackObject = new juce::DynamicObject();
+        juce::var trackVar (trackObject);
+        const auto mixer = project.getTrackMixerSettings (trackIndex);
+        const auto midi = project.getTrackMidiRouting (trackIndex);
+        trackObject->setProperty ("index", trackIndex);
+        trackObject->setProperty ("id", project.getTrackId (trackIndex));
+        trackObject->setProperty ("name", project.getTrackName (trackIndex));
+        trackObject->setProperty ("clipId", project.getClipId (trackIndex));
+        trackObject->setProperty ("gainDb", mixer.gainDecibels);
+        trackObject->setProperty ("pan", mixer.pan);
+        trackObject->setProperty ("mute", mixer.muted);
+        trackObject->setProperty ("solo", mixer.solo);
+        trackObject->setProperty ("midiInputChannel", midi.inputChannel);
+        trackObject->setProperty ("midiOutputChannel", midi.outputChannel);
+        trackObject->setProperty ("soundName", project.getPluginSoundName (trackIndex));
+        // Identity and integrity only; the opaque state bytes are not included.
+        trackObject->setProperty ("stateSha256", project.getPluginStateSha256 (trackIndex));
+
+        // A clip holds its notes once, clip-relative, and each placement repeats them.
+        // The expanded count is what the maxNotesPerClip ceiling actually applies to.
+        trackObject->setProperty ("clipLengthTicks",
+                                  juce::roundToInt (project.getClipLengthBeats (trackIndex) * 960.0));
+        juce::Array<juce::var> placementArray;
+        for (const auto& placement : project.getPlacements (trackIndex))
+        {
+            auto* placementObject = new juce::DynamicObject();
+            juce::var placementVar (placementObject);
+            placementObject->setProperty ("id", placement.id);
+            placementObject->setProperty ("startTick",
+                                          juce::roundToInt (placement.startBeat * 960.0));
+            placementArray.add (placementVar);
+        }
+        trackObject->setProperty ("placements", placementArray);
+        trackObject->setProperty ("expandedNoteCount",
+                                  project.getExpandedNoteCount (trackIndex));
+
+        const auto notes = project.getNotes (trackIndex);
+        trackObject->setProperty ("noteCount", static_cast<int> (notes.size()));
+
+        juce::Array<juce::var> noteArray;
+        auto lowestPitch = 128;
+        auto highestPitch = -1;
+        for (const auto& note : notes)
+        {
+            auto* noteObject = new juce::DynamicObject();
+            juce::var noteVar (noteObject);
+            noteObject->setProperty ("id", note.id);
+            noteObject->setProperty ("startTick", juce::roundToInt (note.beat * 960.0));
+            noteObject->setProperty ("lengthTicks", juce::roundToInt (note.lengthBeats * 960.0));
+            noteObject->setProperty ("midiNote", note.midiNote);
+            noteObject->setProperty ("velocity", note.velocity);
+            noteArray.add (noteVar);
+            lowestPitch = juce::jmin (lowestPitch, note.midiNote);
+            highestPitch = juce::jmax (highestPitch, note.midiNote);
+        }
+        if (highestPitch >= 0)
+        {
+            trackObject->setProperty ("lowestMidiNote", lowestPitch);
+            trackObject->setProperty ("highestMidiNote", highestPitch);
+        }
+        trackObject->setProperty ("notes", noteArray);
+        tracks.add (trackVar);
+    }
+    root->setProperty ("tracks", tracks);
+
+    // An agent cannot ask for a sound it does not know exists.
+    juce::Array<juce::var> shelfSounds;
+    for (const auto& entry : shelf.getEntries())
+    {
+        auto* soundObject = new juce::DynamicObject();
+        juce::var soundVar (soundObject);
+        soundObject->setProperty ("name", entry.name);
+        soundObject->setProperty ("stateSha256", entry.stateSha256);
+        shelfSounds.add (soundVar);
+    }
+    root->setProperty ("shelfSounds", shelfSounds);
+    root->setProperty ("shelfSoundCount", static_cast<int> (shelf.getEntries().size()));
+    return description;
+}
+
+int runDescribe (const juce::StringArray& args)
+{
+    const auto projectPath = getArgumentValue (args, "--project");
+    if (projectPath.isEmpty())
+    {
+        std::cerr << "--describe requires --project <song.resonance.json>" << std::endl;
+        return 30;
+    }
+
+    SongProject project;
+    const auto loaded = project.loadFromFile (juce::File (projectPath));
+    if (loaded.failed())
+    {
+        std::cerr << "Could not load project: " << loaded.getErrorMessage() << std::endl;
+        return 31;
+    }
+
+    SoundShelf shelf;
+    shelf.loadFrom (resolveSoundShelfPath (args));
+    const auto description = describeProject (project, shelf);
+    const auto text = juce::JSON::toString (description, false);
+    const auto outPath = getArgumentValue (args, "--out");
+    if (outPath.isEmpty())
+    {
+        std::cout << text << std::endl;
+        return 0;
+    }
+
+    juce::File outFile (outPath);
+    outFile.getParentDirectory().createDirectory();
+    return outFile.replaceWithText (text) ? 0 : 32;
+}
+
+// Applies a command file to a project file with the same validation, hash
+// precondition, and note operations the interactive path uses, and no plug-in loaded.
+int runApplyCommand (const juce::StringArray& args)
+{
+    const auto projectPath = getArgumentValue (args, "--project");
+    const auto commandPath = getArgumentValue (args, "--command");
+    if (projectPath.isEmpty() || commandPath.isEmpty())
+    {
+        std::cerr << "--apply-command requires --project and --command" << std::endl;
+        return 40;
+    }
+
+    const juce::File projectFile (projectPath);
+    SongProject project;
+    const auto loaded = project.loadFromFile (projectFile);
+    if (loaded.failed())
+    {
+        std::cerr << "Could not load project: " << loaded.getErrorMessage() << std::endl;
+        return 41;
+    }
+
+    const juce::File commandFile (commandPath);
+    if (! commandFile.existsAsFile())
+    {
+        std::cerr << "Command file not found: " << commandPath << std::endl;
+        return 42;
+    }
+
+    EditCommand command;
+    const auto parsed = parseEditCommand (commandFile.loadFileAsString(), command);
+    if (parsed.failed())
+    {
+        std::cerr << "Command parse failed: " << parsed.getErrorMessage() << std::endl;
+        return 43;
+    }
+
+    // Command previews validate against the selected track, which is a UI concept with
+    // no meaning headlessly. Here the command's own target defines the selection, so an
+    // agent can address any track without a session. Selection is not serialised, so
+    // this does not alter the saved project.
+    // Only a note edit needs a selection; a command carrying project operations alone
+    // has no target track and must not be resolved against one.
+    if (command.hasNoteChanges())
+    {
+        auto targetTrackIndex = -1;
+        for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
+            if (project.getTrackId (trackIndex) == command.trackId)
+                targetTrackIndex = trackIndex;
+
+        if (targetTrackIndex < 0)
+        {
+            std::cerr << "No track with id " << command.trackId << " in this project" << std::endl;
+            return 44;
+        }
+        project.setActiveTrackIndex (targetTrackIndex);
+    }
+
+    SoundShelf shelf;
+    const auto shelfPath = resolveSoundShelfPath (args);
+    const auto shelfLoaded = shelf.loadFrom (shelfPath);
+    if (shelfLoaded.failed())
+    {
+        std::cerr << "Sound shelf could not be read: " << shelfLoaded.getErrorMessage() << std::endl;
+        return 47;
+    }
+
+    const auto beforeHash = project.getContentSha256();
+    EditCommandPreview preview;
+    const auto previewed = createEditCommandPreview (command, project, preview, &shelf);
+    if (previewed.failed())
+    {
+        std::cerr << "Command rejected: " << previewed.getErrorMessage() << std::endl;
+        return 44;
+    }
+
+    const auto diffCount = static_cast<int> (preview.noteDiffs.size());
+    auto additions = 0;
+    auto updates = 0;
+    auto removals = 0;
+    for (const auto& diff : preview.noteDiffs)
+    {
+        additions += diff.action == NoteEditAction::add ? 1 : 0;
+        updates += diff.action == NoteEditAction::update ? 1 : 0;
+        removals += diff.action == NoteEditAction::remove ? 1 : 0;
+    }
+
+    const auto applied = preview.applyTo (project, &shelf);
+    if (applied.failed())
+    {
+        std::cerr << "Apply failed: " << applied.getErrorMessage() << std::endl;
+        return 45;
+    }
+
+    const auto outPath = getArgumentValue (args, "--out");
+    const juce::File destination (outPath.isNotEmpty() ? outPath : projectPath);
+    const auto saved = project.saveToFile (destination);
+    if (saved.failed())
+    {
+        std::cerr << "Save failed: " << saved.getErrorMessage() << std::endl;
+        return 46;
+    }
+
+    auto* reportObject = new juce::DynamicObject();
+    juce::var report (reportObject);
+    reportObject->setProperty ("schemaVersion", 1);
+    reportObject->setProperty ("projectPath", projectFile.getFileName());
+    reportObject->setProperty ("commandPath", commandFile.getFileName());
+    reportObject->setProperty ("outputPath", destination.getFileName());
+    reportObject->setProperty ("summary", command.summary);
+    reportObject->setProperty ("beforeContentSha256", beforeHash);
+    reportObject->setProperty ("afterContentSha256", project.getContentSha256());
+    reportObject->setProperty ("noteDiffCount", diffCount);
+    reportObject->setProperty ("added", additions);
+    reportObject->setProperty ("updated", updates);
+    reportObject->setProperty ("removed", removals);
+    reportObject->setProperty ("passed", true);
+
+    const auto reportPath = getArgumentValue (args, "--report");
+    const auto text = juce::JSON::toString (report, true);
+    if (reportPath.isNotEmpty())
+        writeReport (juce::File (reportPath), report);
+    else
+        std::cout << text << std::endl;
+
+    return 0;
+}
+
 int runM6RuntimeTest (const juce::StringArray& args)
 {
     const auto inventoryFile = resolvePathArgument (args, "--inventory", "plugin-inventory.json");
@@ -131,14 +411,16 @@ int runM6RuntimeTest (const juce::StringArray& args)
         const auto secondParameterCount = secondPlugin->getParameters().size();
         const auto distinctInstances = firstPlugin.get() != secondPlugin.get();
 
-        RealtimeEngine engine;
+        const auto engineStorage = std::make_unique<RealtimeEngine>();
+        auto& engine = *engineStorage;
         const auto firstInstall = engine.setPluginForTrack (0, std::move (firstPlugin));
         const auto secondInstall = engine.setPluginForTrack (1, std::move (secondPlugin));
         if (firstInstall.failed() || secondInstall.failed())
             throw std::runtime_error ((firstInstall.getErrorMessage() + " "
                                       + secondInstall.getErrorMessage()).toStdString());
 
-        MixerSnapshot mixer;
+        const auto mixerStorage = std::make_unique<MixerSnapshot>();
+        auto& mixer = *mixerStorage;
         mixer.trackCount = 2;
         mixer.tracks[0].enabled = true;
         mixer.tracks[0].gainLinear = 0.02f;
@@ -594,6 +876,47 @@ public:
         return editor != nullptr ? editor->runM5WorkflowSelfTest() : juce::var {};
     }
 
+    juce::var runM6AuthoringSelfTest (const juce::File& projectFile)
+    {
+        return editor != nullptr ? editor->runM6AuthoringSelfTest (projectFile) : juce::var {};
+    }
+
+    juce::var runCommandLoadSelfTest()
+    {
+        return editor != nullptr ? editor->runCommandLoadSelfTest() : juce::var {};
+    }
+
+    juce::var runSelectionSelfTest()
+    {
+        return editor != nullptr ? editor->runSelectionSelfTest() : juce::var {};
+    }
+
+    juce::var runSoundShelfSelfTest (const juce::File& alternateProjectFile)
+    {
+        return editor != nullptr ? editor->runSoundShelfSelfTest (alternateProjectFile)
+                                 : juce::var {};
+    }
+
+    juce::var runAudioProbeSelfTest (const juce::File& projectFile)
+    {
+        return editor != nullptr ? editor->runAudioProbeSelfTest (projectFile) : juce::var {};
+    }
+
+    juce::var renderProjectToWav (const juce::File& projectFile,
+                                  const juce::File& wavFile,
+                                  int repeats,
+                                  double tailSeconds)
+    {
+        return editor != nullptr
+                   ? editor->renderProjectToWav (projectFile, wavFile, repeats, tailSeconds)
+                   : juce::var {};
+    }
+
+    bool openProjectFromCommandLine (const juce::File& projectFile)
+    {
+        return editor != nullptr && editor->openProjectFromCommandLine (projectFile);
+    }
+
     void prepareM5PreviewForSnapshot()
     {
         if (editor != nullptr)
@@ -610,7 +933,26 @@ class ResonanceApplication final : public juce::JUCEApplication
 public:
     const juce::String getApplicationName() override       { return "Resonance Music Editor"; }
     const juce::String getApplicationVersion() override    { return JUCE_APPLICATION_VERSION_STRING; }
-    bool moreThanOneInstanceAllowed() override             { return false; }
+    // The interactive editor stays single-instance so two windows cannot fight over the
+    // audio device. The headless modes take no device and must run even while an editor
+    // window is open, otherwise a second invocation silently hands off and does nothing.
+    bool moreThanOneInstanceAllowed() override
+    {
+        static const char* headlessModes[] { "--describe", "--apply-command", "--render",
+                                             "--audio-probe", "--self-test", "--m6-runtime-test",
+                                             "--m6-authoring-test", "--m5-workflow-test",
+                                             "--m4-workflow-test", "--command-load-test",
+                                             "--selection-test", "--sound-shelf-test",
+                                             "--ui-snapshot", "--ui-idle-test" };
+
+        juce::StringArray args;
+        args.addTokens (juce::JUCEApplication::getCommandLineParameters(), true);
+        for (const auto* mode : headlessModes)
+            if (args.contains (mode))
+                return true;
+
+        return false;
+    }
 
     void initialise (const juce::String& commandLine) override
     {
@@ -621,6 +963,22 @@ public:
         if (args.contains ("--self-test"))
         {
             setApplicationReturnValue (runSelfTest (args));
+            quit();
+            return;
+        }
+
+        // Agent-facing modes. Neither needs an instrument, so both exit before the
+        // window is built and the four Surge instances are preloaded.
+        if (args.contains ("--describe"))
+        {
+            setApplicationReturnValue (runDescribe (args));
+            quit();
+            return;
+        }
+
+        if (args.contains ("--apply-command"))
+        {
+            setApplicationReturnValue (runApplyCommand (args));
             quit();
             return;
         }
@@ -646,23 +1004,57 @@ public:
         const auto idleTestMode = args.contains ("--ui-idle-test");
         const auto m4WorkflowTestMode = args.contains ("--m4-workflow-test");
         const auto m5WorkflowTestMode = args.contains ("--m5-workflow-test");
+        const auto m6AuthoringTestMode = args.contains ("--m6-authoring-test");
+        const auto commandLoadTestMode = args.contains ("--command-load-test");
+        const auto selectionTestMode = args.contains ("--selection-test");
+        const auto soundShelfTestMode = args.contains ("--sound-shelf-test");
+        const auto audioProbeMode = args.contains ("--audio-probe");
+        const auto renderMode = args.contains ("--render");
         window = std::make_unique<MainWindow> (inventory,
                                                quarantine,
                                                properties.getUserSettings(),
                                                ! snapshotMode && ! idleTestMode
-                                                   && ! m4WorkflowTestMode && ! m5WorkflowTestMode);
+                                                   && ! m4WorkflowTestMode && ! m5WorkflowTestMode
+                                                   && ! m6AuthoringTestMode
+                                                   && ! commandLoadTestMode
+                                                   && ! selectionTestMode
+                                                   && ! soundShelfTestMode
+                                                   && ! audioProbeMode
+                                                   && ! renderMode);
+
+        const auto interactive = ! snapshotMode && ! idleTestMode && ! m4WorkflowTestMode
+                                 && ! m5WorkflowTestMode && ! m6AuthoringTestMode
+                                 && ! commandLoadTestMode && ! selectionTestMode
+                                 && ! soundShelfTestMode && ! audioProbeMode && ! renderMode;
+
+        // Opening a song from the command line so the editor starts on it, rather than
+        // starting on the starter project and making the user find the file.
+        if (interactive && args.contains ("--project") && window != nullptr)
+        {
+            const auto launchProject = resolvePathArgument (args, "--project", "");
+            if (! window->openProjectFromCommandLine (launchProject))
+                std::cerr << "Could not open " << launchProject.getFullPathName() << std::endl;
+        }
 
         if (snapshotMode)
         {
             const auto snapshotFile = resolvePathArgument (args, "--snapshot", "realtime-ui-snapshot.png");
-            juce::Timer::callAfterDelay (1800, [this, snapshotFile]
+            // Optional: snapshot a specific project instead of the starter one, so
+            // two-track views can be captured as visual evidence.
+            const auto snapshotProject = args.contains ("--project")
+                                             ? resolvePathArgument (args, "--project", "")
+                                             : juce::File {};
+            juce::Timer::callAfterDelay (1800, [this, snapshotFile, snapshotProject]
             {
                 auto* content = window != nullptr ? window->getContentComponent() : nullptr;
                 auto passed = false;
 
-                if (content != nullptr)
+                if (content != nullptr
+                    && (snapshotProject == juce::File()
+                        || window->openProjectFromCommandLine (snapshotProject)))
                 {
-                    window->prepareM5PreviewForSnapshot();
+                    if (snapshotProject == juce::File())
+                        window->prepareM5PreviewForSnapshot();
                     const auto image = content->createComponentSnapshot (content->getLocalBounds(), true, 1.0f);
                     juce::MemoryOutputStream encoded;
                     juce::PNGImageFormat png;
@@ -722,6 +1114,122 @@ public:
                                     && static_cast<bool> (object->getProperty ("passed"));
                 const auto reportWritten = writeReport (reportFile, report);
                 setApplicationReturnValue (passed && reportWritten ? 0 : 6);
+                quit();
+            });
+        }
+        else if (m6AuthoringTestMode)
+        {
+            const auto projectFile = resolvePathArgument (
+                args, "--project", "m6-two-track-authoring.resonance.json");
+            const auto reportFile = resolvePathArgument (
+                args, "--report", "m6-authoring-test-report.json");
+            juce::Timer::callAfterDelay (750, [this, projectFile, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runM6AuthoringSelfTest (projectFile)
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 7);
+                quit();
+            });
+        }
+        else if (commandLoadTestMode)
+        {
+            const auto reportFile = resolvePathArgument (
+                args, "--report", "command-load-test-report.json");
+            juce::Timer::callAfterDelay (750, [this, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runCommandLoadSelfTest()
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 8);
+                quit();
+            });
+        }
+        else if (selectionTestMode)
+        {
+            const auto reportFile = resolvePathArgument (
+                args, "--report", "selection-test-report.json");
+            juce::Timer::callAfterDelay (750, [this, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runSelectionSelfTest()
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 9);
+                quit();
+            });
+        }
+        else if (soundShelfTestMode)
+        {
+            const auto alternateProject = resolvePathArgument (
+                args, "--alternate-project", "m4-accepted-candidate-b.resonance.json");
+            const auto reportFile = resolvePathArgument (
+                args, "--report", "sound-shelf-test-report.json");
+            juce::Timer::callAfterDelay (750, [this, alternateProject, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runSoundShelfSelfTest (alternateProject)
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 10);
+                quit();
+            });
+        }
+        else if (audioProbeMode)
+        {
+            const auto projectFile = resolvePathArgument (args, "--project", "");
+            const auto reportFile = resolvePathArgument (
+                args, "--report", "audio-probe-report.json");
+            juce::Timer::callAfterDelay (750, [this, projectFile, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->runAudioProbeSelfTest (projectFile)
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 11);
+                quit();
+            });
+        }
+        else if (renderMode)
+        {
+            const auto projectFile = resolvePathArgument (args, "--project", "");
+            const auto wavFile = juce::File (getArgumentValue (args, "--wav"));
+            const auto repeatsText = getArgumentValue (args, "--repeats");
+            const auto tailText = getArgumentValue (args, "--tail-seconds");
+            const auto repeats = repeatsText.isNotEmpty() ? repeatsText.getIntValue() : 1;
+            const auto tailSeconds = tailText.isNotEmpty() ? tailText.getDoubleValue() : 2.0;
+            const auto reportFile = resolvePathArgument (args, "--report", "render-report.json");
+            juce::Timer::callAfterDelay (750,
+                                         [this, projectFile, wavFile, repeats, tailSeconds, reportFile]
+            {
+                const auto report = window != nullptr
+                                        ? window->renderProjectToWav (projectFile, wavFile,
+                                                                      repeats, tailSeconds)
+                                        : juce::var {};
+                const auto* object = report.getDynamicObject();
+                const auto passed = object != nullptr
+                                    && static_cast<bool> (object->getProperty ("passed"));
+                if (object != nullptr && ! passed)
+                    std::cerr << object->getProperty ("error").toString() << std::endl;
+                const auto reportWritten = writeReport (reportFile, report);
+                setApplicationReturnValue (passed && reportWritten ? 0 : 12);
                 quit();
             });
         }

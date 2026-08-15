@@ -1,197 +1,211 @@
 # Resonance Music Editor handoff
 
-Updated: 2026-08-09
+Updated: 2026-08-13
 
 Repository: <https://github.com/tilok1234/resonance-music-editor>
 
 ## Takeover summary
 
-Resonance is a clean-room restart of a Windows game-music editor. The current application is a working one-track authoring prototype over a bounded multi-instance engine, not a complete DAW. Its visible project loads one explicitly scanned and inventory-approved Surge XT 1.3.4 VST3, plays through Windows Audio/WASAPI, edits one looping MIDI clip in a piano roll, opens the native Surge editor with audition controls, and saves an explicitly accepted named instrument state with the symbolic song. A silent packaged gate separately proves two distinct Surge instances through the production render/mix path.
+Resonance is a clean-room restart of a Windows game-music editor. The current application is a working four-track, 64-bar authoring prototype, not a complete DAW. It preloads four distinct instances of the explicitly scanned and inventory-approved Surge XT 1.3.4 VST3, plays through Windows Audio/WASAPI, edits one clip per track on a shared canvas of one through 64 bars, opens the selected track's native Surge editor, and saves independent accepted sound and mixer state with the symbolic song.
 
-The accepted M4 snapshot-first sound workflow is frozen at commit `7af6573` on `codex/m4-accepted-0.3.0` and draft PR #1. It captures live Surge state as ephemeral B, auditions project A and candidate B through the same instance, applies B as one dirty Undo transaction, restores live sound state on Undo/Redo, and saves only the accepted project snapshot. The held-note scheduler defect is fixed and user-confirmed. The user preferred B as less annoying and passed Apply, dirty marker, Undo, Redo, Save, Close, and Open. Final recapture exposed lifecycle-dependent opaque Surge encodings for the same restored sound; the repaired packaged native workflow reopens and plays the exact saved B, captures unchanged B with matching `91ED214E` identities, rejects it, stays clean, and closes without a false warning. The user explicitly accepted M4 at 2026-08-08 23:54 +02:00.
+M4 (host-owned sound A/B) and M5 (validated edit-command/proposal layer) remain explicitly accepted by the user. M6 (multi-track and mixer) is technically verified but **has never passed a listening gate**. M7 (arrangement) is in progress: M7.1 delivered the song-length canvas and M7.5 delivered offline WAV render, both on 2026-08-13.
 
-M5 is accepted on `codex/m5-edit-command-foundation`, based directly on the accepted M4 commit. The command foundation implements schema version 1, exact project-content SHA-256 preconditions, resolved note add/update/remove, an independent candidate `SongProject`, explicit before/after note diffs, and consume-once Apply/Reject. Source checkpoint `3d3a91b` connects that core to an editor-owned note-proposal card. Checkpoint `2351cb6` adds the first deterministic multi-note resolver. Checkpoint `ef9710d` completes the bounded host input slice: **Whole loop** or **Selected note**, maximum velocity delta `1` through `32`, and seed `0` through `2147483647` resolve into concrete velocity-only B; invalid input is blocked and inputs freeze while B is pending. The selected-note `+1` producer remains available. The packaged user pass covered both target scopes, two strengths, A/B, Reject, frozen controls, and one-note targeting; a fresh hidden workflow rerun then passed Apply, Undo, deterministic repeat, invalid-input, schema, and cleanup checks. The user explicitly accepted M5 at 2026-08-09 11:02 +02:00. The accepted Surge sound responded only subtly to velocity, so acceptance covers the command/proposal lifecycle without claiming that candidate B sounded musically better. No natural-language translator or model service has been added.
+Project version: `0.5.0`. It has not been bumped since M4's acceptance at 0.3.0 because no milestone has been accepted since, although the capability set has grown considerably beyond what "0.5.0" implied a week ago. Bumping it is reasonable to propose, but it should follow an acceptance rather than precede one.
 
-M6 is in progress on `codex/m6-two-track-runtime`, based on the schema/identity foundation commit `280c876`. The first slice bumps the editor to 0.4.0 and the canonical song writer to schema version 2. Version-1 files migrate in memory without source rewrite; track/clip IDs become authoritative model data; each persisted track gains bounded undoable gain, pan, mute, solo, and MIDI-routing state; and edit commands target the active stored IDs. The second slice replaces the one-instance engine shape with eight stable message-thread-owned slots, preallocated per-slot scratch, double-buffered immutable `MixerSnapshot` publication, indexed plug-in state, per-track scheduling/mix/meters, and bounded safety/load diagnostics. The hidden Release gate loads two distinct accepted Surge XT instances, renders both in memory, mutates only slot two with the accepted M4 B, restores both current baseline states, preserves slot one when slot two is missing, and shuts down cleanly. The full gate passes 124 engine/runtime assertions, 162 project/migration/command assertions, the packaged M4/M5 regressions, and 16 schema validations. The visible schema/UI remain one track, the M6 test emits no audio, and no new listening acceptance is implied.
+## Current branch and history
 
-The accepted M4 publication baseline is `7af6573` (`Accept M4 host-owned sound workflow`) on `codex/m4-accepted-0.3.0`, available as draft PR #1. The accepted M5 branch is stacked as draft PR #2; its final acceptance commit is `9d94780`. The first M6 foundation is commit `280c876`; the current runtime work is stacked on it. The M5 acceptance is recorded in `docs/M5_ACCEPTANCE_2026-08-09.md`; M6 evidence is in `docs/M6_MULTITRACK_FOUNDATION_CHECKPOINT_2026-08-09.md` and `docs/M6_TWO_TRACK_RUNTIME_CHECKPOINT_2026-08-09.md`. Always verify live `HEAD`, upstream state, and the working tree before relying on those values or assuming a stacked milestone has landed on `main`.
+Working branch `codex/m6-two-track-authoring`, pushed, open as **draft PR #3** based on `codex/m6-two-track-runtime` (matching how #1 and #2 stack). The tip is the commit that carries this handoff; run `git log` for the exact value.
 
-Project version: `0.4.0` (M6 two-instance runtime is technically proven; M4 and M5 remain the accepted interaction/listening baselines, while visible multi-track authoring keeps M6 in progress)
+| Commit | Slice |
+| --- | --- |
+| `0e5aacf` | M8 editor layout rebuild (tip) |
+| `d903c5b` | Headless modes no longer silently no-op |
+| `8e0e3e8` | `setSound`, and the overload it caused |
+| `3666910` | M8 command vocabulary, edit-command v2 |
+| `d32850a` | M8 agent control surface |
+| `f3ea185` | M7.5 offline WAV render |
+| `59af6c7` | Reference songs the docs point at |
+| `2644ea5` | Current-reference docs audit, handoff rewrite |
+| `58405d6` | M7.1 song canvas to 64 bars, schema v5, roll time axis |
+| `7e9262e` | Per-track audio probe after the first listening report |
+| `47103e9` | Four-track ceiling, schema v4 |
+| `d8de105` | Named sound shelf |
+| `79c75ce` | Note clipboard, duplicate, nudge, transpose |
+| `1dc6bc8` | Multiple note selection |
+| `9dc6e43` | Piano-roll visibility: zoom and ghost notes |
+| `dc7a767` | External edit-command loading |
+| `b6af336` | Bounded M6 two-track authoring (prior baseline) |
 
-## Product direction
+Everything through `0e5aacf` is pushed and gathered in draft PR #3; nothing has been reviewed or merged. The accepted M4 baseline is `7af6573` on `codex/m4-accepted-0.3.0` (draft PR #1); the accepted M5 commit is `9d94780` (draft PR #2). Verify live `HEAD` and upstream before relying on any of these.
 
-The goal is a music-only editor aimed primarily at video games. It should eventually support fluid and smooth, fast and aggressive, slow and calm, and intermediate musical styles. Manual and AI-assisted editing must share one project model. General sound-effect creation is outside scope.
+## What changed since 2026-08-09, and why
 
-Read [the product vision](docs/PRODUCT_VISION.md) before changing product scope.
+A 2026-08-12 assessment found that the binding constraint on making songs was not arrangement or AI, but **note-entry throughput and sound variety**. Neither was a roadmap milestone. Nine slices followed, none of which altered the accepted M4 or M5 contracts:
 
-## Implemented capabilities
+1. **External command loading.** Version-1 edit-command files load into M5's accepted preview path; **Copy hash** publishes the content SHA-256, track ID, and clip ID needed to author one. `scripts/make-edit-command.py` builds them.
+2. **Piano-roll visibility.** Vertical zoom 12–72 rows, dim ghost notes for inactive tracks, pitch-range fitting on Open and New.
+3. **Multiple selection.** Shift/Ctrl-click, marquee, Ctrl+A, with selection-wide delete, move, velocity, and transpose as single Undo transactions.
+4. **Note clipboard.** Ctrl+C/V/D, arrow-key nudge and semitone/octave transpose, paste at a drawn insert marker.
+5. **Sound shelf.** Up to 32 named snapshots beside the settings file; loading one produces candidate B and flows through the accepted A/B lane.
+6. **Four tracks, schema v4.**
+7. **Per-track audio probe.** See below.
+8. **M7.1 song canvas, schema v5.** 64 bars, 1,024 notes per clip, horizontal zoom and scroll.
+9. **M7.5 offline render.** `--render` writes a 24-bit WAV through the production callback, with repeats and a release tail.
+10. **M8 agent control surface.** `--describe` and `--apply-command`, so an external agent can read and edit a project without the GUI.
+11. **M8 command vocabulary.** Edit-command version 2 adds tempo, song length, snap, title, mixer, sound, and track add/remove operations alongside note changes, with the cap raised to 1,024 changes.
+12. **M8 editor layout.** The device chooser moved into a dialog, the mixer shows every track with its own meter, the keyboard and the resolver inputs became toggles, and the piano roll took the reclaimed space.
+13. **M7.3 reusable clips.** A clip is content with its own length; a placement is one occurrence of it. Song-project schema 6, edit-command version 3 with `setClipLength` and `setPlacements`.
+14. **Sound lane layout regression fix (2026-08-15).** The M8 layout rebuild left every sound-workflow and shelf control constructed and wired but never positioned, so all of M4 was invisible and unclickable and `setSound` was inert for want of a fillable shelf. A dedicated sound card restores them. See [the dated fix](docs/SOUND_LANE_LAYOUT_REGRESSION_FIX_2026-08-15.md).
 
-- JUCE 9 / C++20 / CMake Windows-native application.
-- VST3-first hosting with Surge XT as the first accepted instrument.
-- Disposable one-bundle scanner child.
-- Parent-owned deadline, quarantine, and accepted inventory.
-- Exact VST3 bundle fingerprint revalidation before interactive load.
-- Explicit Windows Audio/WASAPI device selector.
-- Sample-accurate looping MIDI scheduler.
-- Mouse and hardware MIDI input.
-- Play/Pause, Stop/Rewind, Panic, master gain, meters, and diagnostics.
-- Native Surge window with Resonance audition transport and keyboard.
-- One editable piano-roll clip with add, move, resize, delete, velocity, snap, and loop length.
-- Gesture-level Undo/Redo for project edits.
-- Versioned `.resonance.json` project with 960 PPQ and stable track, clip, and note IDs.
-- Canonical song-project schema version 2 with lossless, non-rewriting version-1 migration.
-- Persisted per-track gain, pan, mute, solo, and MIDI-routing state with strict bounds and neutral migration defaults.
-- Base64 VST3 state plus SHA-256 integrity.
-- Candidate-then-replace project opening and exact state restore.
-- Host-owned named A/project and ephemeral B/candidate sound snapshots.
-- Explicit Capture B, Audition A/B, Apply B, and Reject B controls.
-- One-transaction sound Apply with live-state Undo/Redo restoration.
-- Strict edit-command version-1 parser and serializer for resolved note patches.
-- Full-project content SHA-256 preconditions with stale-preview rejection.
-- Non-mutating command candidates with explicit before/after note diffs.
-- Consume-once command Apply/Reject; Apply is one named Undo transaction.
-- Portable schema-validated command fixture with deterministic seed provenance.
-- Deterministic whole-loop velocity resolver with canonical target ordering and strict seed, delta, duplicate, and missing-target rejection.
-- Editor-owned M5 note-proposal card with exact change counts, first-note detail, and before/after hashes.
-- Explicit whole-loop/selected-note target, maximum-delta, and seed controls above **Preview dynamics**.
-- Fail-closed input ranges, selected-note requirement, and frozen controls while B is pending.
-- Orange before-note and blue after-note piano-roll overlays for add, update, and remove diffs.
-- Note A/B audition through normal immutable sequence snapshots without mutating the project.
-- Explicit note Apply/Reject, automatic stale invalidation, and one-step Undo/Redo.
-- Save isolation: unapplied note or sound previews never silently replace accepted A.
-- Mutually exclusive sound and note candidate lanes plus pending-preview discard warnings.
-- Separate exact saved-state integrity from the live-equivalent hash observed after Surge restore.
-- Silent packaged self-test, M4/M5 native workflow modes, M6 two-instance runtime mode, UI snapshot mode, and idle CPU regression mode.
-- Fixed-capacity eight-lane `MixerSnapshot` contract with native-tested gain, balance, mute, solo, and capacity semantics.
-- Eight stable prepared runtime slots with preallocated per-slot scratch, indexed state, separate scheduling/MIDI channels, bounded meters, load/safety diagnostics, and clean missing-slot/shutdown behavior.
-- Silent packaged proof of two distinct real Surge XT instances through the production render/mix path without rescanning or attaching an audio callback.
+## The most important thing to understand
+
+**Every packaged gate except one is silent by contract, and the first time a human listened they immediately found a defect that all of them had passed.**
+
+On 2026-08-13 the user played a four-track project and reported hearing one instrument. Investigation found no editor defect: the three real Surge patches available on this machine differ in intrinsic output by **8.5 dB**, and the mix had been authored assuming parity, which buried the melody. That prompted `--audio-probe`, the only non-silent gate — and the probe then caught a second, unrelated defect within hours: `sanitiseMixerSnapshot` was clamping every published sequence to an older 32-beat ceiling, so a 128-beat song looped its first 32 beats and **silently discarded every note past beat 32**.
+
+Carry both lessons forward:
+
+- A silent gate cannot observe silence. Run `--audio-probe` on any project-shaped change.
+- The probe catches silence, not badness. The mix that started this was audible and still wrong. Only a person can find that.
+- **The probe cannot compare two renders.** Two runs of the *same* project differ by up to 3.5 dB on a per-track peak, measured on 2026-08-13. Verify a change symbolically, through `--describe` note lists or model assertions, never by comparing levels.
 
 ## Current verified local baseline
-
-The latest machine-local reports available when this handoff was prepared showed:
 
 | Gate | Result |
 | --- | --- |
 | Scheduler/mixer/runtime assertions | 124 passed |
-| Project/migration/round-trip/command assertions | 162 passed |
-| Schema-validated artifacts and fixtures | 16 passed |
-| Song project schemas | canonical writer `2`; accepted legacy input `1` |
-| Version-1 migration fixture | passed; source SHA-256 `4725dd74075981ceb6ecd605db270954deafb7743b98190d090eb42dd677c0f7`; `track-migrated` / `clip-migrated` preserved |
-| Fixed runtime/mixer contract | 8 stable slots/lanes; double-buffered publication; two-slot scheduling, mix, meters, safety, state, failure, and shutdown cases passed |
-| Packaged M6 real-Surge runtime | passed; 2 distinct instances, 2,855 parameters each, 100 render blocks + 8 state-settle blocks, both tracks processed, no rescan, no emitted audio |
-| Packaged M6 callback load | average `0.0079110` (0.791% of period); maximum `0.3994600`; 0 invalid samples, clips, or processor exceptions |
-| M6 alternate state | stored accepted M4 B `ccaf99d4...`; live normalised accepted identity `91ed214e...`; slot-two-only mutation and exact current-baseline round trip passed |
-| Edit-command candidate SHA-256 | `effc3fa6f6a8801cf5d984364a38a6182893b146c22108de56f2c9bc606cb305` |
-| Seeded velocity command SHA-256 | `eaed800fde0ed0a377b2dd85880fd9c8f938a485f16b0582484f308a4f87483e` |
-| Seeded velocity unit candidate SHA-256 | `42ab4cca2fe478e300c49508879fe34f17270f8f036db079e6a91d0db8a29589` |
-| M5 proposal A SHA-256 | `00de28ee0860a8c6d00a2898f4d46f2231a7b984cde1f17091d4b8c636fd93a3` |
-| M5 proposal B SHA-256 | `4894a2a10474312a679f33af13f1cc0fa7484d620a7055c83eb3d764e8609aca` |
-| Packaged seeded velocity B SHA-256 | `a8cde7d15c2ecbfe2012f1c9f0bac40275a2f4f27f1da93410c3045835c33293` |
-| Parameterized selected-note B SHA-256 | `2b3f3fa963d1ee5599b0c9c93fc92d7d238afb45aee858cdc4025292d8f850fb` from seed `90210`, maximum delta `3` |
-| Packaged M5 workflow | passed; prior lifecycles plus parameter control consumption, deterministic repeat, invalid-input block, A/B, Reject, Apply, and one-Undo restore |
-| Fresh M5 acceptance rerun | passed; byte-identical report SHA-256 `f40ad41ce8964129d416e6f77593ab0e0b2f8c9669fe9b393c6bc9fce473385f`; 13 schema validations; zero leftover editor processes |
-| M5 user listening | accepted 2026-08-09 11:02 +02:00; A was slightly preferred but hard to distinguish at maximum delta `8`; delta `24` and selected-note delta `32` sounded about the same |
-| Surge XT | 1.3.4 |
-| Live Surge parameters | 2,855; matched inventory |
-| Current accepted inventory records | 1 |
-| Current production quarantine entries | 0 |
-| Current VST3 UID suffix | `190e4fbd` |
-| Audio backend | Windows Audio/WASAPI |
-| Silent self-test | passed; no scan and no emitted music |
-| Host-owned real-Surge sound name | `Self-test Surge state`; exact round trip |
-| Latest captured real Surge state | 67,345 bytes; SHA-256 `a771b28878606e1b830c9c5f02a46686328cc690e03153d2bd141cf0eee8ea40` |
-| Exact saved-B packaged workflow | passed; A/B `91ED214E`, clean Reject and Close |
-| Packaged UI snapshot | 92,810 bytes; SHA-256 `cfe19c3b7051f28dcc20acc162782397ebfca8be353c6ac2c104f9aabbc35c57` |
-| UI idle gate | passed below the 3,000 ms process-CPU threshold |
-| Packaged editor SHA-256 | `c447f6931cab22cee7fbca6344a6a92ebdfdf77153f1c54d092019b5ba2972de` |
+| Project/migration/ceiling/canvas/shelf/command/placement assertions | 338 passed |
+| Schema-validated artifacts and fixtures | 26 passed |
+| Song project schemas | canonical writer `6`; accepted inputs `5`, `4`, `3`, `2`, `1` |
+| Edit-command versions | authored `3`; accepted `3`, `2`, `1` |
+| Clip placements | 1-64 per clip, expansion bounded by the 1,024-note sequence ceiling |
+| Track ceiling | 4 persisted; 8 runtime lanes; 4 Surge instances preloaded |
+| Clip canvas | 4–256 beats (1–64 bars); 1,024 notes per clip |
+| Packaged audio probe | 1/1 expected-audible tracks, no per-track overload, no clipping, no invalid samples |
+| Audio probe on `emberline-long` | 4/4 audible, no overload, master peak 0.557 |
+| Packaged command load | 6 refusal paths, Apply, replay-after-Apply refused, one-step Undo |
+| Packaged selection/clipboard | 19 checks |
+| Packaged sound shelf | 10 checks against two genuinely different Surge states |
+| Packaged offline render | complete file, non-silent, no clipping, no invalid samples |
+| UI idle gate | 1,937.5 ms of CPU with four preloaded instances, below the 3,000 ms ceiling |
+| Packaged UI snapshot | 87,189 bytes; SHA-256 `85ef37fac97d05403b6b3a83d8f6efe921ba8ecced0e67011933edf08e0f41e4` |
+| Packaged editor SHA-256 | `25308951e035bdfe8072934bf51025eeef1a3e75024c3ef79420c9dd72f63057` |
+| Surge XT | 1.3.4; 2,855 parameters; VST3 UID suffix `190e4fbd` |
 
-Device name, sample rate, block size, latency, full path-derived identifier, and bundle fingerprint are machine observations. Regenerate rather than copying them to another machine.
+Device name, sample rate, block size, latency, and path-derived identifiers are machine observations. Regenerate rather than copying them.
 
-## Durable architecture decisions
+**Command and content hashes are not carried forward.** `schemaVersion` is part of the hashed canonical material, so every schema bump changes every project's content hash and invalidates previously authored command files. The M5 acceptance hashes recorded in older checkpoints are historical from v4 onward; the behavior they describe is unchanged.
 
-1. VST3 is a foundation, not a later adapter: [ADR-0001](docs/ADR-0001-vst3-host-foundation.md).
-2. Unknown discovery runs outside the editor: [ADR-0002](docs/ADR-0002-crash-isolated-plugin-scanning.md).
-3. The first real-time path is one explicit WASAPI instrument: [ADR-0003](docs/ADR-0003-realtime-audio-engine.md).
-4. The first sound workflow uses named host-owned opaque snapshots, not direct `.fxp` indexing: [ADR-0004](docs/ADR-0004-host-owned-sound-snapshots.md).
-5. Project migration precedes multi-instance rendering; the first mixer and runtime are fixed at eight message-thread-owned lanes/slots: [ADR-0005](docs/ADR-0005-multitrack-project-and-mixer-ownership.md).
-6. The mutable `SongProject` never crosses into the audio callback; it publishes fixed-capacity immutable snapshots.
-7. Saved project state is versioned symbolic data plus opaque VST3 state, never bundled plug-in code.
-8. Project open is fail-closed and transactional at the active-model boundary.
-9. Technical acceptance and user listening approval are separate gates.
+## Traps this codebase has already sprung
 
-Read [Architecture](docs/ARCHITECTURE.md) and [VST3 hosting](docs/VST3_HOSTING.md) before implementation.
+Each of these cost real time. They are recorded so they cost less next time.
 
-## Real-time invariants
+1. **The same limit hard-coded in several places.** The old clip ceiling lived independently in the model clamp, the realtime sanitiser, and the command parser. Bounds now live once in `src/loop_scheduler.h` (`minimumLoopBeats`, `maximumLoopBeats`, `maxSequenceNotes`). Check that header before changing any limit.
+2. **Snapshot structures are huge.** `MixerSnapshot` embeds a fixed-capacity sequence per lane. At 2,048 notes an engine reached ~1.2 MB and overflowed a thread stack. Never construct `MixerSnapshot` or `RealtimeEngine` as a stack local.
+3. **A schema bump touches more than the schema.** Expect to update the loader, an archived schema copy, a new migration fixture, the report schemas (`song-project-test`, `realtime-self-test`, `m6-authoring-test`), and several hard-coded version assertions in `scripts/test-realtime.ps1`. The v4 and v5 bumps each needed multiple gate runs to flush these out.
+4. **The editor holds `bin/`.** A running editor blocks the build's copy step, the gate's no-leftover-process check, and screenshots. Close it before verifying.
+5. **Paint code compiling is not paint code working.** Ghost notes, horizontal zoom, and the mixer strips all looked correct in source and were only proven — or disproven — by screenshot. The mixer card's height was short by exactly its header, which clipped every Mute and Solo control; nothing else caught it. `--ui-snapshot --project <file>` captures any project.
 
-Do not introduce file I/O, UI work, scanning, plug-in editor creation, unbounded allocation, or waits on message-thread locks in the audio callback. Process exactly the device-requested sample count. Keep automated self-test silent. Keep transport stopped and master gain at `-12 dB` on startup. Do not poll VST3 `hasEditor()` or similar capability methods from paint or timer paths.
+## Implemented capabilities
 
-The two regressions most worth remembering are:
-
-- Surge fast-failed when the host passed the 4,096-sample backing capacity instead of the device's 441 requested samples.
-- The UI appeared frozen when a 30 Hz timer repeatedly called JUCE VST3 `hasEditor()`, which constructed and released a native view.
-
-Both paths are now covered by packaged acceptance modes.
+- JUCE 9 / C++20 / CMake Windows-native application; VST3-first hosting with Surge XT.
+- Crash-isolated one-bundle scanner child, parent-owned deadline, quarantine, accepted inventory, exact bundle fingerprint revalidation.
+- Explicit Windows Audio/WASAPI selector; sample-accurate looping MIDI scheduler; mouse and hardware MIDI input; Play/Pause, Stop/Rewind, Panic, master gain, meters, diagnostics.
+- Native Surge window with a Resonance audition strip.
+- One through four editable piano-roll clips on a 1–64 bar shared canvas, with add, move, resize, delete, velocity, snap, multiple selection, marquee, clipboard, nudge, transpose, vertical and horizontal zoom, ghost notes, and gesture-level Undo/Redo.
+- Song-project schema version 5 with lossless, non-rewriting migration from versions 1 through 4; stable project-wide track/clip/note identity; per-track gain, pan, mute, solo, MIDI routing; Base64 VST3 state plus SHA-256 integrity; candidate-then-replace transactional Open.
+- Host-owned named A/B sound snapshots with Capture, Audition, Apply, Reject, one-transaction Undo, and a persistent named sound shelf.
+- Strict version-1 and version-2 edit-command parser/serializer, full-project SHA-256 preconditions, non-mutating candidates, before/after diffs and overlays, consume-once Apply/Reject, deterministic seeded velocity resolver, and external command-file loading.
+- Fixed eight-lane `MixerSnapshot` and eight prepared runtime slots with preallocated scratch, separate scheduling/MIDI channels, bounded meters, and clean shutdown.
+- Agent control surface: `--describe` emits a compact project view with the content hash and no Base64, and `--apply-command` applies a validated command headlessly. Neither loads an instrument.
+- Fourteen packaged modes, of which `--audio-probe` renders and measures signal and `--render` writes a 24-bit WAV.
+- Offline WAV render of a whole project through the production callback, with repeats, tail, and a schema-validated report.
 
 ## Known limitations
 
-- Exactly one instrument track and one looping clip are visible and persisted; the engine has eight slots and two real instances are proven only in the hidden runtime gate.
-- Exactly one accepted current VST3 inventory record is selected; the runtime can instantiate that record in more than one slot.
-- No factory-preset file browser or semantic parameter browser; the first host-owned workflow selects named captured snapshots only.
-- Arbitrary native Surge edits remain preview state until explicit Capture B and Apply B; they do not mark the project dirty immediately. New, Open, and Close perform a one-time comparison and warn if live state matches neither A nor B.
-- Only the accepted A snapshot is persisted. The ephemeral B candidate is intentionally not stored across application restarts.
-- No visible second track, track add/remove/reorder, user-facing missing-plug-in recovery, per-track mixer/meter controls, buses, or effects chain. Schema version 2 persists one track's gain, pan, mute, solo, and MIDI routing, and the engine consumes them in slot zero.
-- No arrangement timeline, sections, tempo changes, or automation lanes.
-- The command/proposal core and first parameterized seeded velocity transform exist, but target scope is limited to whole loop or one selected note; additional transforms, natural-language translation, and a connected AI service do not.
-- Dynamics target, strength, and seed are session-only proposal inputs; pending B and its controls are intentionally not persisted in song-project schema version 2.
-- No game-state transitions, stem management, offline final-song export, or engine adapter.
+- **No listening approval for anything since M4/M5.** This is the largest open item.
+- One clip per track. No sections, markers, reusable clip instances, arrangement timeline, tempo or meter changes, or automation.
+- No stems, loop-region metadata, normalisation, dither, or loudness targets; render is offline-only, single-file, and blocks the message thread.
+- Exactly one accepted inventory record; all four tracks instantiate the same Surge product. The shelf varies the patch, not the plug-in.
+- No factory-preset browser and no `.fxp` interpretation (ADR-0004, deliberate).
+- No user-facing missing-plug-in recovery.
+- The mixer row shows only the selected track; there is no simultaneous multi-channel view.
+- Mouse and keyboard gestures across the roll are verified by screenshot, not automated test.
+- The sound shelf is per-machine and is not part of a song project.
 - Scanner isolation does not contain a failure from a VST3 already processing in the editor.
-- The build script currently assumes the Visual Studio 18 Community installation and generator.
-- JUCE licensing for public/commercial binary distribution remains unresolved.
+- The build script assumes the Visual Studio 18 Community installation; JUCE licensing for distribution is unresolved.
 
-## Recommended next gate
+## Recommended next steps, in order
 
-Continue [Roadmap M6: Multi-track and mixer](docs/ROADMAP.md#m6-multi-track-and-mixer) with a bounded authoring slice over the proven runtime. Define the next song-schema revision, migrate version 2 without rewriting its source, and preserve stable IDs plus accepted opaque state. Add a minimal second visible track, selection, gain/pan/mute/solo, meters, add/remove/reorder Undo, Save/Open, and user-facing missing-plug-in recovery. Finish with an explicit two-track listening pass before accepting M6. Preserve the accepted M4 sound and M5 command/proposal contracts, and keep arrangement, automation, effects expansion, factory `.fxp` indexing, and model-service integration outside this slice.
+1. **Run the listening pass.** Render `songs/emberline-long.resonance.json` with `--render` and listen to the WAV, or open it and press Play. Does it read as four instruments? Do the sections land? This is the only step that can invalidate nine slices of unvalidated work, and an agent cannot do it.
+
+   Measurement already found one flaw worth confirming by ear: per-section RMS of the rendered file shows the intro sitting about 8 dB below the body, but the **outro at the same level as the A sections** rather than thinning as intended, so the piece may stop rather than resolve.
+2. **M7.5 offline WAV render — delivered 2026-08-13.** `--render` writes a 24-bit WAV through the production callback. The remaining assessment findings are now all closed.
+3. **M7.3 reusable clip instances.** The real arrangement work, and what stops a long song's note list growing linearly with its length.
+4. **M7.2 sections and markers**, then tempo and meter changes.
+5. **User-facing missing-plug-in recovery**, still required before M6 can be called complete.
 
 ## First takeover actions
 
-From the repository root:
-
 ```powershell
 git status --short --branch
-git log --oneline --decorate -5
+git log --oneline --decorate -9
 python .\scripts\check-docs.py
+python .\scripts\validate-artifacts.py
 ```
 
-Then:
+Then read `README.md`, `docs/README.md`, this handoff, and the ADRs. Build and verify with:
 
-1. read `README.md`, `docs/README.md`, this handoff, and the relevant ADRs;
-2. inspect ignored local dependency, build, inventory, and quarantine state without adding it to Git;
-3. run the full Release sequence before modifying a risky boundary, or record why a narrower gate is proportionate;
-4. preserve unrelated local edits;
-5. inspect ADR-0004 before changing the sound workflow and ADR-0005 before changing project topology or realtime mixer ownership.
+```powershell
+.\scripts\build.ps1 -Configuration Release
+.\scripts\test-realtime.ps1 -Configuration Release
+```
 
-The full commands and prerequisites are in [Development](docs/DEVELOPMENT.md) and [Testing and release](docs/TESTING_AND_RELEASE.md).
+Close any running editor first. Full prerequisites are in [Development](docs/DEVELOPMENT.md) and [Testing and release](docs/TESTING_AND_RELEASE.md).
 
-## Scope boundaries for takeover
+## Scope boundaries
 
 - Do not add sound-effect creation to this repository.
 - Do not copy an external music catalog, approved render, VST3 binary, preset library, or sample library into the repository without an explicit integration request and license review.
-- Do not treat old diagnostic audio as a quality baseline.
-- Do not treat tests as listening approval.
-- Do not distribute editor binaries until licensing is resolved.
+- Do not treat old diagnostic audio as a quality baseline, and do not treat tests as listening approval.
+- Do not distribute editor binaries until JUCE licensing is resolved.
 - Do not scan arbitrary installed plug-ins inside the interactive editor.
 - Do not publish or rewrite Git history without user authorization.
+- Dated checkpoint documents are historical evidence. Do not rewrite them to look current; add a new dated document instead.
 
 ## Ready-to-paste fresh-task prompt
 
 ```text
 Take over the local clone of https://github.com/tilok1234/resonance-music-editor.
 
-First read HANDOFF.md and docs/README.md completely, then inspect git status, the current branch/HEAD, recent commits, and the ignored local build/inventory state. Preserve any existing changes and do not publish anything without my approval.
+Read HANDOFF.md and docs/README.md completely first, then inspect git status, the
+current branch and HEAD, recent commits, and the ignored local build state. Preserve
+existing changes and publish nothing without my approval.
 
-The product is a music-only editor aimed mainly at video-game music. Manual and future AI edits must share one versioned project model, and technical tests must remain separate from listening approval.
+The product is a music-only editor aimed at video-game music. Manual and future AI
+edits share one versioned project model, and technical tests are deliberately separate
+from listening approval.
 
-M4 is accepted as version 0.3.0 at commit 7af6573 on draft PR #1. M5 is accepted at commit 9d94780 on codex/m5-edit-command-foundation and draft PR #2; its sound was only subtly velocity-sensitive, so do not misstate candidate B as musically preferred. M6 is in progress on codex/m6-two-track-runtime as editor 0.4.0, stacked on foundation commit 280c876. Schema version 2 migrates version 1 without rewriting the source, preserves stable track/clip IDs and exact state, and stores bounded mixer/MIDI settings. The production engine now owns eight stable prepared slots with double-buffered mixer publication and per-track scheduling/mix/meters. The silent packaged gate proves two distinct real Surge instances, slot-isolated state, missing-slot preservation, bounded CPU/safety counters, and clean shutdown. The full gate passes 124 engine/runtime assertions, 162 project/migration/command assertions, all packaged M4/M5 regressions, and 16 schema validations. The visible schema/UI still expose one track and M6 has no new listening approval. Next define a bounded multi-track schema revision and minimal second-track UI with topology Undo, Save/Open, recovery, mixer controls/meters, and an explicit listening pass. Do not add arrangement, broad effects, a live AI service, or factory .fxp indexing in that slice.
+Current state: branch codex/m6-two-track-authoring, pushed, open as draft PR #3. Editor 0.5.0
+writes song-project schema version 5 and reads 1 through 5 without rewriting sources.
+Up to four tracks, one clip each, on a canvas of one through 64 bars with up to 1024
+notes per clip. Four Surge XT instances preload at startup against an eight-lane
+runtime. The gate passes 124 scheduler assertions, 270 project assertions, and 25
+schema validations.
+
+M4 and M5 are user-accepted. M6 is technically verified but has NEVER passed a
+listening gate. M7 is in progress; M7.1 delivered the song-length canvas and M7.5
+delivered offline WAV render.
+
+Most important context: every packaged gate except --audio-probe is silent by
+contract. The first time the user listened they found a defect all of them had passed,
+and the probe added in response then caught a second one. Run --audio-probe on any
+project-shaped change, and do not mistake it for listening approval.
+
+Recommended next: (1) get the user to run the listening pass on
+songs/emberline-long.resonance.json, rendering it with --render if that is easier;
+(2) M7.3 reusable clip instances; (3) M7.2 sections and markers. Do not add different plug-in products per track, automation, a live AI
+service, or factory .fxp indexing without an explicit request.
 ```
 
 ## Handoff maintenance

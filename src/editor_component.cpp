@@ -22,6 +22,8 @@ constexpr int velocityScopeWholeLoop = 1;
 constexpr int velocityScopeSelectedNote = 2;
 constexpr std::int64_t maximumVelocityVariationSeed = 2147483647;
 constexpr int maximumVelocityVariationDelta = 32;
+constexpr juce::int64 maximumEditCommandBytes = 256 * 1024;
+constexpr std::size_t maximumEditCommandChanges = 128;
 
 juce::Font uiFont (float height, int style = juce::Font::plain)
 {
@@ -61,10 +63,13 @@ double snapForComboId (int id)
 
 int loopComboId (double beats)
 {
-    if (beats <= 4.0)  return 1;
-    if (beats <= 8.0)  return 2;
-    if (beats <= 16.0) return 3;
-    return 4;
+    if (beats <= 4.0)   return 1;
+    if (beats <= 8.0)   return 2;
+    if (beats <= 16.0)  return 3;
+    if (beats <= 32.0)  return 4;
+    if (beats <= 64.0)  return 5;
+    if (beats <= 128.0) return 6;
+    return 7;
 }
 
 double loopForComboId (int id)
@@ -74,7 +79,10 @@ double loopForComboId (int id)
         case 1:  return 4.0;
         case 2:  return 8.0;
         case 3:  return 16.0;
-        default: return 32.0;
+        case 4:  return 32.0;
+        case 5:  return 64.0;
+        case 6:  return 128.0;
+        default: return 256.0;
     }
 }
 
@@ -87,6 +95,52 @@ juce::String noteName (int midiNote)
 {
     return juce::MidiMessage::getMidiNoteName (midiNote, true, true, 3);
 }
+
+// One description of a mixer strip, used by both resized() and paint() so the captions
+// and the meter cannot drift away from the controls they belong to.
+struct TrackStripLayout
+{
+    juce::Rectangle<int> select, gainCaption, gain, panCaption, pan, mute, solo, meter;
+};
+
+TrackStripLayout layOutTrackStrip (juce::Rectangle<int> bounds)
+{
+    TrackStripLayout layout;
+    auto area = bounds.reduced (9);
+    layout.select = area.removeFromTop (24);
+    area.removeFromTop (5);
+
+    auto gainRow = area.removeFromTop (22);
+    layout.gainCaption = gainRow.removeFromLeft (36);
+    layout.gain = gainRow;
+    area.removeFromTop (3);
+
+    auto panRow = area.removeFromTop (22);
+    layout.panCaption = panRow.removeFromLeft (36);
+    layout.pan = panRow;
+    area.removeFromTop (5);
+
+    auto bottomRow = area.removeFromTop (22);
+    layout.meter = bottomRow.removeFromRight (10);
+    bottomRow.removeFromRight (10);
+    layout.mute = bottomRow.removeFromLeft (44);
+    bottomRow.removeFromLeft (6);
+    layout.solo = bottomRow.removeFromLeft (44);
+    return layout;
+}
+
+constexpr int trackStripHeight = 9 * 2 + 24 + 5 + 22 + 3 + 22 + 5 + 22;
+// The sound lane and the shelf lane sit side by side when the window is wide
+// enough and stack when it is not, because the piano roll is the work surface
+// and should not pay 34 pixels for whitespace it could have used.
+constexpr int soundLaneWidth = 180 + 7 + 88 + 7 + 84 + 7 + 84 + 7 + 72 + 7 + 76;
+constexpr int shelfLaneWidth = 46 + 180 + 7 + 88 + 7 + 104 + 7 + 76;
+constexpr int soundLaneGap = 24;
+constexpr int soundSingleRowMinimum = soundLaneWidth + soundLaneGap + shelfLaneWidth;
+// 14 padding either side, an 18 high caption sharing its row with the live A/B
+// status, then the 30 high control row, plus a 28 high shelf row when stacked.
+constexpr int soundCardHeightSingle = 14 * 2 + 18 + 6 + 30;
+constexpr int soundCardHeightStacked = soundCardHeightSingle + 6 + 28;
 } // namespace
 
 class MainEditorComponent::PluginEditorWindow final : public juce::DocumentWindow
@@ -224,6 +278,63 @@ public:
     void closeButtonPressed() override { setVisible (false); }
 };
 
+// The device chooser used to hold a quarter of the main window permanently, which is
+// a poor trade for a control that is set once. It lives here now.
+class MainEditorComponent::SettingsWindow final : public juce::DocumentWindow
+{
+private:
+    class SettingsContent final : public juce::Component
+    {
+    public:
+        SettingsContent (juce::Component& selector, juce::Component& summary)
+            : deviceSelector (selector), deviceSummary (summary)
+        {
+            setOpaque (true);
+            addAndMakeVisible (deviceSelector);
+            addAndMakeVisible (deviceSummary);
+            setSize (440, 560);
+        }
+
+        void paint (juce::Graphics& graphics) override
+        {
+            graphics.fillAll (background);
+            graphics.setFont (uiFont (11.0f, juce::Font::bold));
+            graphics.setColour (textMuted);
+            graphics.drawText ("AUDIO + MIDI DEVICE",
+                               getLocalBounds().reduced (16).removeFromTop (18),
+                               juce::Justification::centredLeft);
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced (16);
+            area.removeFromTop (22);
+            deviceSummary.setBounds (area.removeFromTop (58));
+            area.removeFromTop (8);
+            deviceSelector.setBounds (area);
+        }
+
+    private:
+        juce::Component& deviceSelector;
+        juce::Component& deviceSummary;
+    };
+
+public:
+    SettingsWindow (juce::Component& selector, juce::Component& summary)
+        : juce::DocumentWindow ("Audio settings - Resonance",
+                                background,
+                                juce::DocumentWindow::closeButton)
+    {
+        setUsingNativeTitleBar (true);
+        setResizable (true, false);
+        setContentOwned (new SettingsContent (selector, summary), true);
+        centreWithSize (460, 600);
+        setResizeLimits (400, 430, 900, 1100);
+    }
+
+    void closeButtonPressed() override { setVisible (false); }
+};
+
 MainEditorComponent::MainEditorComponent (juce::File inventoryFile,
                                           juce::File quarantineFile,
                                           juce::PropertiesFile* settings)
@@ -234,8 +345,22 @@ MainEditorComponent::MainEditorComponent (juce::File inventoryFile,
     setOpaque (true);
     setWantsKeyboardFocus (true);
     setLookAndFeel (&lookAndFeel);
+    // The shelf is user data, so it sits beside the settings file rather than in the
+    // repository or a project folder.
+    soundShelfPath = settingsFile != nullptr
+                         ? settingsFile->getFile().getSiblingFile ("sound-shelf.json")
+                         : juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                               .getChildFile ("ResonanceMusicEditor")
+                               .getChildFile ("sound-shelf.json");
     configureControls();
     initialiseAudioAndPlugin();
+    // A corrupt shelf must not stop the editor from starting; it starts empty and says so.
+    const auto shelfLoaded = soundShelf.loadFrom (soundShelfPath);
+    if (shelfLoaded.failed())
+    {
+        soundShelf.clear();
+        projectStatusMessage = "SOUND SHELF IGNORED  /  " + shelfLoaded.getErrorMessage().toUpperCase();
+    }
     projectChanged();
     startTimerHz (30);
 }
@@ -245,6 +370,7 @@ MainEditorComponent::~MainEditorComponent()
     stopTimer();
     activeFileChooser.reset();
     pluginEditorWindow.reset();
+    settingsWindow.reset();
     project.setChangeCallback ({});
     saveSettings();
 
@@ -344,7 +470,7 @@ void MainEditorComponent::configureControls()
     }
 
     dynamicsScopeCombo.addItem ("Whole loop", velocityScopeWholeLoop);
-    dynamicsScopeCombo.addItem ("Selected note", velocityScopeSelectedNote);
+    dynamicsScopeCombo.addItem ("Selected notes", velocityScopeSelectedNote);
     dynamicsScopeCombo.setSelectedId (velocityScopeWholeLoop, juce::dontSendNotification);
     dynamicsScopeCombo.setTooltip ("Choose whether dynamics targets every loop note or only the selected note");
     dynamicsScopeCombo.onChange = [this] { refreshEditPreviewControls(); };
@@ -367,6 +493,8 @@ void MainEditorComponent::configureControls()
     dynamicsSeedEditor.setTooltip ("Deterministic seed from 0 through 2147483647");
     dynamicsSeedEditor.onTextChange = [this] { refreshEditPreviewControls(); };
 
+    applyAdvancedControlVisibility();
+
     for (auto* editor : { &dynamicsStrengthEditor, &dynamicsSeedEditor })
     {
         editor->setColour (juce::TextEditor::backgroundColourId, background.withAlpha (0.75f));
@@ -378,11 +506,16 @@ void MainEditorComponent::configureControls()
 
     for (auto* button : { &newButton, &openButton, &saveButton, &undoButton, &redoButton,
                           &playButton, &stopButton, &panicButton, &pluginEditorButton,
+                          &settingsButton, &keyboardToggleButton, &advancedToggleButton,
                           &auditionProjectSoundButton, &captureSoundButton,
                           &auditionCandidateButton, &applySoundButton, &rejectSoundButton,
                           &previewSelectedEditButton, &previewDynamicsButton,
+                          &loadCommandButton, &copyHashButton,
+                          &loadShelfButton, &saveShelfButton, &removeShelfButton,
                           &auditionEditProjectButton,
-                          &auditionEditCandidateButton, &applyEditButton, &rejectEditButton })
+                          &auditionEditCandidateButton, &applyEditButton, &rejectEditButton,
+                          &addTrackButton, &removeTrackButton,
+                          &moveTrackLeftButton, &moveTrackRightButton })
         addAndMakeVisible (*button);
 
     playButton.setColour (juce::TextButton::buttonColourId, primary.darker (0.55f));
@@ -393,9 +526,13 @@ void MainEditorComponent::configureControls()
     rejectSoundButton.setColour (juce::TextButton::buttonColourId, danger.darker (0.65f));
     previewSelectedEditButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.55f));
     previewDynamicsButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.45f));
+    loadCommandButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.45f));
+    copyHashButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.65f));
     auditionEditCandidateButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.55f));
     applyEditButton.setColour (juce::TextButton::buttonColourId, primary.darker (0.55f));
     rejectEditButton.setColour (juce::TextButton::buttonColourId, danger.darker (0.65f));
+    addTrackButton.setColour (juce::TextButton::buttonColourId, primary.darker (0.62f));
+    removeTrackButton.setColour (juce::TextButton::buttonColourId, danger.darker (0.72f));
 
     newButton.onClick = [this] { confirmDiscardIfNeeded ([this] { startNewProject(); }); };
     openButton.onClick = [this] { confirmDiscardIfNeeded ([this] { chooseProjectToOpen(); }); };
@@ -410,6 +547,14 @@ void MainEditorComponent::configureControls()
     stopButton.onClick = [this] { engine.stopAndRewind(); };
     panicButton.onClick = [this] { engine.panic(); };
     pluginEditorButton.onClick = [this] { openPluginEditor(); };
+    settingsButton.onClick = [this] { openSettingsWindow(); };
+    keyboardToggleButton.onClick = [this] { toggleKeyboard(); };
+    advancedToggleButton.onClick = [this] { toggleAdvancedControls(); };
+    settingsButton.setTooltip ("Choose the audio and MIDI device");
+    keyboardToggleButton.setTooltip ("Show or hide the on-screen audition keyboard");
+    advancedToggleButton.setTooltip ("Show or hide the dynamics resolver inputs");
+    for (auto* button : { &keyboardToggleButton, &advancedToggleButton })
+        button->setClickingTogglesState (false);
     auditionProjectSoundButton.onClick = [this] { auditionProjectSound(); };
     captureSoundButton.onClick = [this] { captureSoundCandidate(); };
     auditionCandidateButton.onClick = [this] { auditionSoundCandidate(); };
@@ -417,13 +562,45 @@ void MainEditorComponent::configureControls()
     rejectSoundButton.onClick = [this] { rejectSoundCandidate(); };
     previewSelectedEditButton.onClick = [this] { previewSelectedNoteEdit(); };
     previewDynamicsButton.onClick = [this] { previewVelocityVariation(); };
+    loadCommandButton.onClick = [this] { chooseEditCommandFile(); };
+    copyHashButton.onClick = [this] { copyProjectContentHash(); };
     auditionEditProjectButton.onClick = [this] { auditionEditProject(); };
     auditionEditCandidateButton.onClick = [this] { auditionEditCandidate(); };
     applyEditButton.onClick = [this] { applyEditPreview(); };
     rejectEditButton.onClick = [this] { rejectEditPreview(); };
+    addTrackButton.onClick = [this] { addInstrumentTrack(); };
+    removeTrackButton.onClick = [this] { removeActiveTrack(); };
+    moveTrackLeftButton.onClick = [this] { moveActiveTrack (-1); };
+    moveTrackRightButton.onClick = [this] { moveActiveTrack (1); };
+
+    configureTrackStrips();
 
     previewSelectedEditButton.setTooltip ("Preview the selected note one semitone higher");
     previewDynamicsButton.setTooltip ("Resolve the target, maximum velocity change, and seed into candidate B");
+    loadShelfButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.55f));
+    saveShelfButton.setColour (juce::TextButton::buttonColourId, secondary.darker (0.65f));
+    removeShelfButton.setColour (juce::TextButton::buttonColourId, danger.darker (0.72f));
+    loadShelfButton.onClick = [this] { loadSoundFromShelf(); };
+    saveShelfButton.onClick = [this] { saveSoundToShelf(); };
+    removeShelfButton.onClick = [this] { removeSoundFromShelf(); };
+    loadShelfButton.setTooltip ("Load the chosen shelf sound as candidate B without changing the accepted sound");
+    saveShelfButton.setTooltip ("Save candidate B, or the accepted sound when no candidate is pending, to the shelf");
+    removeShelfButton.setTooltip ("Delete the chosen sound from the shelf");
+    shelfLabel.setText ("SHELF", juce::dontSendNotification);
+    shelfLabel.setFont (uiFont (10.0f, juce::Font::bold));
+    shelfLabel.setColour (juce::Label::textColourId, textMuted);
+    addAndMakeVisible (shelfLabel);
+    shelfCombo.setTextWhenNoChoicesAvailable ("No saved sounds");
+    shelfCombo.setTextWhenNothingSelected ("Choose a saved sound");
+    shelfCombo.onChange = [this]
+    {
+        if (! refreshingProjectControls)
+            refreshShelfControls();
+    };
+    addAndMakeVisible (shelfCombo);
+
+    loadCommandButton.setTooltip ("Preview a version-1 edit-command file as candidate B without applying it");
+    copyHashButton.setTooltip ("Copy this project's content SHA-256, track id, and clip id for authoring a command");
 
     soundNameEditor.setTextToShowWhenEmpty ("Candidate sound name", textMuted);
     soundNameEditor.setInputRestrictions (80);
@@ -510,6 +687,9 @@ void MainEditorComponent::configureControls()
     loopLengthCombo.addItem ("2 bars", 2);
     loopLengthCombo.addItem ("4 bars", 3);
     loopLengthCombo.addItem ("8 bars", 4);
+    loopLengthCombo.addItem ("16 bars", 5);
+    loopLengthCombo.addItem ("32 bars", 6);
+    loopLengthCombo.addItem ("64 bars", 7);
     loopLengthCombo.onChange = [this]
     {
         if (! refreshingProjectControls)
@@ -528,7 +708,7 @@ void MainEditorComponent::configureControls()
     velocitySlider.onDragStart = [this]
     {
         velocityGestureActive = true;
-        project.beginUndoTransaction ("Change note velocity");
+        project.beginUndoTransaction (velocityTransactionName());
     };
     velocitySlider.onDragEnd = [this] { velocityGestureActive = false; };
     velocitySlider.onValueChange = [this]
@@ -536,19 +716,34 @@ void MainEditorComponent::configureControls()
         if (refreshingProjectControls || pianoRoll == nullptr)
             return;
 
-        auto selected = project.findNote (pianoRoll->getSelectedNote());
-        if (selected.has_value())
+        const auto selectedIds = pianoRoll->getSelectedNotes();
+        if (selectedIds.empty())
+            return;
+
+        if (! velocityGestureActive)
+            project.beginUndoTransaction (velocityTransactionName());
+
+        // The slider sets one absolute velocity across the whole selection, so a
+        // multi-note gesture stays one Undo step.
+        const auto velocity = juce::roundToInt (velocitySlider.getValue());
+        for (const auto& id : selectedIds)
         {
-            if (! velocityGestureActive)
-                project.beginUndoTransaction ("Change note velocity");
-            selected->velocity = juce::roundToInt (velocitySlider.getValue());
-            project.updateNote (*selected);
+            auto note = project.findNote (id);
+            if (! note.has_value())
+                continue;
+            note->velocity = velocity;
+            project.updateNote (*note);
         }
     };
     addAndMakeVisible (velocitySlider);
 
     pianoRoll = std::make_unique<PianoRoll> (project);
     pianoRoll->setSelectionChangedCallback ([this] (const juce::String& id) { selectedNoteChanged (id); });
+    pianoRoll->setStatusMessageCallback ([this] (const juce::String& message)
+                                         {
+                                             projectStatusMessage = message;
+                                             updateStatus();
+                                         });
     addAndMakeVisible (*pianoRoll);
 
     keyboard = std::make_unique<juce::MidiKeyboardComponent> (keyboardState,
@@ -562,9 +757,148 @@ void MainEditorComponent::configureControls()
                          juce::Colour::fromRGB (19, 27, 39));
     keyboard->setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, primary);
     addAndMakeVisible (*keyboard);
+    keyboard->setVisible (keyboardVisible);
 
     project.setChangeCallback ([this] { projectChanged(); });
     refreshProjectControls();
+}
+
+void MainEditorComponent::configureTrackStrips()
+{
+    for (int index = 0; index < SongProject::maxProjectTracks; ++index)
+    {
+        auto& strip = trackStrips[static_cast<std::size_t> (index)];
+
+        strip.selectButton.setButtonText (juce::String (index + 1).paddedLeft ('0', 2));
+        strip.selectButton.setTooltip ("Show this track in the piano roll and the Surge editor");
+        strip.selectButton.onClick = [this, index] { selectTrack (index); };
+        addAndMakeVisible (strip.selectButton);
+
+        strip.gainSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+        strip.gainSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 54, 22);
+        strip.gainSlider.setRange (-60.0, 12.0, 0.5);
+        strip.gainSlider.setTextValueSuffix (" dB");
+        strip.gainSlider.setTooltip ("Track level");
+        strip.gainSlider.onDragStart = [this]
+        {
+            trackGainGestureActive = true;
+            project.beginUndoTransaction ("Change track gain");
+        };
+        strip.gainSlider.onDragEnd = [this] { trackGainGestureActive = false; };
+        strip.gainSlider.onValueChange = [this, index]
+        {
+            if (refreshingProjectControls)
+                return;
+
+            if (! trackGainGestureActive)
+                project.beginUndoTransaction ("Change track gain");
+            auto settings = project.getTrackMixerSettings (index);
+            settings.gainDecibels = trackStrips[static_cast<std::size_t> (index)].gainSlider.getValue();
+            const auto result = project.setTrackMixerSettingsForTrack (index, settings);
+            if (result.failed())
+                projectStatusMessage = result.getErrorMessage();
+        };
+        addAndMakeVisible (strip.gainSlider);
+
+        strip.panSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+        strip.panSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 42, 22);
+        strip.panSlider.setRange (-1.0, 1.0, 0.05);
+        strip.panSlider.setTooltip ("Track pan");
+        strip.panSlider.onDragStart = [this]
+        {
+            trackPanGestureActive = true;
+            project.beginUndoTransaction ("Change track pan");
+        };
+        strip.panSlider.onDragEnd = [this] { trackPanGestureActive = false; };
+        strip.panSlider.onValueChange = [this, index]
+        {
+            if (refreshingProjectControls)
+                return;
+
+            if (! trackPanGestureActive)
+                project.beginUndoTransaction ("Change track pan");
+            auto settings = project.getTrackMixerSettings (index);
+            settings.pan = trackStrips[static_cast<std::size_t> (index)].panSlider.getValue();
+            const auto result = project.setTrackMixerSettingsForTrack (index, settings);
+            if (result.failed())
+                projectStatusMessage = result.getErrorMessage();
+        };
+        addAndMakeVisible (strip.panSlider);
+
+        strip.muteButton.setTooltip ("Mute this track");
+        strip.muteButton.onClick = [this, index]
+        {
+            if (refreshingProjectControls)
+                return;
+            project.beginUndoTransaction ("Toggle track mute");
+            auto settings = project.getTrackMixerSettings (index);
+            settings.muted = trackStrips[static_cast<std::size_t> (index)].muteButton.getToggleState();
+            const auto result = project.setTrackMixerSettingsForTrack (index, settings);
+            if (result.failed())
+                projectStatusMessage = result.getErrorMessage();
+        };
+        addAndMakeVisible (strip.muteButton);
+
+        strip.soloButton.setTooltip ("Solo this track");
+        strip.soloButton.onClick = [this, index]
+        {
+            if (refreshingProjectControls)
+                return;
+            project.beginUndoTransaction ("Toggle track solo");
+            auto settings = project.getTrackMixerSettings (index);
+            settings.solo = trackStrips[static_cast<std::size_t> (index)].soloButton.getToggleState();
+            const auto result = project.setTrackMixerSettingsForTrack (index, settings);
+            if (result.failed())
+                projectStatusMessage = result.getErrorMessage();
+        };
+        addAndMakeVisible (strip.soloButton);
+    }
+}
+
+// Strips beyond the project's track count are hidden rather than disabled, so the
+// mixer always shows exactly the tracks that exist.
+void MainEditorComponent::refreshTrackStrips()
+{
+    const auto trackCount = project.getTrackCount();
+    const auto activeTrack = project.getActiveTrackIndex();
+    const auto trackLaneClear = ! hasPendingEditPreview() && ! soundCandidate.has_value();
+    const auto trackReady = getActivePlugin() != nullptr;
+
+    for (int index = 0; index < SongProject::maxProjectTracks; ++index)
+    {
+        auto& strip = trackStrips[static_cast<std::size_t> (index)];
+        const auto present = index < trackCount;
+
+        strip.selectButton.setVisible (present);
+        strip.gainSlider.setVisible (present);
+        strip.panSlider.setVisible (present);
+        strip.muteButton.setVisible (present);
+        strip.soloButton.setVisible (present);
+
+        if (! present)
+            continue;
+
+        const auto mixerSettings = project.getTrackMixerSettings (index);
+        strip.gainSlider.setValue (mixerSettings.gainDecibels, juce::dontSendNotification);
+        strip.panSlider.setValue (mixerSettings.pan, juce::dontSendNotification);
+        strip.muteButton.setToggleState (mixerSettings.muted, juce::dontSendNotification);
+        strip.soloButton.setToggleState (mixerSettings.solo, juce::dontSendNotification);
+
+        strip.selectButton.setButtonText (juce::String (index + 1).paddedLeft ('0', 2)
+                                          + "  " + project.getTrackName (index).toUpperCase());
+        strip.selectButton.setToggleState (index == activeTrack, juce::dontSendNotification);
+        strip.selectButton.setEnabled (trackLaneClear);
+        strip.gainSlider.setEnabled (trackReady && trackLaneClear);
+        strip.panSlider.setEnabled (trackReady && trackLaneClear);
+        strip.muteButton.setEnabled (trackReady && trackLaneClear);
+        strip.soloButton.setEnabled (trackReady && trackLaneClear);
+    }
+
+    if (visibleTrackStripCount != trackCount)
+    {
+        visibleTrackStripCount = trackCount;
+        resized();
+    }
 }
 
 void MainEditorComponent::initialiseAudioAndPlugin()
@@ -591,7 +925,6 @@ void MainEditorComponent::initialiseAudioAndPlugin()
                                                                            true, false,
                                                                            true, false);
     deviceSelector->setItemHeight (24);
-    addAndMakeVisible (*deviceSelector);
 
     const auto inventoryResult = loadFirstAcceptedInstrument (inventoryPath, quarantinePath, pluginRecord);
     if (inventoryResult.failed())
@@ -604,38 +937,64 @@ void MainEditorComponent::initialiseAudioAndPlugin()
     auto* device = deviceManager.getCurrentAudioDevice();
     const auto rate = device != nullptr ? device->getCurrentSampleRate() : 48000.0;
     const auto blockSize = device != nullptr ? device->getCurrentBufferSizeSamples() : 512;
-    juce::String loadError;
-    auto plugin = pluginFormats.createPluginInstance (pluginRecord.description, rate, blockSize, loadError);
-
-    if (plugin == nullptr)
+    for (int trackIndex = 0; trackIndex < SongProject::maxProjectTracks; ++trackIndex)
     {
-        startupError = "Accepted plug-in could not be loaded: " + loadError;
-        updateStatus();
-        return;
+        juce::String loadError;
+        auto plugin = pluginFormats.createPluginInstance (pluginRecord.description,
+                                                          rate,
+                                                          blockSize,
+                                                          loadError);
+        if (plugin == nullptr)
+        {
+            startupError = "Accepted plug-in instance " + juce::String (trackIndex + 1)
+                           + " could not be loaded: " + loadError;
+            updateStatus();
+            return;
+        }
+
+        if (plugin->getParameters().size() != pluginRecord.expectedParameterCount)
+        {
+            startupError = "Loaded plug-in parameter count differs from the accepted scan; rescan is required";
+            updateStatus();
+            return;
+        }
+
+        const auto install = engine.setPluginForTrack (static_cast<std::size_t> (trackIndex),
+                                                       std::move (plugin));
+        if (install.failed())
+        {
+            startupError = install.getErrorMessage();
+            updateStatus();
+            return;
+        }
+
+        const auto capture = engine.capturePluginStateForTrack (
+            static_cast<std::size_t> (trackIndex), initialPluginStates[trackIndex]);
+        if (capture.failed() || initialPluginStates[trackIndex].getSize() == 0)
+        {
+            startupError = "Surge state capture failed for runtime slot "
+                           + juce::String (trackIndex + 1) + ": "
+                           + capture.getErrorMessage();
+            updateStatus();
+            return;
+        }
+
+        slotAcceptedLiveSoundSha256[trackIndex] =
+            juce::SHA256 (initialPluginStates[trackIndex]).toHexString();
     }
 
-    if (plugin->getParameters().size() != pluginRecord.expectedParameterCount)
     {
-        startupError = "Loaded plug-in parameter count differs from the accepted scan; rescan is required";
-        updateStatus();
-        return;
+        const juce::ScopedValueSetter<bool> suppress (suppressProjectChanges, true);
+        project.setPluginMetadata (pluginRecord.identifier,
+                                   pluginRecord.description.name,
+                                   pluginRecord.description.manufacturerName,
+                                   pluginRecord.description.version);
+        project.setPluginState (initialPluginStates[0]);
     }
-
-    engine.setPlugin (std::move (plugin));
-    project.setPluginMetadata (pluginRecord.identifier,
-                               pluginRecord.description.name,
-                               pluginRecord.description.manufacturerName,
-                               pluginRecord.description.version);
-
-    const auto stateResult = engine.capturePluginState (initialPluginState);
-    if (stateResult.failed())
-        startupError = "Surge state capture failed: " + stateResult.getErrorMessage();
-    else
-    {
-        project.setPluginState (initialPluginState);
-        acceptedLiveSoundSha256 = project.getPluginStateSha256();
-        auditionedSoundSha256 = acceptedLiveSoundSha256;
-    }
+    slotProjectStateSha256[0] = project.getPluginStateSha256 (0);
+    activeSoundTrackId = project.getTrackId();
+    acceptedLiveSoundSha256 = slotAcceptedLiveSoundSha256[0];
+    auditionedSoundSha256 = acceptedLiveSoundSha256;
 
     if (rate == 44100.0 || rate == 48000.0 || rate == 88200.0 || rate == 96000.0)
         project.setSampleRate (juce::roundToInt (rate));
@@ -648,24 +1007,329 @@ void MainEditorComponent::initialiseAudioAndPlugin()
     deviceManager.addAudioCallback (&engine);
     audioCallbackRegistered = true;
 
-    if (initialPluginState.getSize() > 0)
+    for (int trackIndex = 0; trackIndex < SongProject::maxProjectTracks; ++trackIndex)
     {
         juce::MemoryBlock preparedLiveState;
-        if (engine.restorePluginState (initialPluginState, &preparedLiveState).wasOk())
+        const auto restore = engine.restorePluginStateForTrack (
+            static_cast<std::size_t> (trackIndex),
+            initialPluginStates[trackIndex],
+            &preparedLiveState);
+        if (restore.failed())
         {
-            acceptedLiveSoundSha256 = juce::SHA256 (preparedLiveState).toHexString();
-            auditionedSoundSha256 = acceptedLiveSoundSha256;
+            startupError = "Prepared Surge state restore failed for runtime slot "
+                           + juce::String (trackIndex + 1) + ": "
+                           + restore.getErrorMessage();
+            break;
         }
+
+        slotAcceptedLiveSoundSha256[trackIndex] =
+            juce::SHA256 (preparedLiveState).toHexString();
     }
 
-    trackNameLabel.setText ("01  /  " + pluginRecord.description.name, juce::dontSendNotification);
+    acceptedLiveSoundSha256 = slotAcceptedLiveSoundSha256[0];
+    auditionedSoundSha256 = acceptedLiveSoundSha256;
     refreshProjectControls();
     updateStatus();
 }
 
+juce::AudioPluginInstance* MainEditorComponent::getActivePlugin() const noexcept
+{
+    const auto activeTrack = project.getActiveTrackIndex();
+    return activeTrack >= 0
+               ? engine.getPluginForTrack (static_cast<std::size_t> (activeTrack))
+               : nullptr;
+}
+
+bool MainEditorComponent::canChangeTrackContext()
+{
+    if (soundCandidate.has_value())
+    {
+        projectStatusMessage = "APPLY OR REJECT SOUND B BEFORE CHANGING TRACKS";
+        updateStatus();
+        return false;
+    }
+
+    if (hasPendingEditPreview())
+    {
+        projectStatusMessage = "APPLY OR REJECT NOTE B BEFORE CHANGING TRACKS";
+        updateStatus();
+        return false;
+    }
+
+    if (hasUncapturedLiveSoundState())
+    {
+        projectStatusMessage = "CAPTURE B OR RESTORE A BEFORE CHANGING TRACKS";
+        updateStatus();
+        return false;
+    }
+
+    return true;
+}
+
+void MainEditorComponent::selectTrack (int trackIndex)
+{
+    const auto currentTrack = project.getActiveTrackIndex();
+    if (trackIndex == currentTrack)
+        return;
+
+    if (trackIndex < 0 || trackIndex >= project.getTrackCount()
+        || ! canChangeTrackContext())
+    {
+        refreshTrackStrips();
+        return;
+    }
+
+    engine.panic();
+    pluginEditorWindow.reset();
+    pluginEditorTrackId.clear();
+    pluginEditorTrackIndex = -1;
+    if (pianoRoll != nullptr)
+        pianoRoll->setSelectedNote ({});
+
+    if (project.setActiveTrackIndex (trackIndex))
+        projectStatusMessage = "SELECTED TRACK " + juce::String (trackIndex + 1)
+                               + "  /  " + project.getTrackName();
+}
+
+void MainEditorComponent::addInstrumentTrack()
+{
+    if (! canChangeTrackContext())
+        return;
+
+    if (project.getTrackCount() >= SongProject::maxProjectTracks)
+    {
+        projectStatusMessage = "A SONG SUPPORTS AT MOST "
+                               + juce::String (SongProject::maxProjectTracks)
+                               + " INSTRUMENT TRACKS";
+        updateStatus();
+        return;
+    }
+
+    pluginEditorWindow.reset();
+    pluginEditorTrackId.clear();
+    pluginEditorTrackIndex = -1;
+    slotProjectStateSha256[1].clear();
+    juce::String newTrackId;
+    const auto result = project.duplicateActiveTrack (&newTrackId);
+    if (result.failed())
+    {
+        showError ("Could not add instrument track", result.getErrorMessage());
+        return;
+    }
+
+    if (pianoRoll != nullptr)
+        pianoRoll->setSelectedNote ({});
+    projectStatusMessage = "TRACK " + juce::String (project.getTrackCount())
+                           + " ADDED  /  INDEPENDENT SURGE INSTANCE READY";
+    refreshProjectControls();
+}
+
+void MainEditorComponent::removeActiveTrack()
+{
+    if (! canChangeTrackContext())
+        return;
+
+    if (project.getTrackCount() <= 1)
+    {
+        projectStatusMessage = "A SONG MUST KEEP AT LEAST ONE INSTRUMENT TRACK";
+        updateStatus();
+        return;
+    }
+
+    const auto removedName = project.getTrackName();
+    pluginEditorWindow.reset();
+    pluginEditorTrackId.clear();
+    pluginEditorTrackIndex = -1;
+    for (auto& hash : slotProjectStateSha256)
+        hash.clear();
+
+    const auto result = project.removeTrack (project.getTrackId());
+    if (result.failed())
+    {
+        showError ("Could not remove instrument track", result.getErrorMessage());
+        return;
+    }
+
+    if (pianoRoll != nullptr)
+        pianoRoll->setSelectedNote ({});
+    projectStatusMessage = "REMOVED " + removedName + "  /  UNDO RESTORES IT";
+    refreshProjectControls();
+}
+
+void MainEditorComponent::moveActiveTrack (int offset)
+{
+    if (! canChangeTrackContext())
+        return;
+
+    const auto current = project.getActiveTrackIndex();
+    const auto target = current + offset;
+    if (target < 0 || target >= project.getTrackCount())
+        return;
+
+    pluginEditorWindow.reset();
+    pluginEditorTrackId.clear();
+    pluginEditorTrackIndex = -1;
+    for (auto& hash : slotProjectStateSha256)
+        hash.clear();
+
+    const auto result = project.moveTrack (project.getTrackId(), target);
+    if (result.failed())
+    {
+        showError ("Could not reorder instrument track", result.getErrorMessage());
+        return;
+    }
+
+    projectStatusMessage = "TRACK ORDER CHANGED  /  UNDO RESTORES IT";
+    refreshProjectControls();
+}
+
+juce::Result MainEditorComponent::restoreRuntimeSlotsFromProject (
+    const SongProject& source,
+    std::array<juce::String, SongProject::maxProjectTracks>& liveStateHashes)
+{
+    std::array<juce::MemoryBlock, SongProject::maxProjectTracks> previousStates;
+    std::array<bool, SongProject::maxProjectTracks> previousStateCaptured {};
+
+    for (int trackIndex = 0; trackIndex < SongProject::maxProjectTracks; ++trackIndex)
+    {
+        if (engine.getPluginForTrack (static_cast<std::size_t> (trackIndex)) == nullptr)
+            continue;
+
+        previousStateCaptured[trackIndex] = engine.capturePluginStateForTrack (
+                                                static_cast<std::size_t> (trackIndex),
+                                                previousStates[trackIndex]).wasOk();
+    }
+
+    for (int trackIndex = 0; trackIndex < source.getTrackCount(); ++trackIndex)
+    {
+        if (engine.getPluginForTrack (static_cast<std::size_t> (trackIndex)) == nullptr)
+            return juce::Result::fail ("Runtime slot " + juce::String (trackIndex + 1)
+                                       + " has no accepted Surge XT instance");
+
+        juce::MemoryBlock state;
+        const auto stateResult = source.getPluginStateForTrack (trackIndex, state);
+        if (stateResult.failed())
+            return stateResult;
+
+        juce::MemoryBlock liveState;
+        const auto restore = engine.restorePluginStateForTrack (
+            static_cast<std::size_t> (trackIndex), state, &liveState);
+        if (restore.failed())
+        {
+            for (int rollback = 0; rollback < SongProject::maxProjectTracks; ++rollback)
+                if (previousStateCaptured[rollback])
+                    engine.restorePluginStateForTrack (static_cast<std::size_t> (rollback),
+                                                       previousStates[rollback]);
+
+            return juce::Result::fail ("Track " + juce::String (trackIndex + 1)
+                                       + " Surge state restore failed: "
+                                       + restore.getErrorMessage());
+        }
+
+        liveStateHashes[trackIndex] = juce::SHA256 (liveState).toHexString();
+    }
+
+    return juce::Result::ok();
+}
+
+juce::Result MainEditorComponent::synchronisePluginSlotsFromProject (bool forceRestore)
+{
+    for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
+    {
+        const auto desiredHash = project.getPluginStateSha256 (trackIndex);
+        if (! forceRestore
+            && desiredHash.isNotEmpty()
+            && slotProjectStateSha256[trackIndex].equalsIgnoreCase (desiredHash))
+            continue;
+
+        juce::MemoryBlock state;
+        const auto stateResult = project.getPluginStateForTrack (trackIndex, state);
+        if (stateResult.failed())
+            return stateResult;
+
+        juce::MemoryBlock liveState;
+        const auto restore = engine.restorePluginStateForTrack (
+            static_cast<std::size_t> (trackIndex), state, &liveState);
+        if (restore.failed())
+            return juce::Result::fail ("Track " + juce::String (trackIndex + 1)
+                                       + " Surge state restore failed: "
+                                       + restore.getErrorMessage());
+
+        slotProjectStateSha256[trackIndex] = desiredHash;
+        slotAcceptedLiveSoundSha256[trackIndex] = juce::SHA256 (liveState).toHexString();
+        if (trackIndex == project.getActiveTrackIndex())
+        {
+            acceptedLiveSoundSha256 = slotAcceptedLiveSoundSha256[trackIndex];
+            auditionedSoundSha256 = acceptedLiveSoundSha256;
+        }
+    }
+
+    for (int trackIndex = project.getTrackCount();
+         trackIndex < SongProject::maxProjectTracks;
+         ++trackIndex)
+        slotProjectStateSha256[trackIndex].clear();
+
+    updateActiveSoundTracking();
+    return juce::Result::ok();
+}
+
+void MainEditorComponent::publishProjectMixerSnapshot (
+    const SequenceSnapshot* activeTrackOverride)
+{
+    // Heap-allocated: a MixerSnapshot is far too large for a stack local.
+    const auto mixerStorage = std::make_unique<MixerSnapshot>();
+    auto& mixer = *mixerStorage;
+    mixer.trackCount = static_cast<std::size_t> (
+        juce::jlimit (0, SongProject::maxProjectTracks, project.getTrackCount()));
+
+    for (int trackIndex = 0; trackIndex < static_cast<int> (mixer.trackCount); ++trackIndex)
+    {
+        const auto mixerSettings = project.getTrackMixerSettings (trackIndex);
+        const auto midiRouting = project.getTrackMidiRouting (trackIndex);
+        auto& runtimeTrack = mixer.tracks[static_cast<std::size_t> (trackIndex)];
+        runtimeTrack.sequence = activeTrackOverride != nullptr
+                                        && trackIndex == project.getActiveTrackIndex()
+                                    ? *activeTrackOverride
+                                    : project.createSequenceSnapshotForTrack (trackIndex);
+        runtimeTrack.gainLinear = juce::Decibels::decibelsToGain (
+            static_cast<float> (mixerSettings.gainDecibels));
+        runtimeTrack.pan = static_cast<float> (mixerSettings.pan);
+        runtimeTrack.midiInputChannel = midiRouting.inputChannel;
+        runtimeTrack.midiOutputChannel = midiRouting.outputChannel;
+        runtimeTrack.enabled = engine.getPluginForTrack (
+                                   static_cast<std::size_t> (trackIndex)) != nullptr;
+        runtimeTrack.muted = mixerSettings.muted;
+        runtimeTrack.solo = mixerSettings.solo;
+    }
+
+    engine.setMixerSnapshot (mixer);
+}
+
+void MainEditorComponent::updateActiveSoundTracking()
+{
+    const auto activeTrack = project.getActiveTrackIndex();
+    if (activeTrack < 0 || activeTrack >= SongProject::maxProjectTracks)
+        return;
+
+    const auto selectedTrackId = project.getTrackId (activeTrack);
+    const auto trackChanged = selectedTrackId != activeSoundTrackId;
+    if (trackChanged && soundCandidate.has_value())
+        clearSoundCandidate();
+
+    activeSoundTrackId = selectedTrackId;
+    acceptedLiveSoundSha256 = slotAcceptedLiveSoundSha256[activeTrack].isNotEmpty()
+                                  ? slotAcceptedLiveSoundSha256[activeTrack]
+                                  : project.getPluginStateSha256 (activeTrack);
+    if (trackChanged)
+    {
+        auditionedSoundSha256 = acceptedLiveSoundSha256;
+        candidateLiveSoundSha256.clear();
+    }
+}
+
 void MainEditorComponent::openPluginEditor()
 {
-    auto* plugin = engine.getPlugin();
+    auto* plugin = getActivePlugin();
     if (plugin == nullptr || ! pluginRecord.hasEditor)
         return;
 
@@ -678,6 +1342,8 @@ void MainEditorComponent::openPluginEditor()
         pluginEditorWindow = std::make_unique<PluginEditorWindow> (std::move (editor),
                                                                    engine,
                                                                    keyboardState);
+        pluginEditorTrackId = project.getTrackId();
+        pluginEditorTrackIndex = project.getActiveTrackIndex();
     }
 
     pluginEditorWindow->setVisible (true);
@@ -685,6 +1351,49 @@ void MainEditorComponent::openPluginEditor()
     auditionedSoundSha256.clear();
     projectStatusMessage = "LIVE SURGE EDIT  /  CAPTURE B TO COMPARE OR KEEP A UNCHANGED";
     refreshSoundControls();
+}
+
+void MainEditorComponent::openSettingsWindow()
+{
+    if (deviceSelector == nullptr)
+        return;
+
+    if (settingsWindow == nullptr)
+        settingsWindow = std::make_unique<SettingsWindow> (*deviceSelector, deviceSummaryLabel);
+
+    settingsWindow->setVisible (true);
+    settingsWindow->toFront (true);
+}
+
+void MainEditorComponent::toggleKeyboard()
+{
+    keyboardVisible = ! keyboardVisible;
+    if (keyboard != nullptr)
+        keyboard->setVisible (keyboardVisible);
+    keyboardToggleButton.setToggleState (keyboardVisible, juce::dontSendNotification);
+    resized();
+    repaint();
+}
+
+void MainEditorComponent::toggleAdvancedControls()
+{
+    advancedControlsVisible = ! advancedControlsVisible;
+    advancedToggleButton.setToggleState (advancedControlsVisible, juce::dontSendNotification);
+    applyAdvancedControlVisibility();
+    resized();
+    repaint();
+}
+
+void MainEditorComponent::applyAdvancedControlVisibility()
+{
+    juce::Component* const advanced[] { &dynamicsScopeLabel,
+                                        &dynamicsStrengthLabel,
+                                        &dynamicsSeedLabel,
+                                        &dynamicsScopeCombo,
+                                        &dynamicsStrengthEditor,
+                                        &dynamicsSeedEditor };
+    for (auto* component : advanced)
+        component->setVisible (advancedControlsVisible);
 }
 
 void MainEditorComponent::captureSoundCandidate()
@@ -696,8 +1405,10 @@ void MainEditorComponent::captureSoundCandidate()
         return;
     }
 
+    const auto activeTrack = project.getActiveTrackIndex();
     juce::MemoryBlock state;
-    const auto result = engine.capturePluginState (state);
+    const auto result = engine.capturePluginStateForTrack (
+        static_cast<std::size_t> (activeTrack), state);
     if (result.failed())
     {
         showError ("Could not capture sound B", result.getErrorMessage());
@@ -710,6 +1421,8 @@ void MainEditorComponent::captureSoundCandidate()
 
     const auto hash = juce::SHA256 (state).toHexString();
     soundCandidate = PluginSoundSnapshot { name, std::move (state), hash };
+    soundCandidateTrackId = project.getTrackId();
+    slotProjectStateSha256[activeTrack].clear();
     candidateLiveSoundSha256 = soundCandidate->stateSha256;
     auditionedSoundSha256 = candidateLiveSoundSha256;
     const auto acceptedHash = acceptedLiveSoundSha256.isNotEmpty()
@@ -742,7 +1455,8 @@ void MainEditorComponent::auditionSoundCandidate()
 
 void MainEditorComponent::applySoundCandidate()
 {
-    if (! soundCandidate.has_value() || hasPendingEditPreview())
+    if (! soundCandidate.has_value() || hasPendingEditPreview()
+        || soundCandidateTrackId != project.getTrackId())
         return;
 
     auto candidate = *soundCandidate;
@@ -774,6 +1488,9 @@ void MainEditorComponent::applySoundCandidate()
     acceptedLiveSoundSha256 = candidateLiveSoundSha256.isNotEmpty()
                                   ? candidateLiveSoundSha256
                                   : project.getPluginStateSha256();
+    const auto activeTrack = project.getActiveTrackIndex();
+    slotProjectStateSha256[activeTrack] = project.getPluginStateSha256();
+    slotAcceptedLiveSoundSha256[activeTrack] = acceptedLiveSoundSha256;
     auditionedSoundSha256 = acceptedLiveSoundSha256;
     clearSoundCandidate();
     projectStatusMessage = "SOUND APPLIED  /  UNDO RESTORES THE PREVIOUS SOUND";
@@ -782,7 +1499,8 @@ void MainEditorComponent::applySoundCandidate()
 
 void MainEditorComponent::rejectSoundCandidate()
 {
-    if (! soundCandidate.has_value() || hasPendingEditPreview())
+    if (! soundCandidate.has_value() || hasPendingEditPreview()
+        || soundCandidateTrackId != project.getTrackId())
         return;
 
     if (! restoreProjectSound ("B REJECTED  /  A RESTORED"))
@@ -795,22 +1513,22 @@ void MainEditorComponent::rejectSoundCandidate()
 
 void MainEditorComponent::performUndoRedo (bool redo)
 {
+    const auto previousTrackId = project.getTrackId();
     const auto previousHash = project.getPluginStateSha256();
     const auto changed = redo ? project.redo() : project.undo();
     if (! changed)
         return;
 
-    if (! previousHash.equalsIgnoreCase (project.getPluginStateSha256()))
+    if (previousTrackId != project.getTrackId()
+        || ! previousHash.equalsIgnoreCase (project.getPluginStateSha256()))
     {
         clearSoundCandidate();
-        restoreProjectSound (redo
-                                 ? "REDO RESTORED THE ACCEPTED SOUND"
-                                 : "UNDO RESTORED THE PREVIOUS SOUND");
+        projectStatusMessage = redo
+                                   ? "REDO RESTORED THE PROJECT TRACK STATE"
+                                   : "UNDO RESTORED THE PREVIOUS TRACK STATE";
     }
-    else
-    {
-        refreshProjectControls();
-    }
+
+    refreshProjectControls();
 }
 
 bool MainEditorComponent::restoreSoundSnapshot (const PluginSoundSnapshot& snapshot,
@@ -824,8 +1542,16 @@ bool MainEditorComponent::restoreSoundSnapshot (const PluginSoundSnapshot& snaps
         return false;
     }
 
+    const auto activeTrack = project.getActiveTrackIndex();
+    if (activeTrack < 0 || getActivePlugin() == nullptr)
+    {
+        showError ("Could not restore Surge XT", "The active track has no runtime instrument.");
+        return false;
+    }
+
     juce::MemoryBlock liveState;
-    const auto restore = engine.restorePluginState (snapshot.state, &liveState);
+    const auto restore = engine.restorePluginStateForTrack (
+        static_cast<std::size_t> (activeTrack), snapshot.state, &liveState);
     if (restore.failed())
     {
         showError ("Could not restore Surge XT", restore.getErrorMessage());
@@ -836,6 +1562,7 @@ bool MainEditorComponent::restoreSoundSnapshot (const PluginSoundSnapshot& snaps
     if (liveStateSha256 != nullptr)
         *liveStateSha256 = restoredLiveHash;
     auditionedSoundSha256 = restoredLiveHash;
+    slotProjectStateSha256[activeTrack].clear();
     projectStatusMessage = actionLabel;
     refreshSoundControls();
     return true;
@@ -851,16 +1578,25 @@ bool MainEditorComponent::restoreProjectSound (const juce::String& actionLabel)
         return false;
     }
 
-    return restoreSoundSnapshot (accepted, actionLabel, &acceptedLiveSoundSha256);
+    if (! restoreSoundSnapshot (accepted, actionLabel, &acceptedLiveSoundSha256))
+        return false;
+
+    const auto activeTrack = project.getActiveTrackIndex();
+    slotProjectStateSha256[activeTrack] = project.getPluginStateSha256();
+    slotAcceptedLiveSoundSha256[activeTrack] = acceptedLiveSoundSha256;
+    return true;
 }
 
 bool MainEditorComponent::hasUncapturedLiveSoundState()
 {
-    if (engine.getPlugin() == nullptr)
+    const auto activeTrack = project.getActiveTrackIndex();
+    if (activeTrack < 0 || getActivePlugin() == nullptr)
         return false;
 
     juce::MemoryBlock liveState;
-    if (engine.capturePluginState (liveState).failed() || liveState.getSize() == 0)
+    if (engine.capturePluginStateForTrack (static_cast<std::size_t> (activeTrack),
+                                           liveState).failed()
+        || liveState.getSize() == 0)
         return true;
 
     const auto liveHash = juce::SHA256 (liveState).toHexString();
@@ -879,13 +1615,14 @@ bool MainEditorComponent::hasUncapturedLiveSoundState()
 void MainEditorComponent::clearSoundCandidate()
 {
     soundCandidate.reset();
+    soundCandidateTrackId.clear();
     candidateLiveSoundSha256.clear();
     soundNameEditor.setText ("Captured sound", false);
 }
 
 void MainEditorComponent::refreshSoundControls()
 {
-    const auto ready = engine.getPlugin() != nullptr;
+    const auto ready = getActivePlugin() != nullptr;
     const auto editLaneClear = ! hasPendingEditPreview();
     const auto savedAcceptedHash = project.getPluginStateSha256();
     const auto acceptedHash = acceptedLiveSoundSha256.isNotEmpty()
@@ -942,6 +1679,162 @@ bool MainEditorComponent::hasPendingEditPreview() const noexcept
     return editPreview.has_value() && editPreview->isPending();
 }
 
+void MainEditorComponent::refreshShelfControls()
+{
+    const juce::ScopedValueSetter<bool> refreshing (refreshingProjectControls, true);
+    const auto previous = shelfCombo.getText();
+    shelfCombo.clear (juce::dontSendNotification);
+
+    int itemId = 1;
+    for (const auto& entry : soundShelf.getEntries())
+        shelfCombo.addItem (entry.name, itemId++);
+
+    if (previous.isNotEmpty())
+        for (int index = 0; index < shelfCombo.getNumItems(); ++index)
+            if (shelfCombo.getItemText (index) == previous)
+                shelfCombo.setSelectedItemIndex (index, juce::dontSendNotification);
+
+    if (shelfCombo.getSelectedId() == 0 && shelfCombo.getNumItems() > 0)
+        shelfCombo.setSelectedItemIndex (0, juce::dontSendNotification);
+
+    shelfLabel.setText (soundShelf.getEntryCount() > 0
+                            ? "SHELF " + juce::String (soundShelf.getEntryCount())
+                            : "SHELF",
+                        juce::dontSendNotification);
+
+    const auto ready = getActivePlugin() != nullptr;
+    const auto laneClear = ! hasPendingEditPreview();
+    const auto hasSelection = shelfCombo.getSelectedId() != 0;
+    shelfCombo.setEnabled (ready && soundShelf.getEntryCount() > 0);
+    loadShelfButton.setEnabled (ready && laneClear && hasSelection);
+    removeShelfButton.setEnabled (ready && hasSelection);
+    saveShelfButton.setEnabled (ready && laneClear
+                                && soundShelf.getEntryCount()
+                                       < static_cast<int> (SoundShelf::maximumEntries));
+}
+
+void MainEditorComponent::saveSoundToShelf()
+{
+    if (getActivePlugin() == nullptr)
+        return;
+
+    SoundShelfEntry entry;
+    // A pending candidate is what the user is auditioning, so it is the sound they
+    // mean to keep. Otherwise the accepted project sound is shelved.
+    if (soundCandidate.has_value())
+    {
+        entry.name = soundCandidate->name;
+        entry.state = soundCandidate->state;
+        entry.stateSha256 = soundCandidate->stateSha256;
+    }
+    else
+    {
+        PluginSoundSnapshot accepted;
+        const auto acceptedResult = project.getPluginSoundSnapshot (accepted);
+        if (acceptedResult.failed())
+        {
+            showError ("Could not read the project sound", acceptedResult.getErrorMessage());
+            return;
+        }
+        entry.name = accepted.name;
+        entry.state = accepted.state;
+        entry.stateSha256 = accepted.stateSha256;
+    }
+
+    const auto typedName = soundNameEditor.getText().trim().substring (0, SoundShelf::maximumNameLength);
+    if (typedName.isNotEmpty())
+        entry.name = typedName;
+
+    entry.pluginIdentifier = pluginRecord.identifier;
+    entry.pluginName = pluginRecord.description.name;
+    entry.vendor = pluginRecord.description.manufacturerName;
+    entry.version = pluginRecord.description.version;
+
+    const auto source = soundCandidate.has_value() ? juce::String ("B") : juce::String ("A");
+    const auto added = soundShelf.add (entry);
+    if (added.failed())
+    {
+        projectStatusMessage = "SHELF SAVE REFUSED  /  " + added.getErrorMessage().toUpperCase();
+        updateStatus();
+        showError ("Could not save to the shelf", added.getErrorMessage());
+        return;
+    }
+
+    const auto written = soundShelf.saveTo (soundShelfPath);
+    if (written.failed())
+    {
+        soundShelf.remove (entry.name);
+        projectStatusMessage = "SHELF WRITE FAILED";
+        updateStatus();
+        showError ("Could not write the shelf", written.getErrorMessage());
+        return;
+    }
+
+    shelfCombo.setText (entry.name, juce::dontSendNotification);
+    projectStatusMessage = "SHELVED SOUND " + source + "  /  " + entry.name.toUpperCase();
+    refreshProjectControls();
+}
+
+juce::Result MainEditorComponent::loadSoundFromShelf (bool reportFailure)
+{
+    if (getActivePlugin() == nullptr || hasPendingEditPreview())
+        return juce::Result::fail ("The sound lane is not available");
+
+    const auto* entry = soundShelf.find (shelfCombo.getText());
+    if (entry == nullptr)
+        return juce::Result::fail ("No shelf sound is chosen");
+
+    // Loading a shelf sound produces candidate B, never a direct change to the
+    // accepted sound, so it flows through the accepted Audition/Apply/Reject lane.
+    const auto identifierMatches = vst3IdentifiersAreCompatible (entry->pluginIdentifier,
+                                                                 pluginRecord.identifier,
+                                                                 pluginRecord.description.uniqueId);
+    if (! identifierMatches || ! entry->pluginName.equalsIgnoreCase (pluginRecord.description.name))
+    {
+        const auto detail = "Shelf sound '" + entry->name + "' was captured from "
+                            + entry->pluginIdentifier + ", not the accepted "
+                            + pluginRecord.identifier + ".";
+        projectStatusMessage = "SHELF SOUND REJECTED  /  DIFFERENT INSTRUMENT";
+        updateStatus();
+        if (reportFailure)
+            showError ("Different instrument", detail);
+        return juce::Result::fail (detail);
+    }
+
+    PluginSoundSnapshot candidate { entry->name, entry->state, entry->stateSha256 };
+    if (! restoreSoundSnapshot (candidate, "LOADING SHELF SOUND", &candidateLiveSoundSha256))
+        return juce::Result::fail ("The shelf sound could not be restored");
+
+    const auto activeTrack = project.getActiveTrackIndex();
+    soundCandidate = std::move (candidate);
+    soundCandidateTrackId = project.getTrackId();
+    slotProjectStateSha256[activeTrack].clear();
+    soundNameEditor.setText (soundCandidate->name, false);
+    projectStatusMessage = "SHELF SOUND B READY  /  " + soundCandidate->name.toUpperCase()
+                           + "  /  AUDITION A-B BEFORE APPLY";
+    refreshProjectControls();
+    return juce::Result::ok();
+}
+
+void MainEditorComponent::removeSoundFromShelf()
+{
+    const auto name = shelfCombo.getText();
+    const auto removed = soundShelf.remove (name);
+    if (removed.failed())
+        return;
+
+    const auto written = soundShelf.saveTo (soundShelfPath);
+    if (written.failed())
+    {
+        showError ("Could not write the shelf", written.getErrorMessage());
+        return;
+    }
+
+    shelfCombo.setText ({}, juce::dontSendNotification);
+    projectStatusMessage = "REMOVED SHELF SOUND  /  " + name.toUpperCase();
+    refreshProjectControls();
+}
+
 void MainEditorComponent::previewSelectedNoteEdit()
 {
     if (soundCandidate.has_value())
@@ -951,31 +1844,50 @@ void MainEditorComponent::previewSelectedNoteEdit()
         return;
     }
 
-    const auto selected = pianoRoll != nullptr
-                              ? project.findNote (pianoRoll->getSelectedNote())
-                              : std::nullopt;
-    if (! selected.has_value())
+    std::vector<SongNote> selected;
+    if (pianoRoll != nullptr)
+        for (const auto& id : pianoRoll->getSelectedNotes())
+            if (const auto note = project.findNote (id))
+                selected.push_back (*note);
+
+    if (selected.empty())
     {
         projectStatusMessage = "SELECT A NOTE BEFORE CREATING A PROPOSAL";
         updateStatus();
         return;
     }
-    if (selected->midiNote >= 127)
+    if (selected.size() > maximumEditCommandChanges)
     {
-        projectStatusMessage = "THE SELECTED NOTE IS ALREADY AT THE HIGHEST MIDI PITCH";
+        projectStatusMessage = "SELECT AT MOST " + juce::String (maximumEditCommandChanges)
+                               + " NOTES FOR ONE PROPOSAL";
         updateStatus();
         return;
     }
-
-    auto after = *selected;
-    ++after.midiNote;
+    // Transposing the whole selection must be all or nothing, so a selection that
+    // contains the top MIDI pitch is refused rather than silently partly applied.
+    if (std::any_of (selected.begin(),
+                     selected.end(),
+                     [] (const SongNote& note) { return note.midiNote >= 127; }))
+    {
+        projectStatusMessage = "A SELECTED NOTE IS ALREADY AT THE HIGHEST MIDI PITCH";
+        updateStatus();
+        return;
+    }
 
     EditCommand command;
     command.projectContentSha256 = project.getContentSha256();
     command.trackId = project.getTrackId();
     command.clipId = project.getClipId();
-    command.summary = "Transpose " + selected->id + " up one semitone";
-    command.changes.push_back ({ NoteEditAction::update, selected->id, after });
+    command.summary = selected.size() == 1
+                          ? "Transpose " + selected.front().id + " up one semitone"
+                          : "Transpose " + juce::String (static_cast<int> (selected.size()))
+                                + " notes up one semitone";
+    for (const auto& note : selected)
+    {
+        auto after = note;
+        ++after.midiNote;
+        command.changes.push_back ({ NoteEditAction::update, note.id, after });
+    }
 
     installEditPreview (std::move (command),
                         "NOTE B READY  /  AUDITION A-B BEFORE APPLY");
@@ -1012,11 +1924,13 @@ juce::Result MainEditorComponent::readVelocityVariationControls (
     }
     else if (dynamicsScopeCombo.getSelectedId() == velocityScopeSelectedNote)
     {
-        const auto selectedId = pianoRoll != nullptr ? pianoRoll->getSelectedNote()
-                                                     : juce::String {};
-        if (selectedId.isEmpty() || ! project.findNote (selectedId).has_value())
-            return juce::Result::fail ("Select a note or choose Whole loop");
-        requested.noteIds.push_back (selectedId);
+        if (pianoRoll != nullptr)
+            for (const auto& id : pianoRoll->getSelectedNotes())
+                if (project.findNote (id).has_value())
+                    requested.noteIds.push_back (id);
+
+        if (requested.noteIds.empty())
+            return juce::Result::fail ("Select one or more notes or choose Whole loop");
     }
     else
     {
@@ -1069,29 +1983,906 @@ void MainEditorComponent::previewVelocityVariation()
                                                        static_cast<long long> (variation.seed)));
 }
 
-void MainEditorComponent::installEditPreview (EditCommand command,
-                                              const juce::String& readyStatus)
+juce::var MainEditorComponent::runSelectionSelfTest()
+{
+    auto* resultObject = new juce::DynamicObject();
+    juce::var result (resultObject);
+    resultObject->setProperty ("schemaVersion", 1);
+    resultObject->setProperty ("testVersion", JUCE_APPLICATION_VERSION_STRING);
+
+    clearEditPreview (true);
+    clearSoundCandidate();
+    project.markClean();
+
+    const auto notes = project.getNotes();
+    if (getActivePlugin() == nullptr || pianoRoll == nullptr || notes.size() < 3)
+    {
+        resultObject->setProperty ("passed", false);
+        resultObject->setProperty ("error", "The starter project needs an instrument and three notes");
+        return result;
+    }
+
+    const std::vector<juce::String> chosen { notes[0].id, notes[1].id, notes[2].id };
+    pianoRoll->setSelectedNotes (chosen);
+    const auto selectedThree = pianoRoll->getSelectedNotes().size() == 3
+                               && pianoRoll->getSelectedNote() == chosen.back();
+
+    // Ids that name no live note must be dropped rather than carried as dead weight.
+    auto withGhost = chosen;
+    withGhost.push_back ("note-does-not-exist");
+    withGhost.push_back (chosen.front());
+    pianoRoll->setSelectedNotes (withGhost);
+    const auto rejectedUnknownAndDuplicate = pianoRoll->getSelectedNotes().size() == 3;
+
+    pianoRoll->setSelectedNotes (chosen);
+    const auto beforeHash = project.getContentSha256();
+
+    // One slider gesture must write one absolute velocity across the whole selection
+    // and collapse into exactly one Undo step.
+    velocitySlider.setValue (41.0, juce::sendNotificationSync);
+    const auto allVelocitiesSet = std::all_of (chosen.begin(),
+                                               chosen.end(),
+                                               [this] (const juce::String& id)
+                                               {
+                                                   const auto note = project.findNote (id);
+                                                   return note.has_value() && note->velocity == 41;
+                                               });
+    performUndoRedo (false);
+    const auto velocityUndoneInOneStep = project.getContentSha256() == beforeHash;
+
+    pianoRoll->setSelectedNotes (chosen);
+    const auto originalPitches = { notes[0].midiNote, notes[1].midiNote, notes[2].midiNote };
+    previewSelectedNoteEdit();
+    const auto transposePreviewCreated = hasPendingEditPreview();
+    const auto transposeDiffCount = transposePreviewCreated
+                                        ? static_cast<int> (editPreview->noteDiffs.size())
+                                        : 0;
+    const auto activeUnchangedDuringPreview = project.getContentSha256() == beforeHash;
+    applyEditPreview();
+    auto pitchIterator = originalPitches.begin();
+    auto allTransposed = true;
+    for (const auto& id : chosen)
+    {
+        const auto note = project.findNote (id);
+        allTransposed = allTransposed && note.has_value()
+                        && note->midiNote == *pitchIterator + 1;
+        ++pitchIterator;
+    }
+    performUndoRedo (false);
+    const auto transposeUndoneInOneStep = project.getContentSha256() == beforeHash;
+
+    // Removing a selected note must not leave a dangling id behind.
+    pianoRoll->setSelectedNotes (chosen);
+    project.beginUndoTransaction ("Selection self test removal");
+    project.removeNote (chosen.front());
+    pianoRoll->pruneSelection();
+    const auto prunedAfterRemoval = pianoRoll->getSelectedNotes().size() == 2;
+    performUndoRedo (false);
+
+    // Clipboard: copy three notes, paste them, and confirm the copies are new notes
+    // that carry the same pitches and relative rhythm.
+    pianoRoll->setSelectedNotes (chosen);
+    const auto noteCountBeforePaste = static_cast<int> (project.getNotes().size());
+    pianoRoll->copySelection();
+    const auto copiedToClipboard = pianoRoll->hasClipboardContent();
+    const auto pasted = pianoRoll->pasteAtInsertBeat().wasOk();
+    const auto pastedIds = pianoRoll->getSelectedNotes();
+    const auto pasteAddedNewNotes =
+        pasted
+        && static_cast<int> (project.getNotes().size()) == noteCountBeforePaste + 3
+        && pastedIds.size() == 3
+        && std::none_of (pastedIds.begin(),
+                         pastedIds.end(),
+                         [&chosen] (const juce::String& id)
+                         {
+                             return std::find (chosen.begin(), chosen.end(), id) != chosen.end();
+                         });
+    performUndoRedo (false);
+    const auto pasteUndoneInOneStep = project.getContentSha256() == beforeHash;
+
+    // Duplicate must land one selection span later, rounded up to the snap grid.
+    pianoRoll->setSelectedNotes (chosen);
+    auto sourceEarliest = notes[0].beat;
+    auto sourceLatestEnd = notes[0].beat + notes[0].lengthBeats;
+    for (const auto& id : chosen)
+    {
+        const auto note = project.findNote (id);
+        sourceEarliest = juce::jmin (sourceEarliest, note->beat);
+        sourceLatestEnd = juce::jmax (sourceLatestEnd, note->beat + note->lengthBeats);
+    }
+    const auto snapBeats = project.getSnapBeats();
+    const auto expectedOffset = juce::jmax (
+        snapBeats,
+        std::ceil ((sourceLatestEnd - sourceEarliest) / snapBeats - 1.0e-9) * snapBeats);
+    const auto duplicated = pianoRoll->duplicateSelection().wasOk();
+    auto duplicateLandedOnGrid = duplicated && pianoRoll->getSelectedNotes().size() == 3;
+    for (const auto& id : pianoRoll->getSelectedNotes())
+    {
+        const auto note = project.findNote (id);
+        duplicateLandedOnGrid = duplicateLandedOnGrid && note.has_value()
+                                && note->beat >= sourceEarliest + expectedOffset - 1.0e-6;
+    }
+    performUndoRedo (false);
+    const auto duplicateUndoneInOneStep = project.getContentSha256() == beforeHash;
+
+    // Arrow-key edits move the whole selection and stay one Undo step each.
+    pianoRoll->setSelectedNotes (chosen);
+    pianoRoll->transposeSelection (12);
+    auto octaveIterator = originalPitches.begin();
+    auto allRaisedAnOctave = true;
+    for (const auto& id : chosen)
+    {
+        const auto note = project.findNote (id);
+        allRaisedAnOctave = allRaisedAnOctave && note.has_value()
+                            && note->midiNote == *octaveIterator + 12;
+        ++octaveIterator;
+    }
+    performUndoRedo (false);
+    pianoRoll->setSelectedNotes (chosen);
+    pianoRoll->nudgeSelection (project.getSnapBeats());
+    const auto nudgedForward = std::all_of (chosen.begin(),
+                                            chosen.end(),
+                                            [this] (const juce::String& id)
+                                            {
+                                                return project.findNote (id).has_value();
+                                            })
+                               && project.getContentSha256() != beforeHash;
+    performUndoRedo (false);
+    const auto keyboardEditsUndone = project.getContentSha256() == beforeHash;
+
+    pianoRoll->setSelectedNote ({});
+    const auto clearedSelection = pianoRoll->getSelectedNotes().empty()
+                                  && pianoRoll->getSelectedNote().isEmpty();
+
+    clearEditPreview (true);
+    project.markClean();
+
+    const auto passed = selectedThree && rejectedUnknownAndDuplicate && allVelocitiesSet
+                        && velocityUndoneInOneStep && transposePreviewCreated
+                        && transposeDiffCount == 3 && activeUnchangedDuringPreview
+                        && allTransposed && transposeUndoneInOneStep && prunedAfterRemoval
+                        && copiedToClipboard && pasteAddedNewNotes && pasteUndoneInOneStep
+                        && duplicateLandedOnGrid && duplicateUndoneInOneStep
+                        && allRaisedAnOctave && nudgedForward && keyboardEditsUndone
+                        && clearedSelection;
+
+    resultObject->setProperty ("selectedThree", selectedThree);
+    resultObject->setProperty ("rejectedUnknownAndDuplicate", rejectedUnknownAndDuplicate);
+    resultObject->setProperty ("velocityAppliedAcrossSelection", allVelocitiesSet);
+    resultObject->setProperty ("velocityUndoneInOneStep", velocityUndoneInOneStep);
+    resultObject->setProperty ("transposePreviewCreated", transposePreviewCreated);
+    resultObject->setProperty ("transposeDiffCount", transposeDiffCount);
+    resultObject->setProperty ("activeUnchangedDuringPreview", activeUnchangedDuringPreview);
+    resultObject->setProperty ("transposeAppliedAcrossSelection", allTransposed);
+    resultObject->setProperty ("transposeUndoneInOneStep", transposeUndoneInOneStep);
+    resultObject->setProperty ("prunedAfterRemoval", prunedAfterRemoval);
+    resultObject->setProperty ("copiedToClipboard", copiedToClipboard);
+    resultObject->setProperty ("pasteAddedNewNotes", pasteAddedNewNotes);
+    resultObject->setProperty ("pasteUndoneInOneStep", pasteUndoneInOneStep);
+    resultObject->setProperty ("duplicateLandedOnGrid", duplicateLandedOnGrid);
+    resultObject->setProperty ("duplicateUndoneInOneStep", duplicateUndoneInOneStep);
+    resultObject->setProperty ("octaveTransposeApplied", allRaisedAnOctave);
+    resultObject->setProperty ("nudgeApplied", nudgedForward);
+    resultObject->setProperty ("keyboardEditsUndone", keyboardEditsUndone);
+    resultObject->setProperty ("clearedSelection", clearedSelection);
+    resultObject->setProperty ("passed", passed);
+    if (! passed)
+        resultObject->setProperty ("error", "One or more selection expectations failed");
+
+    return result;
+}
+
+juce::var MainEditorComponent::runSoundShelfSelfTest (const juce::File& alternateProjectFile)
+{
+    auto* resultObject = new juce::DynamicObject();
+    juce::var result (resultObject);
+    resultObject->setProperty ("schemaVersion", 1);
+    resultObject->setProperty ("testVersion", JUCE_APPLICATION_VERSION_STRING);
+    resultObject->setProperty ("shelfSchemaVersion", SoundShelf::supportedSchemaVersion);
+
+    clearEditPreview (true);
+    clearSoundCandidate();
+    project.markClean();
+
+    if (getActivePlugin() == nullptr)
+    {
+        resultObject->setProperty ("passed", false);
+        resultObject->setProperty ("error", "The active track has no instrument");
+        return result;
+    }
+
+    // Never touch the user's real shelf; this test owns a temporary file.
+    const auto realShelfPath = soundShelfPath;
+    soundShelfPath = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                         .getNonexistentChildFile ("resonance-shelf-selftest", ".json", false);
+    soundShelf.clear();
+
+    // A genuinely different accepted Surge state, so "two sounds" is not a fiction.
+    SongProject alternate;
+    const auto alternateLoaded = alternate.loadFromFile (alternateProjectFile);
+    PluginSoundSnapshot alternateSound;
+    const auto alternateRead = alternateLoaded.wasOk()
+                               && alternate.getPluginSoundSnapshot (alternateSound).wasOk();
+
+    PluginSoundSnapshot acceptedBefore;
+    const auto acceptedRead = project.getPluginSoundSnapshot (acceptedBefore).wasOk();
+    const auto acceptedHashBefore = project.getPluginStateSha256();
+    const auto contentBefore = project.getContentSha256();
+    const auto soundsDiffer = alternateRead && acceptedRead
+                              && ! alternateSound.stateSha256.equalsIgnoreCase (
+                                     acceptedBefore.stateSha256);
+
+    soundNameEditor.setText ("Shelf test A", false);
+    saveSoundToShelf();
+    const auto savedAccepted = soundShelf.getEntryCount() == 1
+                               && soundShelf.find ("Shelf test A") != nullptr
+                               && soundShelfPath.existsAsFile();
+
+    SoundShelfEntry alternateEntry;
+    alternateEntry.name = "Shelf test B";
+    alternateEntry.pluginIdentifier = pluginRecord.identifier;
+    alternateEntry.pluginName = pluginRecord.description.name;
+    alternateEntry.vendor = pluginRecord.description.manufacturerName;
+    alternateEntry.version = pluginRecord.description.version;
+    alternateEntry.state = alternateSound.state;
+    alternateEntry.stateSha256 = alternateSound.stateSha256;
+    const auto addedAlternate = alternateRead && soundShelf.add (alternateEntry).wasOk()
+                                && soundShelf.saveTo (soundShelfPath).wasOk();
+
+    SoundShelf reloaded;
+    const auto shelfSurvivesReload = reloaded.loadFrom (soundShelfPath).wasOk()
+                                     && reloaded.getEntryCount() == 2
+                                     && reloaded.find ("Shelf test B") != nullptr
+                                     && reloaded.find ("Shelf test B")->state == alternateSound.state;
+
+    // Loading must produce candidate B and leave the accepted sound untouched.
+    shelfCombo.setText ("Shelf test B", juce::dontSendNotification);
+    const auto loadedAsCandidate = loadSoundFromShelf (false).wasOk()
+                                   && soundCandidate.has_value()
+                                   && soundCandidate->stateSha256.equalsIgnoreCase (
+                                          alternateSound.stateSha256);
+    const auto acceptedUnchangedByLoad = project.getPluginStateSha256() == acceptedHashBefore
+                                         && project.getContentSha256() == contentBefore
+                                         && ! project.isDirty();
+
+    rejectSoundCandidate();
+    const auto rejectRestoredAccepted = ! soundCandidate.has_value()
+                                        && project.getPluginStateSha256() == acceptedHashBefore
+                                        && ! project.isDirty();
+
+    shelfCombo.setText ("Shelf test B", juce::dontSendNotification);
+    const auto reloadedForApply = loadSoundFromShelf (false).wasOk();
+    applySoundCandidate();
+    const auto appliedShelfSound = reloadedForApply && ! soundCandidate.has_value()
+                                   && project.getPluginStateSha256().equalsIgnoreCase (
+                                          alternateSound.stateSha256)
+                                   && project.isDirty();
+    performUndoRedo (false);
+    const auto undoRestoredAccepted = project.getPluginStateSha256() == acceptedHashBefore
+                                      && project.getContentSha256() == contentBefore;
+
+    // A shelf sound captured from a different plug-in must fail closed.
+    SoundShelfEntry foreign = alternateEntry;
+    foreign.name = "Shelf test foreign";
+    foreign.pluginIdentifier = "VST3-Some Other Synth-00000000-00000000";
+    foreign.pluginName = "Some Other Synth";
+    const auto foreignAdded = soundShelf.add (foreign).wasOk();
+    shelfCombo.setText ("Shelf test foreign", juce::dontSendNotification);
+    const auto foreignRefused = foreignAdded && loadSoundFromShelf (false).failed()
+                                && ! soundCandidate.has_value()
+                                && project.getPluginStateSha256() == acceptedHashBefore;
+
+    soundShelfPath.deleteFile();
+    soundShelfPath = realShelfPath;
+    soundShelf.clear();
+    soundShelf.loadFrom (soundShelfPath);
+    clearSoundCandidate();
+    clearEditPreview (true);
+    project.markClean();
+    refreshProjectControls();
+
+    const auto passed = soundsDiffer && savedAccepted && addedAlternate && shelfSurvivesReload
+                        && loadedAsCandidate && acceptedUnchangedByLoad && rejectRestoredAccepted
+                        && appliedShelfSound && undoRestoredAccepted && foreignRefused;
+
+    resultObject->setProperty ("acceptedSoundSha256", acceptedBefore.stateSha256);
+    resultObject->setProperty ("shelfSoundSha256", alternateSound.stateSha256);
+    resultObject->setProperty ("soundsDiffer", soundsDiffer);
+    resultObject->setProperty ("savedAcceptedToShelf", savedAccepted);
+    resultObject->setProperty ("addedSecondSound", addedAlternate);
+    resultObject->setProperty ("shelfSurvivesReload", shelfSurvivesReload);
+    resultObject->setProperty ("loadedAsCandidate", loadedAsCandidate);
+    resultObject->setProperty ("acceptedUnchangedByLoad", acceptedUnchangedByLoad);
+    resultObject->setProperty ("rejectRestoredAccepted", rejectRestoredAccepted);
+    resultObject->setProperty ("appliedShelfSound", appliedShelfSound);
+    resultObject->setProperty ("undoRestoredAccepted", undoRestoredAccepted);
+    resultObject->setProperty ("foreignInstrumentRefused", foreignRefused);
+    resultObject->setProperty ("passed", passed);
+    if (! passed)
+        resultObject->setProperty ("error", "One or more sound shelf expectations failed");
+
+    return result;
+}
+
+juce::var MainEditorComponent::runAudioProbeSelfTest (const juce::File& projectFile)
+{
+    auto* resultObject = new juce::DynamicObject();
+    juce::var result (resultObject);
+    resultObject->setProperty ("schemaVersion", 1);
+    resultObject->setProperty ("testVersion", JUCE_APPLICATION_VERSION_STRING);
+    resultObject->setProperty ("projectPath", projectFile.getFileName());
+
+    const auto fail = [resultObject, &result] (const juce::String& message)
+    {
+        resultObject->setProperty ("passed", false);
+        resultObject->setProperty ("error", message);
+        return result;
+    };
+
+    if (projectFile != juce::File() && ! openProjectFromCommandLine (projectFile))
+        return fail ("The probe project could not be opened");
+
+    const auto trackCount = project.getTrackCount();
+    resultObject->setProperty ("trackCount", trackCount);
+    if (trackCount < 1)
+        return fail ("The probe project has no tracks");
+
+    clearEditPreview (true);
+    clearSoundCandidate();
+    publishProjectMixerSnapshot();
+
+    constexpr double probeSampleRate = 44100.0;
+    constexpr int probeBlockSize = 441;
+    const auto prepared = engine.prepareForOfflineRender (probeSampleRate, probeBlockSize);
+    if (prepared.failed())
+        return fail ("Offline render preparation failed: " + prepared.getErrorMessage());
+
+    // Master gain is forced to unity so a track's silence cannot be an artefact of the
+    // session's monitoring level.
+    engine.setMasterGainDecibels (0.0f);
+    engine.stopAndRewind();
+    engine.setPlaying (true);
+
+    const auto loopSeconds = project.getLoopLengthBeats() * 60.0 / project.getTempoBpm();
+    const auto blockCount = juce::jmax (64,
+                                        static_cast<int> (std::ceil (probeSampleRate * loopSeconds
+                                                                     / probeBlockSize)));
+
+    juce::AudioBuffer<float> output (2, probeBlockSize);
+    juce::AudioIODeviceCallbackContext callbackContext;
+    std::array<float, SongProject::maxProjectTracks> trackPeaks {};
+    float masterPeak = 0.0f;
+
+    for (int block = 0; block < blockCount; ++block)
+    {
+        output.clear();
+        auto* outputs = output.getArrayOfWritePointers();
+        engine.audioDeviceIOCallbackWithContext (nullptr, 0, outputs, 2, probeBlockSize,
+                                                 callbackContext);
+        masterPeak = juce::jmax (masterPeak, output.getMagnitude (0, probeBlockSize));
+        for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
+        {
+            const auto slot = static_cast<std::size_t> (trackIndex);
+            trackPeaks[slot] = juce::jmax (trackPeaks[slot],
+                                           juce::jmax (engine.getTrackLeftPeak (slot),
+                                                       engine.getTrackRightPeak (slot)));
+        }
+    }
+
+    engine.setPlaying (false);
+    engine.stopAndRewind();
+
+    // A muted track, or any track while another is soloed, is expected to be silent;
+    // only tracks that should be heard are required to produce signal.
+    auto anySolo = false;
+    for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
+        anySolo = anySolo || project.getTrackMixerSettings (trackIndex).solo;
+
+    juce::Array<juce::var> trackReports;
+    auto audibleTracks = 0;
+    auto overloadedTracks = 0;
+    auto expectedAudibleTracks = 0;
+    auto expectationsMet = true;
+    for (int trackIndex = 0; trackIndex < trackCount; ++trackIndex)
+    {
+        const auto slot = static_cast<std::size_t> (trackIndex);
+        const auto peak = trackPeaks[slot];
+        const auto settings = project.getTrackMixerSettings (trackIndex);
+        const auto shouldSound = ! settings.muted && (! anySolo || settings.solo);
+        // -60 dBFS is the project's own lower mixer bound, so anything below it is
+        // treated as silence rather than a quiet part.
+        const auto audible = peak > 0.001f;
+        // Per-track meters are clamped to 1.0, so a track sitting exactly at full scale
+        // is overloading internally even when the summed master does not clip. Changing
+        // a track's sound can move its level by a lot, which is how this first appeared.
+        const auto overloaded = peak >= 0.999f;
+        overloadedTracks += overloaded ? 1 : 0;
+        audibleTracks += audible ? 1 : 0;
+        expectedAudibleTracks += shouldSound ? 1 : 0;
+        expectationsMet = expectationsMet && (audible == shouldSound);
+
+        auto* trackObject = new juce::DynamicObject();
+        juce::var trackReport (trackObject);
+        trackObject->setProperty ("index", trackIndex);
+        trackObject->setProperty ("name", project.getTrackName (trackIndex));
+        trackObject->setProperty ("noteCount",
+                                  static_cast<int> (project.getNotes (trackIndex).size()));
+        trackObject->setProperty ("midiOutputChannel",
+                                  project.getTrackMidiRouting (trackIndex).outputChannel);
+        trackObject->setProperty ("gainDb", project.getTrackMixerSettings (trackIndex).gainDecibels);
+        trackObject->setProperty ("peak", peak);
+        trackObject->setProperty ("processedBlocks",
+                                  static_cast<int> (engine.getTrackProcessedBlockCount (slot)));
+        trackObject->setProperty ("muted", settings.muted);
+        trackObject->setProperty ("shouldSound", shouldSound);
+        trackObject->setProperty ("audible", audible);
+        trackObject->setProperty ("overloaded", overloaded);
+        trackReports.add (trackReport);
+    }
+
+    resultObject->setProperty ("blockCount", blockCount);
+    resultObject->setProperty ("tracks", trackReports);
+    resultObject->setProperty ("audibleTrackCount", audibleTracks);
+    resultObject->setProperty ("expectedAudibleTrackCount", expectedAudibleTracks);
+    resultObject->setProperty ("masterPeak", masterPeak);
+    resultObject->setProperty ("clipped", masterPeak > 1.0f);
+    resultObject->setProperty ("overloadedTrackCount", overloadedTracks);
+    resultObject->setProperty ("invalidSampleCount",
+                               static_cast<int> (engine.getInvalidSampleCount()));
+
+    const auto passed = expectationsMet && masterPeak > 0.001f && masterPeak <= 1.0f
+                        && overloadedTracks == 0 && engine.getInvalidSampleCount() == 0;
+    resultObject->setProperty ("passed", passed);
+    if (! passed)
+        resultObject->setProperty ("error",
+                                   overloadedTracks > 0
+                                       ? juce::String (overloadedTracks)
+                                             + " track(s) reached full scale"
+                                       : juce::String (audibleTracks) + " of "
+                                             + juce::String (expectedAudibleTracks)
+                                             + " expected-audible tracks produced signal");
+
+    return result;
+}
+
+juce::var MainEditorComponent::renderProjectToWav (const juce::File& projectFile,
+                                                   const juce::File& wavFile,
+                                                   int repeats,
+                                                   double tailSeconds)
+{
+    auto* resultObject = new juce::DynamicObject();
+    juce::var result (resultObject);
+    resultObject->setProperty ("schemaVersion", 1);
+    resultObject->setProperty ("editorVersion", JUCE_APPLICATION_VERSION_STRING);
+
+    const auto fail = [resultObject, &result] (const juce::String& message)
+    {
+        resultObject->setProperty ("passed", false);
+        resultObject->setProperty ("error", message);
+        return result;
+    };
+
+    if (projectFile != juce::File() && ! openProjectFromCommandLine (projectFile))
+        return fail ("The project could not be opened");
+    if (wavFile == juce::File())
+        return fail ("An output WAV path is required");
+
+    const auto safeRepeats = juce::jlimit (1, 64, repeats);
+    const auto safeTail = juce::jlimit (0.0, 30.0, tailSeconds);
+    const auto trackCount = project.getTrackCount();
+    if (trackCount < 1)
+        return fail ("The project has no tracks");
+
+    clearEditPreview (true);
+    clearSoundCandidate();
+    publishProjectMixerSnapshot();
+
+    // The render deliberately reuses the production callback rather than a second
+    // mixing path, so what is written is what the editor plays.
+    const auto rate = static_cast<double> (project.getSampleRate());
+    constexpr int blockSize = 512;
+    const auto prepared = engine.prepareForOfflineRender (rate, blockSize);
+    if (prepared.failed())
+        return fail ("Offline render preparation failed: " + prepared.getErrorMessage());
+
+    // Unity master so a render is reproducible rather than reflecting the session's
+    // monitoring level. Per-track mixer gains are part of the song and are kept.
+    engine.setMasterGainDecibels (0.0f);
+    engine.stopAndRewind();
+    engine.setPlaying (true);
+
+    const auto loopSeconds = project.getLoopLengthBeats() * 60.0 / project.getTempoBpm();
+    const auto musicSamples = static_cast<juce::int64> (
+        std::llround (rate * loopSeconds * static_cast<double> (safeRepeats)));
+    const auto tailSamples = static_cast<juce::int64> (std::llround (rate * safeTail));
+    const auto totalSamples = musicSamples + tailSamples;
+
+    std::unique_ptr<juce::OutputStream> stream (wavFile.createOutputStream());
+    if (stream == nullptr)
+        return fail ("Could not open " + wavFile.getFullPathName() + " for writing");
+
+    juce::WavAudioFormat wav;
+    const auto options = juce::AudioFormatWriterOptions {}
+                             .withSampleRate (rate)
+                             .withNumChannels (2)
+                             .withBitsPerSample (24);
+    auto writer = wav.createWriterFor (stream, options);
+    if (writer == nullptr)
+        return fail ("Could not create a WAV writer");
+
+    juce::AudioBuffer<float> block (2, blockSize);
+    juce::AudioIODeviceCallbackContext callbackContext;
+    float peak = 0.0f;
+    double sumOfSquares = 0.0;
+    juce::int64 clippedSamples = 0;
+    juce::int64 written = 0;
+    auto writeFailed = false;
+
+    while (written < totalSamples && ! writeFailed)
+    {
+        // The transport stops after the requested repeats so the tail captures release
+        // rather than another pass of the song.
+        if (written >= musicSamples && engine.isPlaying())
+            engine.setPlaying (false);
+
+        const auto samplesThisBlock = static_cast<int> (
+            juce::jmin (static_cast<juce::int64> (blockSize), totalSamples - written));
+        block.clear();
+        auto* outputs = block.getArrayOfWritePointers();
+        engine.audioDeviceIOCallbackWithContext (nullptr, 0, outputs, 2, samplesThisBlock,
+                                                 callbackContext);
+
+        for (int channel = 0; channel < 2; ++channel)
+        {
+            const auto* samples = block.getReadPointer (channel);
+            for (int index = 0; index < samplesThisBlock; ++index)
+            {
+                const auto value = samples[index];
+                peak = juce::jmax (peak, std::abs (value));
+                sumOfSquares += static_cast<double> (value) * static_cast<double> (value);
+                if (std::abs (value) >= 1.0f)
+                    ++clippedSamples;
+            }
+        }
+
+        writeFailed = ! writer->writeFromAudioSampleBuffer (block, 0, samplesThisBlock);
+        written += samplesThisBlock;
+    }
+
+    writer->flush();
+    writer.reset();
+    engine.setPlaying (false);
+    engine.stopAndRewind();
+
+    if (writeFailed)
+        return fail ("Writing the WAV data failed");
+
+    const auto totalValues = static_cast<double> (juce::jmax<juce::int64> (1, written * 2));
+    const auto rms = std::sqrt (sumOfSquares / totalValues);
+    const auto toDecibels = [] (double linear)
+    {
+        return linear > 1.0e-9 ? 20.0 * std::log10 (linear) : -144.0;
+    };
+
+    resultObject->setProperty ("projectPath", projectFile.getFileName());
+    resultObject->setProperty ("wavPath", wavFile.getFileName());
+    resultObject->setProperty ("title", project.getTitle());
+    resultObject->setProperty ("sampleRate", static_cast<int> (rate));
+    resultObject->setProperty ("bitsPerSample", 24);
+    resultObject->setProperty ("trackCount", trackCount);
+    resultObject->setProperty ("repeats", safeRepeats);
+    resultObject->setProperty ("tailSeconds", safeTail);
+    resultObject->setProperty ("renderedSamples", static_cast<int> (written));
+    resultObject->setProperty ("renderedSeconds", static_cast<double> (written) / rate);
+    resultObject->setProperty ("fileBytes", static_cast<int> (wavFile.getSize()));
+    resultObject->setProperty ("peak", peak);
+    resultObject->setProperty ("peakDbfs", toDecibels (peak));
+    resultObject->setProperty ("rmsDbfs", toDecibels (rms));
+    resultObject->setProperty ("clippedSamples", static_cast<int> (clippedSamples));
+    resultObject->setProperty ("invalidSampleCount",
+                               static_cast<int> (engine.getInvalidSampleCount()));
+
+    const auto passed = written == totalSamples && wavFile.getSize() > 0 && peak > 0.001f
+                        && clippedSamples == 0 && engine.getInvalidSampleCount() == 0;
+    resultObject->setProperty ("passed", passed);
+    if (! passed)
+        resultObject->setProperty ("error",
+                                   peak <= 0.001f ? juce::String ("The render was silent")
+                                   : clippedSamples > 0
+                                       ? juce::String ("The render clipped")
+                                       : juce::String ("The render did not complete"));
+
+    return result;
+}
+
+bool MainEditorComponent::openProjectFromCommandLine (const juce::File& projectFile)
+{
+    if (! projectFile.existsAsFile())
+        return false;
+
+    openProjectFile (projectFile);
+    return currentProjectFile == projectFile;
+}
+
+juce::var MainEditorComponent::runCommandLoadSelfTest()
+{
+    auto* resultObject = new juce::DynamicObject();
+    juce::var result (resultObject);
+    resultObject->setProperty ("schemaVersion", 1);
+    resultObject->setProperty ("testVersion", JUCE_APPLICATION_VERSION_STRING);
+    resultObject->setProperty ("commandVersion", EditCommand::supportedVersion);
+
+    clearEditPreview (true);
+    clearSoundCandidate();
+    project.markClean();
+
+    if (getActivePlugin() == nullptr || pianoRoll == nullptr || project.getNotes().empty())
+    {
+        resultObject->setProperty ("passed", false);
+        resultObject->setProperty ("error", "The starter project has no instrument or editable note");
+        return result;
+    }
+
+    const auto original = project.getNotes().front();
+    const auto beforeHash = project.getContentSha256();
+    const auto trackId = project.getTrackId();
+    const auto clipId = project.getClipId();
+    resultObject->setProperty ("projectContentSha256", beforeHash);
+    resultObject->setProperty ("targetTrackId", trackId);
+    resultObject->setProperty ("targetClipId", clipId);
+
+    // One velocity update the resolver would never produce on its own, so a passing
+    // preview proves the file drove it rather than the seeded dynamics path.
+    auto updated = original;
+    updated.velocity = original.velocity >= 64 ? original.velocity - 21 : original.velocity + 21;
+
+    const auto buildCommand = [&] (const juce::String& hash,
+                                   const juce::String& targetTrack,
+                                   const juce::String& targetClip)
+    {
+        EditCommand command;
+        command.projectContentSha256 = hash;
+        command.trackId = targetTrack;
+        command.clipId = targetClip;
+        command.summary = "Command load self test";
+        NoteEditChange change;
+        change.action = NoteEditAction::update;
+        change.noteId = original.id;
+        change.note = updated;
+        command.changes.push_back (change);
+        return command;
+    };
+
+    const auto tempDirectory = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    std::vector<juce::File> temporaryFiles;
+    const auto writeCommandFile = [&] (const juce::String& contents)
+    {
+        const auto file = tempDirectory.getNonexistentChildFile ("resonance-command-load",
+                                                                 ".json",
+                                                                 false);
+        file.replaceWithText (contents);
+        temporaryFiles.push_back (file);
+        return file;
+    };
+
+    // Every refusal below must leave the active project byte-identical and preview-free.
+    // Failures are loaded silently so the headless run never stacks modal alerts.
+    const auto refusedCleanly = [&] (const juce::File& file)
+    {
+        return loadEditCommandFile (file, false).failed()
+               && ! hasPendingEditPreview()
+               && project.getContentSha256() == beforeHash
+               && ! project.isDirty();
+    };
+
+    const auto staleHash = juce::String::repeatedString ("0", 64);
+    const auto staleRefused = refusedCleanly (
+        writeCommandFile (serialiseEditCommand (buildCommand (staleHash, trackId, clipId))));
+    const auto wrongTrackRefused = refusedCleanly (
+        writeCommandFile (serialiseEditCommand (
+            buildCommand (beforeHash, trackId + "-not-a-track", clipId))));
+    const auto wrongClipRefused = refusedCleanly (
+        writeCommandFile (serialiseEditCommand (
+            buildCommand (beforeHash, trackId, clipId + "-not-a-clip"))));
+    const auto malformedRefused = refusedCleanly (writeCommandFile ("{ this is not json"));
+    const auto oversizeRefused = refusedCleanly (
+        writeCommandFile (juce::String::repeatedString (
+            "x", static_cast<int> (maximumEditCommandBytes) + 1)));
+    const auto missingFile = tempDirectory.getNonexistentChildFile ("resonance-command-absent",
+                                                                    ".json",
+                                                                    false);
+    const auto missingRefused = refusedCleanly (missingFile);
+
+    const auto validFile = writeCommandFile (
+        serialiseEditCommand (buildCommand (beforeHash, trackId, clipId)));
+    const auto validLoaded = loadEditCommandFile (validFile, false).wasOk();
+    const auto previewCreated = validLoaded && hasPendingEditPreview();
+    const auto diffCount = previewCreated ? static_cast<int> (editPreview->noteDiffs.size()) : 0;
+    const auto candidate = previewCreated ? editPreview->getCandidateProject() : nullptr;
+    const auto candidateNote = candidate != nullptr ? candidate->findNote (original.id)
+                                                    : std::nullopt;
+    const auto candidateCarriesEdit = candidateNote.has_value()
+                                      && candidateNote->velocity == updated.velocity;
+    const auto activeUnchangedDuringPreview = project.getContentSha256() == beforeHash
+                                              && ! project.isDirty();
+    const auto candidateHash = previewCreated ? editPreview->afterContentSha256 : juce::String {};
+    // The load lane must interlock with the sound lane exactly like the resolver lane does.
+    const auto soundLaneInterlocked = previewCreated
+                                      && ! captureSoundButton.isEnabled()
+                                      && ! applySoundButton.isEnabled()
+                                      && ! loadCommandButton.isEnabled();
+
+    applyEditPreview();
+    const auto appliedNote = project.findNote (original.id);
+    const auto appliedHash = project.getContentSha256();
+    const auto applied = ! hasPendingEditPreview()
+                         && appliedNote.has_value()
+                         && appliedNote->velocity == updated.velocity
+                         && project.isDirty()
+                         && appliedHash != beforeHash;
+
+    // The precondition is the pre-edit content hash, so replaying the same file while
+    // the edit still stands must fail closed instead of stacking a second edit. After
+    // Undo the hash legitimately returns to beforeHash and the file is valid again.
+    const auto replayAfterApplyRefused = loadEditCommandFile (validFile, false).failed()
+                                         && ! hasPendingEditPreview()
+                                         && project.getContentSha256() == appliedHash;
+
+    performUndoRedo (false);
+    const auto undoneNote = project.findNote (original.id);
+    const auto undoneInOneStep = undoneNote.has_value()
+                                 && undoneNote->velocity == original.velocity
+                                 && project.getContentSha256() == beforeHash;
+
+    for (const auto& file : temporaryFiles)
+        file.deleteFile();
+
+    clearEditPreview (true);
+    project.markClean();
+
+    const auto passed = staleRefused && wrongTrackRefused && wrongClipRefused
+                        && malformedRefused && oversizeRefused && missingRefused
+                        && previewCreated && diffCount == 1 && candidateCarriesEdit
+                        && activeUnchangedDuringPreview && soundLaneInterlocked
+                        && applied && replayAfterApplyRefused && undoneInOneStep;
+
+    resultObject->setProperty ("staleHashRefused", staleRefused);
+    resultObject->setProperty ("wrongTrackRefused", wrongTrackRefused);
+    resultObject->setProperty ("wrongClipRefused", wrongClipRefused);
+    resultObject->setProperty ("malformedRefused", malformedRefused);
+    resultObject->setProperty ("oversizeRefused", oversizeRefused);
+    resultObject->setProperty ("missingFileRefused", missingRefused);
+    resultObject->setProperty ("previewCreated", previewCreated);
+    resultObject->setProperty ("noteDiffCount", diffCount);
+    resultObject->setProperty ("candidateCarriesEdit", candidateCarriesEdit);
+    resultObject->setProperty ("activeUnchangedDuringPreview", activeUnchangedDuringPreview);
+    resultObject->setProperty ("soundLaneInterlocked", soundLaneInterlocked);
+    resultObject->setProperty ("candidateContentSha256", candidateHash);
+    resultObject->setProperty ("appliedAsOneTransaction", applied);
+    resultObject->setProperty ("replayAfterApplyRefused", replayAfterApplyRefused);
+    resultObject->setProperty ("undoneInOneStep", undoneInOneStep);
+    resultObject->setProperty ("passed", passed);
+    if (! passed)
+        resultObject->setProperty ("error", "One or more command-load expectations failed");
+
+    return result;
+}
+
+void MainEditorComponent::chooseEditCommandFile()
+{
+    if (soundCandidate.has_value())
+    {
+        projectStatusMessage = "APPLY OR REJECT SOUND B BEFORE LOADING A COMMAND";
+        updateStatus();
+        return;
+    }
+
+    projectStatusMessage = "CHOOSE AN EDIT COMMAND TO PREVIEW";
+    updateStatus();
+    const auto initial = currentProjectFile != juce::File()
+                             ? currentProjectFile.getParentDirectory()
+                             : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+    activeFileChooser = std::make_unique<juce::FileChooser> ("Preview a Resonance edit command",
+                                                             initial,
+                                                             "*.json",
+                                                             true);
+    const juce::Component::SafePointer<MainEditorComponent> safe (this);
+    activeFileChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                        | juce::FileBrowserComponent::canSelectFiles,
+                                    [safe] (const juce::FileChooser& chooser)
+                                    {
+                                        if (safe == nullptr)
+                                            return;
+
+                                        if (chooser.getResult() != juce::File())
+                                            safe->loadEditCommandFile (chooser.getResult());
+                                        else
+                                        {
+                                            safe->projectStatusMessage = "COMMAND LOAD CANCELED";
+                                            safe->updateStatus();
+                                        }
+                                    });
+}
+
+juce::Result MainEditorComponent::loadEditCommandFile (const juce::File& commandFile,
+                                                       bool reportFailure)
+{
+    const auto refuse = [this, reportFailure] (const juce::String& status,
+                                               const juce::String& detail)
+    {
+        projectStatusMessage = status;
+        updateStatus();
+        if (reportFailure)
+            showError ("Could not load edit command", detail);
+        return juce::Result::fail (detail);
+    };
+
+    if (soundCandidate.has_value())
+        return refuse ("APPLY OR REJECT SOUND B BEFORE LOADING A COMMAND",
+                       "Apply or reject the pending sound candidate first.");
+
+    if (getActivePlugin() == nullptr)
+        return refuse ("COMMAND LOAD BLOCKED  /  NO ACTIVE INSTRUMENT",
+                       "The active track has no loaded instrument.");
+
+    if (! commandFile.existsAsFile())
+        return refuse ("COMMAND FILE NOT FOUND",
+                       "The chosen edit-command file no longer exists.");
+
+    if (commandFile.getSize() > maximumEditCommandBytes)
+        return refuse ("COMMAND FILE TOO LARGE",
+                       "An edit command must be at most 256 KB.");
+
+    EditCommand command;
+    const auto parsed = parseEditCommand (commandFile.loadFileAsString(), command);
+    if (parsed.failed())
+        return refuse ("COMMAND PARSE ERROR  /  " + parsed.getErrorMessage().toUpperCase(),
+                       parsed.getErrorMessage());
+
+    // installEditPreview re-checks the content hash and target ids through
+    // createEditCommandPreview, so a stale or mistargeted command still fails closed.
+    return installEditPreview (std::move (command),
+                               "COMMAND B READY  /  " + commandFile.getFileName().toUpperCase(),
+                               reportFailure);
+}
+
+void MainEditorComponent::copyProjectContentHash()
+{
+    const auto hash = project.getContentSha256();
+    const auto trackId = project.getTrackId();
+    const auto clipId = project.getClipId();
+    juce::SystemClipboard::copyTextToClipboard (hash + "\n" + trackId + "\n" + clipId);
+    projectStatusMessage = "COPIED HASH " + hash.substring (0, 16).toUpperCase()
+                           + "  /  TRACK " + trackId + "  /  CLIP " + clipId;
+    updateStatus();
+}
+
+juce::Result MainEditorComponent::installEditPreview (EditCommand command,
+                                                      const juce::String& readyStatus,
+                                                      bool reportFailure)
 {
     if (hasPendingEditPreview())
         clearEditPreview (true);
 
     EditCommandPreview proposed;
-    const auto result = createEditCommandPreview (command, project, proposed);
+    const auto result = createEditCommandPreview (command, project, proposed, &soundShelf);
     if (result.failed())
     {
         projectStatusMessage = "EDIT PROPOSAL ERROR  /  " + result.getErrorMessage();
         updateStatus();
-        showError ("Could not preview edit", result.getErrorMessage());
-        return;
+        if (reportFailure)
+            showError ("Could not preview edit", result.getErrorMessage());
+        return result;
     }
 
     editPreview.emplace (std::move (proposed));
     auditioningEditCandidate = false;
-    engine.setSequence (project.createSequenceSnapshot());
+    publishProjectMixerSnapshot();
     if (pianoRoll != nullptr)
         pianoRoll->setEditPreview (editPreview->noteDiffs, false);
     projectStatusMessage = readyStatus;
     refreshProjectControls();
+    return juce::Result::ok();
 }
 
 void MainEditorComponent::auditionEditProject()
@@ -1099,7 +2890,7 @@ void MainEditorComponent::auditionEditProject()
     if (! hasPendingEditPreview())
         return;
 
-    engine.setSequence (project.createSequenceSnapshot());
+    publishProjectMixerSnapshot();
     auditioningEditCandidate = false;
     if (pianoRoll != nullptr)
         pianoRoll->setEditPreviewAudition (false);
@@ -1116,7 +2907,8 @@ void MainEditorComponent::auditionEditCandidate()
     if (candidate == nullptr)
         return;
 
-    engine.setSequence (candidate->createSequenceSnapshot());
+    const auto candidateSequence = candidate->createSequenceSnapshot();
+    publishProjectMixerSnapshot (&candidateSequence);
     auditioningEditCandidate = true;
     if (pianoRoll != nullptr)
         pianoRoll->setEditPreviewAudition (true);
@@ -1132,12 +2924,12 @@ void MainEditorComponent::applyEditPreview()
     juce::Result result = juce::Result::ok();
     {
         const juce::ScopedValueSetter<bool> applying (applyingEditPreview, true);
-        result = editPreview->applyTo (project);
+        result = editPreview->applyTo (project, &soundShelf);
     }
 
     if (result.failed())
     {
-        engine.setSequence (project.createSequenceSnapshot());
+        publishProjectMixerSnapshot();
         auditioningEditCandidate = false;
         if (pianoRoll != nullptr)
             pianoRoll->setEditPreviewAudition (false);
@@ -1151,7 +2943,17 @@ void MainEditorComponent::applyEditPreview()
     auditioningEditCandidate = false;
     if (pianoRoll != nullptr)
         pianoRoll->clearEditPreview();
-    projectStatusMessage = "NOTE EDIT APPLIED  /  ONE UNDO RESTORES A";
+
+    // A command may have changed a track's sound, which lives in the model. Restore any
+    // runtime slot whose state no longer matches so playback reflects what was applied.
+    const auto resync = synchronisePluginSlotsFromProject();
+    if (resync.failed())
+    {
+        runtimeProjectSyncError = resync.getErrorMessage();
+        showError ("Could not restore Surge XT", resync.getErrorMessage());
+    }
+
+    projectStatusMessage = "EDIT APPLIED  /  ONE UNDO RESTORES A";
     projectChanged();
 }
 
@@ -1171,7 +2973,7 @@ void MainEditorComponent::rejectEditPreview()
     auditioningEditCandidate = false;
     if (pianoRoll != nullptr)
         pianoRoll->clearEditPreview();
-    engine.setSequence (project.createSequenceSnapshot());
+    publishProjectMixerSnapshot();
     projectStatusMessage = "NOTE B REJECTED  /  PROJECT A UNCHANGED";
     refreshProjectControls();
 }
@@ -1183,7 +2985,7 @@ void MainEditorComponent::clearEditPreview (bool publishActiveSequence)
     if (pianoRoll != nullptr)
         pianoRoll->clearEditPreview();
     if (publishActiveSequence)
-        engine.setSequence (project.createSequenceSnapshot());
+        publishProjectMixerSnapshot();
     refreshSoundControls();
     refreshEditPreviewControls();
 }
@@ -1194,7 +2996,7 @@ void MainEditorComponent::refreshEditPreviewControls()
     const auto selected = pianoRoll != nullptr
                               ? project.findNote (pianoRoll->getSelectedNote())
                               : std::nullopt;
-    const auto ready = engine.getPlugin() != nullptr;
+    const auto ready = getActivePlugin() != nullptr;
     SeededVelocityVariation velocityVariation;
     const auto velocitySettings = readVelocityVariationControls (velocityVariation);
 
@@ -1289,9 +3091,26 @@ void MainEditorComponent::refreshEditPreviewControls()
     dynamicsScopeCombo.setEnabled (controlsEnabled);
     dynamicsStrengthEditor.setEnabled (controlsEnabled);
     dynamicsSeedEditor.setEnabled (controlsEnabled);
+    // Transposing is all or nothing, so the whole selection must be below the top pitch
+    // and must fit one version-1 command.
+    auto selectionCanTranspose = false;
+    if (pianoRoll != nullptr)
+    {
+        const auto& selectedIds = pianoRoll->getSelectedNotes();
+        selectionCanTranspose = ! selectedIds.empty()
+                                && selectedIds.size() <= maximumEditCommandChanges;
+        for (const auto& id : selectedIds)
+        {
+            const auto note = project.findNote (id);
+            selectionCanTranspose = selectionCanTranspose && note.has_value()
+                                    && note->midiNote < 127;
+        }
+    }
     previewSelectedEditButton.setEnabled (ready && ! pending && ! soundCandidate.has_value()
-                                          && selected.has_value() && selected->midiNote < 127);
+                                          && selectionCanTranspose);
     previewDynamicsButton.setEnabled (controlsEnabled && velocitySettings.wasOk());
+    loadCommandButton.setEnabled (controlsEnabled);
+    copyHashButton.setEnabled (ready);
     auditionEditProjectButton.setEnabled (ready && pending);
     auditionEditCandidateButton.setEnabled (ready && pending);
     applyEditButton.setEnabled (ready && pending);
@@ -1304,11 +3123,26 @@ void MainEditorComponent::refreshEditPreviewControls()
 
 void MainEditorComponent::projectChanged()
 {
-    if (applyingEditPreview)
+    if (applyingEditPreview || suppressProjectChanges)
         return;
 
+    // Undo, Redo, and command Apply can delete notes that are still selected.
+    if (pianoRoll != nullptr)
+        pianoRoll->pruneSelection();
+
+
+    if (pluginEditorWindow != nullptr
+        && (pluginEditorTrackId != project.getTrackId()
+            || pluginEditorTrackIndex != project.getActiveTrackIndex()))
+    {
+        pluginEditorWindow.reset();
+        pluginEditorTrackId.clear();
+        pluginEditorTrackIndex = -1;
+    }
+
     if (hasPendingEditPreview()
-        && ! project.getContentSha256().equalsIgnoreCase (editPreview->beforeContentSha256))
+        && (editPreview->command.trackId != project.getTrackId()
+            || ! project.getContentSha256().equalsIgnoreCase (editPreview->beforeContentSha256)))
     {
         editPreview.reset();
         auditioningEditCandidate = false;
@@ -1318,20 +3152,10 @@ void MainEditorComponent::projectChanged()
     }
 
     engine.setBpm (project.getTempoBpm());
-    const auto mixerSettings = project.getTrackMixerSettings();
-    const auto midiRouting = project.getTrackMidiRouting();
-    MixerSnapshot mixer;
-    mixer.trackCount = 1;
-    mixer.tracks[0].sequence = project.createSequenceSnapshot();
-    mixer.tracks[0].gainLinear = juce::Decibels::decibelsToGain (
-        static_cast<float> (mixerSettings.gainDecibels));
-    mixer.tracks[0].pan = static_cast<float> (mixerSettings.pan);
-    mixer.tracks[0].midiInputChannel = midiRouting.inputChannel;
-    mixer.tracks[0].midiOutputChannel = midiRouting.outputChannel;
-    mixer.tracks[0].enabled = true;
-    mixer.tracks[0].muted = mixerSettings.muted;
-    mixer.tracks[0].solo = mixerSettings.solo;
-    engine.setMixerSnapshot (mixer);
+    const auto sync = synchronisePluginSlotsFromProject();
+    runtimeProjectSyncError = sync.failed() ? sync.getErrorMessage() : juce::String {};
+    updateActiveSoundTracking();
+    publishProjectMixerSnapshot();
 
     if (pianoRoll != nullptr && pianoRoll->getSelectedNote().isNotEmpty()
         && ! project.findNote (pianoRoll->getSelectedNote()).has_value())
@@ -1344,6 +3168,7 @@ void MainEditorComponent::projectChanged()
 void MainEditorComponent::refreshProjectControls()
 {
     const juce::ScopedValueSetter<bool> refreshing (refreshingProjectControls, true);
+    updateActiveSoundTracking();
     projectNameLabel.setText (project.getTitle() + (project.isDirty() ? "  *" : ""),
                               juce::dontSendNotification);
     projectNameLabel.setTooltip (currentProjectFile == juce::File()
@@ -1352,11 +3177,25 @@ void MainEditorComponent::refreshProjectControls()
     bpmSlider.setValue (project.getTempoBpm(), juce::dontSendNotification);
     snapCombo.setSelectedId (snapComboId (project.getSnapBeats()), juce::dontSendNotification);
     loopLengthCombo.setSelectedId (loopComboId (project.getLoopLengthBeats()), juce::dontSendNotification);
+
+    const auto activeTrack = project.getActiveTrackIndex();
+    refreshTrackStrips();
+    trackNameLabel.setText (juce::String (activeTrack + 1).paddedLeft ('0', 2)
+                                + "  /  " + project.getTrackName(),
+                            juce::dontSendNotification);
     trackMetaLabel.setText (pluginRecord.description.manufacturerName + "  /  VST3 "
                             + pluginRecord.description.version + "  /  "
                             + juce::String (pluginRecord.expectedParameterCount) + " parameters  /  SOUND  "
                             + project.getPluginSoundName(),
                             juce::dontSendNotification);
+
+    const auto trackLaneClear = ! soundCandidate.has_value() && ! hasPendingEditPreview();
+    addTrackButton.setEnabled (trackLaneClear
+                               && project.getTrackCount() < SongProject::maxProjectTracks);
+    removeTrackButton.setEnabled (trackLaneClear && project.getTrackCount() > 1);
+    moveTrackLeftButton.setEnabled (trackLaneClear && activeTrack > 0);
+    moveTrackRightButton.setEnabled (trackLaneClear
+                                     && activeTrack + 1 < project.getTrackCount());
 
     undoButton.setEnabled (project.canUndo());
     redoButton.setEnabled (project.canRedo());
@@ -1364,13 +3203,30 @@ void MainEditorComponent::refreshProjectControls()
     redoButton.setTooltip (project.canRedo() ? "Redo " + project.getRedoDescription() : "Nothing to redo");
 
     auto selected = pianoRoll != nullptr ? project.findNote (pianoRoll->getSelectedNote()) : std::nullopt;
+    const auto selectionCount = pianoRoll != nullptr
+                                    ? static_cast<int> (pianoRoll->getSelectedNotes().size())
+                                    : 0;
     velocitySlider.setEnabled (selected.has_value());
-    velocityLabel.setText (selected.has_value() ? "VELOCITY" : "SELECT NOTE", juce::dontSendNotification);
+    velocityLabel.setText (selectionCount > 1
+                               ? juce::String (selectionCount) + " NOTES"
+                               : selected.has_value() ? "VELOCITY" : "SELECT NOTE",
+                           juce::dontSendNotification);
+    // The slider shows the primary selection's velocity and writes one absolute value
+    // across the whole selection.
     if (selected.has_value())
         velocitySlider.setValue (selected->velocity, juce::dontSendNotification);
 
     refreshSoundControls();
+    refreshShelfControls();
     refreshEditPreviewControls();
+    if (pianoRoll != nullptr)
+        pianoRoll->repaint();
+}
+
+juce::String MainEditorComponent::velocityTransactionName() const
+{
+    const auto count = pianoRoll != nullptr ? pianoRoll->getSelectedNotes().size() : 0;
+    return count > 1 ? "Change note velocities" : "Change note velocity";
 }
 
 void MainEditorComponent::selectedNoteChanged (const juce::String&)
@@ -1382,36 +3238,55 @@ void MainEditorComponent::startNewProject()
 {
     engine.stopAndRewind();
     pluginEditorWindow.reset();
+    pluginEditorTrackId.clear();
+    pluginEditorTrackIndex = -1;
     clearEditPreview (false);
     clearSoundCandidate();
-    if (initialPluginState.getSize() > 0)
+
+    for (int trackIndex = 0; trackIndex < SongProject::maxProjectTracks; ++trackIndex)
     {
+        if (initialPluginStates[trackIndex].getSize() == 0)
+            continue;
+
         juce::MemoryBlock liveState;
-        const auto restore = engine.restorePluginState (initialPluginState, &liveState);
+        const auto restore = engine.restorePluginStateForTrack (
+            static_cast<std::size_t> (trackIndex),
+            initialPluginStates[trackIndex],
+            &liveState);
         if (restore.failed())
         {
             showError ("Could not reset Surge XT", restore.getErrorMessage());
             return;
         }
-        acceptedLiveSoundSha256 = juce::SHA256 (liveState).toHexString();
+
+        slotAcceptedLiveSoundSha256[trackIndex] = juce::SHA256 (liveState).toHexString();
     }
 
-    project.resetToStarter();
-    project.setPluginMetadata (pluginRecord.identifier,
-                               pluginRecord.description.name,
-                               pluginRecord.description.manufacturerName,
-                               pluginRecord.description.version);
-    if (initialPluginState.getSize() > 0)
     {
-        project.setPluginState (initialPluginState);
-        auditionedSoundSha256 = acceptedLiveSoundSha256.isNotEmpty()
-                                    ? acceptedLiveSoundSha256
-                                    : project.getPluginStateSha256();
+        const juce::ScopedValueSetter<bool> suppress (suppressProjectChanges, true);
+        project.resetToStarter();
+        project.setPluginMetadata (pluginRecord.identifier,
+                                   pluginRecord.description.name,
+                                   pluginRecord.description.manufacturerName,
+                                   pluginRecord.description.version);
+        if (initialPluginStates[0].getSize() > 0)
+            project.setPluginState (initialPluginStates[0]);
     }
+
+    for (auto& hash : slotProjectStateSha256)
+        hash.clear();
+    slotProjectStateSha256[0] = project.getPluginStateSha256 (0);
+    activeSoundTrackId = project.getTrackId();
+    acceptedLiveSoundSha256 = slotAcceptedLiveSoundSha256[0];
+    auditionedSoundSha256 = acceptedLiveSoundSha256;
     currentProjectFile = {};
     if (pianoRoll != nullptr)
+    {
         pianoRoll->setSelectedNote ({});
-    refreshProjectControls();
+        pianoRoll->frameAllTracks();
+    }
+    projectStatusMessage = "NEW PROJECT  /  TRACK 1 READY";
+    projectChanged();
 }
 
 void MainEditorComponent::chooseProjectToOpen()
@@ -1453,46 +3328,71 @@ void MainEditorComponent::openProjectFile (const juce::File& file)
         return;
     }
 
-    const auto identifierMatches = vst3IdentifiersAreCompatible (candidate.getPluginIdentifier(),
-                                                                  pluginRecord.identifier,
-                                                                  pluginRecord.description.uniqueId);
-    const auto nameMatches = candidate.getPluginName().equalsIgnoreCase (pluginRecord.description.name);
-    if (! identifierMatches || ! nameMatches)
+    for (int trackIndex = 0; trackIndex < candidate.getTrackCount(); ++trackIndex)
     {
-        showError ("Different instrument",
-                   "The saved song's VST3 identity does not match the active instrument. Saved: "
-                       + candidate.getPluginIdentifier() + ". Active: " + pluginRecord.identifier + ".");
-        return;
-    }
+        const auto identifierMatches = vst3IdentifiersAreCompatible (
+            candidate.getPluginIdentifier (trackIndex),
+            pluginRecord.identifier,
+            pluginRecord.description.uniqueId);
+        const auto nameMatches = candidate.getPluginName (trackIndex).equalsIgnoreCase (
+            pluginRecord.description.name);
+        if (! identifierMatches || ! nameMatches)
+        {
+            showError ("Different instrument",
+                       "Track " + juce::String (trackIndex + 1)
+                           + " does not match the accepted instrument. Saved: "
+                           + candidate.getPluginIdentifier (trackIndex)
+                           + ". Active: " + pluginRecord.identifier + ".");
+            return;
+        }
 
-    juce::MemoryBlock state;
-    const auto stateResult = candidate.getPluginState (state);
-    if (stateResult.failed())
-    {
-        showError ("Invalid Surge state", stateResult.getErrorMessage());
-        return;
+        juce::MemoryBlock state;
+        const auto stateResult = candidate.getPluginStateForTrack (trackIndex, state);
+        if (stateResult.failed())
+        {
+            showError ("Invalid Surge state",
+                       "Track " + juce::String (trackIndex + 1) + ": "
+                           + stateResult.getErrorMessage());
+            return;
+        }
     }
 
     engine.stopAndRewind();
     pluginEditorWindow.reset();
+    pluginEditorTrackId.clear();
+    pluginEditorTrackIndex = -1;
     clearEditPreview (false);
-    juce::MemoryBlock liveState;
-    const auto restoreResult = engine.restorePluginState (state, &liveState);
+    clearSoundCandidate();
+    auto liveStateHashes = slotAcceptedLiveSoundSha256;
+    const auto restoreResult = restoreRuntimeSlotsFromProject (candidate, liveStateHashes);
     if (restoreResult.failed())
     {
         showError ("Could not restore Surge XT", restoreResult.getErrorMessage());
         return;
     }
 
-    project.replaceWith (candidate);
+    {
+        const juce::ScopedValueSetter<bool> suppress (suppressProjectChanges, true);
+        project.replaceWith (candidate);
+    }
     currentProjectFile = file;
     project.markClean();
-    clearSoundCandidate();
-    acceptedLiveSoundSha256 = juce::SHA256 (liveState).toHexString();
+    slotAcceptedLiveSoundSha256 = liveStateHashes;
+    for (int trackIndex = 0; trackIndex < SongProject::maxProjectTracks; ++trackIndex)
+        slotProjectStateSha256[trackIndex] = trackIndex < project.getTrackCount()
+                                                        ? project.getPluginStateSha256 (trackIndex)
+                                                        : juce::String {};
+    activeSoundTrackId = project.getTrackId();
+    acceptedLiveSoundSha256 = slotAcceptedLiveSoundSha256[project.getActiveTrackIndex()];
     auditionedSoundSha256 = acceptedLiveSoundSha256;
     projectStatusMessage = "OPENED  /  " + file.getFileName();
     if (pianoRoll != nullptr)
+    {
         pianoRoll->setSelectedNote ({});
+        // Fit the pitch range of every track so both parts are visible on open
+        // rather than leaving material above or below the default window.
+        pianoRoll->frameAllTracks();
+    }
     projectChanged();
 }
 
@@ -1544,18 +3444,25 @@ void MainEditorComponent::saveProjectToFile (juce::File file)
     if (! file.getFileName().endsWithIgnoreCase (".json"))
         file = file.getSiblingFile (file.getFileName() + ".resonance.json");
 
-    PluginSoundSnapshot acceptedSound;
-    const auto stateResult = project.getPluginSoundSnapshot (acceptedSound);
-    if (stateResult.failed())
+    for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
     {
-        showError ("Could not read the accepted project sound", stateResult.getErrorMessage());
-        return;
-    }
+        PluginSoundSnapshot acceptedSound;
+        const auto stateResult = project.getPluginSoundSnapshotForTrack (trackIndex,
+                                                                         acceptedSound);
+        if (stateResult.failed())
+        {
+            showError ("Could not read the accepted project sound",
+                       "Track " + juce::String (trackIndex + 1) + ": "
+                           + stateResult.getErrorMessage());
+            return;
+        }
 
-    project.setPluginMetadata (pluginRecord.identifier,
-                               pluginRecord.description.name,
-                               pluginRecord.description.manufacturerName,
-                               pluginRecord.description.version);
+        project.setPluginMetadataForTrack (trackIndex,
+                                           pluginRecord.identifier,
+                                           pluginRecord.description.name,
+                                           pluginRecord.description.manufacturerName,
+                                           pluginRecord.description.version);
+    }
     const auto rate = juce::roundToInt (engine.getSampleRate());
     if (rate == 44100 || rate == 48000 || rate == 88200 || rate == 96000)
         project.setSampleRate (rate);
@@ -1628,7 +3535,8 @@ juce::var MainEditorComponent::runM4WorkflowSelfTest (const juce::File& projectF
 
     const auto opened = currentProjectFile == projectFile && ! project.isDirty();
     juce::MemoryBlock baselineLiveState;
-    const auto baselineCapture = engine.capturePluginState (baselineLiveState);
+    const auto baselineCapture = engine.capturePluginStateForTrack (
+        static_cast<std::size_t> (project.getActiveTrackIndex()), baselineLiveState);
     const auto baselineLiveHash = baselineCapture.wasOk()
                                       ? juce::SHA256 (baselineLiveState).toHexString()
                                       : juce::String {};
@@ -1726,6 +3634,11 @@ void MainEditorComponent::prepareM5PreviewForSnapshot()
     const auto notes = project.getNotes();
     if (notes.empty() || pianoRoll == nullptr)
         return;
+
+    if (! advancedControlsVisible)
+        toggleAdvancedControls();
+    if (! keyboardVisible)
+        toggleKeyboard();
 
     dynamicsScopeCombo.setSelectedId (velocityScopeWholeLoop, juce::dontSendNotification);
     dynamicsStrengthEditor.setText (juce::String (editorVelocityVariationMaximumDelta), false);
@@ -2165,6 +4078,208 @@ juce::var MainEditorComponent::runM5WorkflowSelfTest()
     return result;
 }
 
+juce::var MainEditorComponent::runM6AuthoringSelfTest (const juce::File& projectFile)
+{
+    auto* resultObject = new juce::DynamicObject();
+    juce::var result (resultObject);
+    resultObject->setProperty ("schemaVersion", 1);
+    resultObject->setProperty ("editorVersion", JUCE_APPLICATION_VERSION_STRING);
+    resultObject->setProperty ("projectPath", projectFile.getFileName());
+    resultObject->setProperty ("audioEmitted", false);
+
+    const auto initialTrackCount = project.getTrackCount();
+    const auto preloadedPluginCount = static_cast<int> (engine.getActivePluginCount());
+    const auto distinctRuntimeInstances = engine.getPluginForTrack (0) != nullptr
+                                          && engine.getPluginForTrack (1) != nullptr
+                                          && engine.getPluginForTrack (0)
+                                                 != engine.getPluginForTrack (1);
+    const auto firstTrackId = project.getTrackId (0);
+    const auto firstClipId = project.getClipId (0);
+
+    addInstrumentTrack();
+    const auto addTrackSucceeded = project.getTrackCount() == 2
+                                   && project.getActiveTrackIndex() == 1;
+    const auto secondTrackId = addTrackSucceeded ? project.getTrackId (1) : juce::String {};
+    const auto secondClipId = addTrackSucceeded ? project.getClipId (1) : juce::String {};
+    const auto stableDistinctIds = addTrackSucceeded
+                                   && firstTrackId.isNotEmpty()
+                                   && secondTrackId.isNotEmpty()
+                                   && firstTrackId != secondTrackId
+                                   && firstClipId != secondClipId;
+
+    juce::MemoryBlock firstProjectState;
+    juce::MemoryBlock secondProjectState;
+    const auto duplicatedStateExact = addTrackSucceeded
+                                      && project.getPluginStateForTrack (0,
+                                                                         firstProjectState).wasOk()
+                                      && project.getPluginStateForTrack (1,
+                                                                         secondProjectState).wasOk()
+                                      && firstProjectState == secondProjectState;
+
+    const auto runtimeStatesMatchProject = [this]
+    {
+        for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
+        {
+            juce::MemoryBlock projectState;
+            juce::MemoryBlock runtimeState;
+            if (project.getPluginStateForTrack (trackIndex, projectState).failed()
+                || engine.capturePluginStateForTrack (
+                       static_cast<std::size_t> (trackIndex), runtimeState).failed()
+                || projectState != runtimeState)
+                return false;
+        }
+        return true;
+    };
+
+    const auto runtimeStateAlignedAfterAdd = addTrackSucceeded
+                                             && runtimeStatesMatchProject();
+
+    auto independentNotes = false;
+    if (addTrackSucceeded)
+    {
+        const auto firstBefore = project.createSequenceSnapshotForTrack (0);
+        auto secondNotes = project.getNotes();
+        if (! secondNotes.empty())
+        {
+            project.beginUndoTransaction ("M6 independent note edit");
+            secondNotes.front().velocity = secondNotes.front().velocity < 127
+                                               ? secondNotes.front().velocity + 1
+                                               : secondNotes.front().velocity - 1;
+            const auto changed = project.updateNote (secondNotes.front());
+            const auto firstAfter = project.createSequenceSnapshotForTrack (0);
+            const auto secondAfter = project.createSequenceSnapshotForTrack (1);
+            independentNotes = changed
+                               && firstAfter.noteCount == firstBefore.noteCount
+                               && firstAfter.noteCount > 0
+                               && firstAfter.notes[0].velocity == firstBefore.notes[0].velocity
+                               && secondAfter.notes[0].velocity != firstAfter.notes[0].velocity;
+        }
+    }
+
+    const TrackMixerSettings firstMix { -6.0, -0.65, false, false };
+    const TrackMixerSettings secondMix { -9.0, 0.65, true, false };
+    project.beginUndoTransaction ("M6 independent mixer settings");
+    const auto firstMixResult = project.setTrackMixerSettingsForTrack (0, firstMix);
+    const auto secondMixResult = project.setTrackMixerSettingsForTrack (1, secondMix);
+    const auto storedFirstMix = project.getTrackMixerSettings (0);
+    const auto storedSecondMix = project.getTrackMixerSettings (1);
+    const auto independentMixerSettings = firstMixResult.wasOk() && secondMixResult.wasOk()
+                                          && storedFirstMix.gainDecibels == -6.0
+                                          && storedFirstMix.pan == -0.65
+                                          && ! storedFirstMix.muted
+                                          && storedSecondMix.gainDecibels == -9.0
+                                          && storedSecondMix.pan == 0.65
+                                          && storedSecondMix.muted;
+
+    moveActiveTrack (-1);
+    const auto reorderSucceeded = project.getTrackId (0) == secondTrackId
+                                  && project.getTrackId (1) == firstTrackId
+                                  && project.getActiveTrackIndex() == 0;
+    const auto runtimeStateAlignedAfterReorder = reorderSucceeded
+                                                 && runtimeStatesMatchProject();
+
+    const auto undoReorderPerformed = project.undo();
+    const auto undoReorderRestored = undoReorderPerformed
+                                     && project.getTrackId (0) == firstTrackId
+                                     && project.getTrackId (1) == secondTrackId
+                                     && project.getActiveTrackIndex() == 1
+                                     && runtimeStatesMatchProject();
+
+    saveProjectToFile (projectFile);
+    const auto saveSucceeded = currentProjectFile == projectFile
+                               && projectFile.existsAsFile()
+                               && ! project.isDirty();
+
+    SongProject reopened;
+    const auto reopenResult = reopened.loadFromFile (projectFile);
+    const auto reopenedSchemaVersion = reopenResult.wasOk() ? reopened.getSchemaVersion() : -1;
+    const auto reopenedTrackCount = reopenResult.wasOk() ? reopened.getTrackCount() : 0;
+    const auto reopenedOrderPreserved = reopenResult.wasOk()
+                                        && reopenedTrackCount == 2
+                                        && reopened.getTrackId (0) == firstTrackId
+                                        && reopened.getTrackId (1) == secondTrackId;
+    const auto reopenedFirstMix = reopenResult.wasOk()
+                                      ? reopened.getTrackMixerSettings (0)
+                                      : TrackMixerSettings {};
+    const auto reopenedSecondMix = reopenResult.wasOk()
+                                       ? reopened.getTrackMixerSettings (1)
+                                       : TrackMixerSettings {};
+    const auto reopenedMixerPreserved = reopenResult.wasOk()
+                                        && reopenedFirstMix.gainDecibels == -6.0
+                                        && reopenedFirstMix.pan == -0.65
+                                        && reopenedSecondMix.gainDecibels == -9.0
+                                        && reopenedSecondMix.pan == 0.65
+                                        && reopenedSecondMix.muted;
+    const auto reopenedIndependentNotes = reopenResult.wasOk()
+                                          && reopened.createSequenceSnapshotForTrack (0).notes[0].velocity
+                                                 != reopened.createSequenceSnapshotForTrack (1).notes[0].velocity;
+
+    removeActiveTrack();
+    const auto removeSucceeded = project.getTrackCount() == 1;
+    const auto undoRemoveRestored = project.undo()
+                                    && project.getTrackCount() == 2
+                                    && project.getTrackId (0) == firstTrackId
+                                    && project.getTrackId (1) == secondTrackId
+                                    && runtimeStatesMatchProject();
+
+    const auto noRuntimeFault = runtimeProjectSyncError.isEmpty()
+                                && engine.getInvalidSampleCount() == 0
+                                && engine.getProcessorExceptionCount() == 0;
+
+    resultObject->setProperty ("initialTrackCount", initialTrackCount);
+    resultObject->setProperty ("preloadedPluginCount", preloadedPluginCount);
+    resultObject->setProperty ("distinctRuntimeInstances", distinctRuntimeInstances);
+    resultObject->setProperty ("addTrackSucceeded", addTrackSucceeded);
+    resultObject->setProperty ("activeTrackAfterAdd", addTrackSucceeded ? 1 : -1);
+    resultObject->setProperty ("firstTrackId", firstTrackId);
+    resultObject->setProperty ("secondTrackId", secondTrackId);
+    resultObject->setProperty ("stableDistinctIds", stableDistinctIds);
+    resultObject->setProperty ("duplicatedStateExact", duplicatedStateExact);
+    resultObject->setProperty ("runtimeStateAlignedAfterAdd", runtimeStateAlignedAfterAdd);
+    resultObject->setProperty ("independentNotes", independentNotes);
+    resultObject->setProperty ("independentMixerSettings", independentMixerSettings);
+    resultObject->setProperty ("reorderSucceeded", reorderSucceeded);
+    resultObject->setProperty ("runtimeStateAlignedAfterReorder",
+                               runtimeStateAlignedAfterReorder);
+    resultObject->setProperty ("undoReorderRestored", undoReorderRestored);
+    resultObject->setProperty ("saveSucceeded", saveSucceeded);
+    resultObject->setProperty ("reopenedSchemaVersion", reopenedSchemaVersion);
+    resultObject->setProperty ("reopenedTrackCount", reopenedTrackCount);
+    resultObject->setProperty ("reopenedOrderPreserved", reopenedOrderPreserved);
+    resultObject->setProperty ("reopenedMixerPreserved", reopenedMixerPreserved);
+    resultObject->setProperty ("reopenedIndependentNotes", reopenedIndependentNotes);
+    resultObject->setProperty ("removeSucceeded", removeSucceeded);
+    resultObject->setProperty ("undoRemoveRestored", undoRemoveRestored);
+    resultObject->setProperty ("invalidSampleCount", engine.getInvalidSampleCount());
+    resultObject->setProperty ("processorExceptionCount",
+                               engine.getProcessorExceptionCount());
+
+    const auto passed = initialTrackCount == 1
+                        && preloadedPluginCount == SongProject::maxProjectTracks
+                        && distinctRuntimeInstances
+                        && addTrackSucceeded
+                        && stableDistinctIds
+                        && duplicatedStateExact
+                        && runtimeStateAlignedAfterAdd
+                        && independentNotes
+                        && independentMixerSettings
+                        && reorderSucceeded
+                        && runtimeStateAlignedAfterReorder
+                        && undoReorderRestored
+                        && saveSucceeded
+                        && reopenedSchemaVersion == SongProject::currentSchemaVersion
+                        && reopenedTrackCount == 2
+                        && reopenedOrderPreserved
+                        && reopenedMixerPreserved
+                        && reopenedIndependentNotes
+                        && removeSucceeded
+                        && undoRemoveRestored
+                        && noRuntimeFault;
+    resultObject->setProperty ("passed", passed);
+    project.markClean();
+    return result;
+}
+
 void MainEditorComponent::showError (const juce::String& title, const juce::String& message)
 {
     juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
@@ -2222,6 +4337,12 @@ void MainEditorComponent::timerCallback()
     playButton.setButtonText (engine.isPlaying() ? "Pause" : "Play loop");
     displayedLeftPeak = juce::jmax (engine.getLeftPeak(), displayedLeftPeak * 0.88f);
     displayedRightPeak = juce::jmax (engine.getRightPeak(), displayedRightPeak * 0.88f);
+    for (std::size_t index = 0; index < displayedTrackPeaks.size(); ++index)
+    {
+        const auto trackPeak = juce::jmax (engine.getTrackLeftPeak (index),
+                                           engine.getTrackRightPeak (index));
+        displayedTrackPeaks[index] = juce::jmax (trackPeak, displayedTrackPeaks[index] * 0.88f);
+    }
     deviceSummaryLabel.setText (formatDeviceSummary (deviceManager), juce::dontSendNotification);
     updateStatus();
     repaint (trackCardBounds);
@@ -2245,7 +4366,7 @@ void MainEditorComponent::updateStatus()
 
     juce::String status;
     juce::Colour statusColour;
-    if (engine.getPlugin() == nullptr)
+    if (getActivePlugin() == nullptr)
     {
         status = "PLUGIN OFFLINE";
         statusColour = danger;
@@ -2254,6 +4375,11 @@ void MainEditorComponent::updateStatus()
     {
         status = "CHOOSE AUDIO OUTPUT";
         statusColour = warning;
+    }
+    else if (runtimeProjectSyncError.isNotEmpty())
+    {
+        status = "TRACK STATE ERROR / STOPPED SAFE";
+        statusColour = danger;
     }
     else if (exceptions > 0 || invalid > 0 || oversized > 0)
     {
@@ -2287,19 +4413,24 @@ void MainEditorComponent::updateStatus()
         diagnostic = deviceStartupError;
     else if (engine.getLastDeviceError().isNotEmpty())
         diagnostic = engine.getLastDeviceError();
+    else if (runtimeProjectSyncError.isNotEmpty())
+        diagnostic = runtimeProjectSyncError;
     else if (projectStatusMessage.isNotEmpty())
         diagnostic = projectStatusMessage;
 
     diagnosticLabel.setText (diagnostic, juce::dontSendNotification);
     diagnosticLabel.setColour (juce::Label::textColourId,
-                               (startupError.isNotEmpty() || invalid > 0 || exceptions > 0) ? danger : textMuted);
+                               (startupError.isNotEmpty() || runtimeProjectSyncError.isNotEmpty()
+                                || invalid > 0 || exceptions > 0)
+                                   ? danger
+                                   : textMuted);
 
-    const auto ready = engine.getPlugin() != nullptr && device != nullptr && engine.isPrepared();
+    const auto ready = getActivePlugin() != nullptr && device != nullptr && engine.isPrepared();
     playButton.setEnabled (ready);
-    stopButton.setEnabled (engine.getPlugin() != nullptr);
-    panicButton.setEnabled (engine.getPlugin() != nullptr);
-    saveButton.setEnabled (engine.getPlugin() != nullptr);
-    pluginEditorButton.setEnabled (engine.getPlugin() != nullptr && pluginRecord.hasEditor);
+    stopButton.setEnabled (getActivePlugin() != nullptr);
+    panicButton.setEnabled (getActivePlugin() != nullptr);
+    saveButton.setEnabled (getActivePlugin() != nullptr);
+    pluginEditorButton.setEnabled (getActivePlugin() != nullptr && pluginRecord.hasEditor);
 }
 
 void MainEditorComponent::drawCard (juce::Graphics& graphics, juce::Rectangle<int> rectangle) const
@@ -2327,38 +4458,68 @@ void MainEditorComponent::paint (juce::Graphics& graphics)
 
     drawCard (graphics, transportCardBounds);
     drawCard (graphics, trackCardBounds);
+    drawCard (graphics, soundCardBounds);
     drawCard (graphics, loopCardBounds);
-    drawCard (graphics, keyboardCardBounds);
-    drawCard (graphics, deviceCardBounds);
+    if (! keyboardCardBounds.isEmpty())
+        drawCard (graphics, keyboardCardBounds);
+    drawCard (graphics, editProposalBounds);
 
     graphics.setFont (uiFont (11.0f, juce::Font::bold));
     graphics.setColour (textMuted);
+    graphics.drawText ("MIXER  /  ALL TRACKS",
+                       trackCardBounds.reduced (16).removeFromTop (18),
+                       juce::Justification::centredLeft);
     graphics.drawText ("CLICK TO ADD  /  DRAG TO MOVE  /  DRAG RIGHT EDGE TO RESIZE  /  DELETE TO REMOVE",
                        loopCardBounds.reduced (16).removeFromTop (20),
                        juce::Justification::centredLeft);
-    graphics.drawText ("MANUAL AUDITION  /  SHARED WITH THE SURGE WINDOW",
-                       keyboardCardBounds.reduced (16).removeFromTop (22),
+    if (! keyboardCardBounds.isEmpty())
+        graphics.drawText ("MANUAL AUDITION  /  SHARED WITH THE SURGE WINDOW",
+                           keyboardCardBounds.reduced (16).removeFromTop (22),
+                           juce::Justification::centredLeft);
+
+    graphics.setColour (secondary);
+    graphics.drawText ("EDIT PROPOSAL  /  A-B PREVIEW BEFORE APPLY",
+                       editProposalBounds.reduced (14).removeFromTop (18),
                        juce::Justification::centredLeft);
-    graphics.drawText ("AUDIO + MIDI DEVICE",
-                       deviceCardBounds.reduced (16).removeFromTop (22),
+    graphics.drawText ("SOUND  /  SELECTED TRACK",
+                       soundCardBounds.reduced (14).removeFromTop (18),
                        juce::Justification::centredLeft);
 
-    if (! editProposalBounds.isEmpty())
+    // Per-track captions and meters, taken from the same layout the controls used.
+    graphics.setFont (uiFont (10.0f, juce::Font::bold));
+    const auto activeTrack = project.getActiveTrackIndex();
+    for (int index = 0; index < visibleTrackStripCount; ++index)
     {
-        const auto proposal = editProposalBounds.toFloat();
-        graphics.setColour (background.withAlpha (0.58f));
-        graphics.fillRoundedRectangle (proposal, 9.0f);
-        graphics.setColour (secondary.withAlpha (0.42f));
-        graphics.drawRoundedRectangle (proposal.reduced (0.5f), 9.0f, 1.0f);
-        graphics.setFont (uiFont (10.5f, juce::Font::bold));
-        graphics.setColour (secondary);
-        graphics.drawText ("M5 NOTE PROPOSAL  /  A-B PREVIEW",
-                           editProposalBounds.reduced (10).removeFromTop (20),
-                           juce::Justification::centredLeft);
+        const auto& stripBounds = trackStripBounds[static_cast<std::size_t> (index)];
+        if (stripBounds.isEmpty())
+            continue;
+
+        const auto layout = layOutTrackStrip (stripBounds);
+        graphics.setColour (background.withAlpha (0.45f));
+        graphics.fillRoundedRectangle (stripBounds.toFloat(), 8.0f);
+        if (index == activeTrack)
+        {
+            graphics.setColour (primary.withAlpha (0.55f));
+            graphics.drawRoundedRectangle (stripBounds.toFloat().reduced (0.5f), 8.0f, 1.0f);
+        }
+
+        graphics.setColour (textMuted);
+        graphics.drawText ("GAIN", layout.gainCaption, juce::Justification::centredLeft);
+        graphics.drawText ("PAN", layout.panCaption, juce::Justification::centredLeft);
+
+        auto well = layout.meter.toFloat();
+        graphics.setColour (background.withAlpha (0.9f));
+        graphics.fillRoundedRectangle (well, 3.0f);
+        const auto level = displayedTrackPeaks[static_cast<std::size_t> (index)];
+        const auto normalised = juce::jlimit (0.0f, 1.0f, std::sqrt (level));
+        graphics.setColour (normalised > 0.9f ? danger : primary);
+        graphics.fillRoundedRectangle (well.withTop (well.getBottom() - well.getHeight() * normalised),
+                                       3.0f);
     }
 
+    // The master pair sits beside the strips. Nothing else in the window showed it.
     auto meterArea = trackCardBounds.reduced (16).removeFromRight (30).toFloat();
-    meterArea.removeFromTop (6.0f);
+    meterArea.removeFromTop (26.0f);
     meterArea.removeFromBottom (6.0f);
     const auto drawMeter = [&graphics, meterArea] (float level, float x)
     {
@@ -2372,6 +4533,11 @@ void MainEditorComponent::paint (juce::Graphics& graphics)
     };
     drawMeter (displayedLeftPeak, meterArea.getX());
     drawMeter (displayedRightPeak, meterArea.getX() + 12.0f);
+    graphics.setColour (textMuted);
+    graphics.setFont (uiFont (9.0f, juce::Font::bold));
+    graphics.drawText ("MASTER",
+                       trackCardBounds.reduced (16).removeFromRight (44).removeFromTop (18),
+                       juce::Justification::centredRight);
 }
 
 void MainEditorComponent::resized()
@@ -2381,13 +4547,35 @@ void MainEditorComponent::resized()
     area.removeFromTop (8);
     transportCardBounds = area.removeFromTop (70);
     area.removeFromTop (12);
+    footerBounds = area.removeFromBottom (20);
+    area.removeFromBottom (8);
 
     auto body = area;
-    deviceCardBounds = body.removeFromRight (326);
-    body.removeFromRight (12);
-    trackCardBounds = body.removeFromTop (132);
+    // 16 padding either side, the 40 high track header, the 6 gap, then the strips.
+    trackCardBounds = body.removeFromTop (32 + 40 + 6 + trackStripHeight);
     body.removeFromTop (12);
-    keyboardCardBounds = body.removeFromBottom (154);
+
+    // The sound workflow belongs to the selected track, so it sits directly under
+    // the mixer. It is not optional: a control with no bounds is unreachable, which
+    // is exactly how the whole A/B and shelf lane went missing in the layout rebuild.
+    const auto soundFitsOneRow = body.getWidth() - 28 >= soundSingleRowMinimum;
+    soundCardBounds = body.removeFromTop (soundFitsOneRow ? soundCardHeightSingle
+                                                          : soundCardHeightStacked);
+    body.removeFromTop (12);
+
+    // The keyboard is optional, and it yields before the piano roll does.
+    keyboardCardBounds = {};
+    if (keyboardVisible)
+    {
+        const auto keyboardHeight = juce::jmin (118, body.getHeight() - 320);
+        if (keyboardHeight > 64)
+        {
+            keyboardCardBounds = body.removeFromBottom (keyboardHeight);
+            body.removeFromBottom (12);
+        }
+    }
+
+    editProposalBounds = body.removeFromBottom (110);
     body.removeFromBottom (12);
     loopCardBounds = body;
 
@@ -2405,6 +4593,12 @@ void MainEditorComponent::resized()
     projectNameLabel.setBounds (projectHeader);
 
     auto transport = transportCardBounds.reduced (14);
+    settingsButton.setBounds (transport.removeFromRight (76));
+    transport.removeFromRight (6);
+    advancedToggleButton.setBounds (transport.removeFromRight (92));
+    transport.removeFromRight (6);
+    keyboardToggleButton.setBounds (transport.removeFromRight (62));
+    transport.removeFromRight (14);
     playButton.setBounds (transport.removeFromLeft (104));
     transport.removeFromLeft (7);
     stopButton.setBounds (transport.removeFromLeft (62));
@@ -2421,15 +4615,69 @@ void MainEditorComponent::resized()
 
     auto track = trackCardBounds.reduced (16);
     track.removeFromRight (44);
-    auto trackHeader = track.removeFromTop (43);
-    pluginEditorButton.setBounds (trackHeader.removeFromRight (138).reduced (0, 4));
+    auto trackHeader = track.removeFromTop (40);
+    trackHeader.removeFromTop (18);
+    pluginEditorButton.setBounds (trackHeader.removeFromRight (128));
+    trackHeader.removeFromRight (8);
+    moveTrackRightButton.setBounds (trackHeader.removeFromRight (30));
+    trackHeader.removeFromRight (4);
+    moveTrackLeftButton.setBounds (trackHeader.removeFromRight (30));
+    trackHeader.removeFromRight (8);
+    removeTrackButton.setBounds (trackHeader.removeFromRight (62));
+    trackHeader.removeFromRight (4);
+    addTrackButton.setBounds (trackHeader.removeFromRight (62));
     trackHeader.removeFromRight (12);
-    trackNameLabel.setBounds (trackHeader.removeFromTop (24));
+    trackNameLabel.setBounds (trackHeader.removeFromTop (22));
     trackMetaLabel.setBounds (trackHeader);
-    track.removeFromTop (3);
-    soundWorkflowLabel.setBounds (track.removeFromTop (20));
-    track.removeFromTop (3);
-    auto soundControls = track.removeFromTop (30);
+    track.removeFromTop (6);
+
+    auto strips = track.removeFromTop (trackStripHeight);
+    const auto stripCount = juce::jmax (1, visibleTrackStripCount);
+    const auto stripGap = 8;
+    const auto stripWidth = juce::jmin (312,
+                                        (strips.getWidth() - stripGap * (stripCount - 1)) / stripCount);
+    for (int index = 0; index < SongProject::maxProjectTracks; ++index)
+    {
+        auto& stripBounds = trackStripBounds[static_cast<std::size_t> (index)];
+        if (index >= visibleTrackStripCount)
+        {
+            stripBounds = {};
+            continue;
+        }
+
+        stripBounds = strips.removeFromLeft (stripWidth);
+        strips.removeFromLeft (stripGap);
+
+        const auto layout = layOutTrackStrip (stripBounds);
+        auto& strip = trackStrips[static_cast<std::size_t> (index)];
+        strip.selectButton.setBounds (layout.select);
+        strip.gainSlider.setBounds (layout.gain);
+        strip.panSlider.setBounds (layout.pan);
+        strip.muteButton.setBounds (layout.mute);
+        strip.soloButton.setBounds (layout.solo);
+    }
+
+    // Sound card: capture and audition on the first row, the named shelf on the
+    // second. Widths match the pre-rebuild layout so the buttons read the same.
+    auto sound = soundCardBounds.reduced (14);
+    auto soundCaption = sound.removeFromTop (18);
+    soundCaption.removeFromLeft (188);
+    soundWorkflowLabel.setBounds (soundCaption);
+    sound.removeFromTop (6);
+
+    auto soundControls = sound.removeFromTop (30);
+    juce::Rectangle<int> shelfControls;
+    if (soundFitsOneRow)
+    {
+        shelfControls = soundControls.removeFromRight (shelfLaneWidth);
+        soundControls.removeFromRight (soundLaneGap);
+    }
+    else
+    {
+        sound.removeFromTop (6);
+        shelfControls = sound.removeFromTop (28);
+    }
+
     soundNameEditor.setBounds (soundControls.removeFromLeft (180));
     soundControls.removeFromLeft (7);
     captureSoundButton.setBounds (soundControls.removeFromLeft (88));
@@ -2441,6 +4689,15 @@ void MainEditorComponent::resized()
     applySoundButton.setBounds (soundControls.removeFromLeft (72));
     soundControls.removeFromLeft (7);
     rejectSoundButton.setBounds (soundControls.removeFromLeft (76));
+
+    shelfLabel.setBounds (shelfControls.removeFromLeft (46));
+    shelfCombo.setBounds (shelfControls.removeFromLeft (180).reduced (0, 1));
+    shelfControls.removeFromLeft (7);
+    loadShelfButton.setBounds (shelfControls.removeFromLeft (88));
+    shelfControls.removeFromLeft (7);
+    saveShelfButton.setBounds (shelfControls.removeFromLeft (104));
+    shelfControls.removeFromLeft (7);
+    removeShelfButton.setBounds (shelfControls.removeFromLeft (76));
 
     auto loop = loopCardBounds.reduced (12);
     loop.removeFromTop (21);
@@ -2456,58 +4713,58 @@ void MainEditorComponent::resized()
     if (pianoRoll != nullptr)
         pianoRoll->setBounds (loop.reduced (0, 2));
 
-    if (keyboard != nullptr)
+    if (keyboard != nullptr && ! keyboardCardBounds.isEmpty())
         keyboard->setBounds (keyboardCardBounds.reduced (12).withTrimmedTop (24));
 
-    auto device = deviceCardBounds.reduced (14);
-    device.removeFromTop (24);
-    deviceSummaryLabel.setBounds (device.removeFromTop (62));
-    diagnosticLabel.setBounds (device.removeFromBottom (34));
-    device.removeFromBottom (6);
-    const auto proposalHeight = juce::jlimit (210, 230, device.getHeight() - 180);
-    editProposalBounds = device.removeFromBottom (proposalHeight);
-    device.removeFromBottom (8);
-    if (deviceSelector != nullptr)
-        deviceSelector->setBounds (device);
+    diagnosticLabel.setBounds (footerBounds);
 
-    auto proposal = editProposalBounds.reduced (10);
+    auto proposal = editProposalBounds.reduced (14);
     proposal.removeFromTop (20);
-    editProposalSummaryLabel.setBounds (proposal.removeFromTop (28));
-    editProposalDiffLabel.setBounds (proposal.removeFromTop (50));
-    proposal.removeFromTop (3);
-    auto dynamicsCaptions = proposal.removeFromTop (13);
-    const auto dynamicsGap = 4;
-    const auto scopeWidth = 112;
-    const auto strengthWidth = 66;
-    dynamicsScopeLabel.setBounds (dynamicsCaptions.removeFromLeft (scopeWidth));
-    dynamicsCaptions.removeFromLeft (dynamicsGap);
-    dynamicsStrengthLabel.setBounds (dynamicsCaptions.removeFromLeft (strengthWidth));
-    dynamicsCaptions.removeFromLeft (dynamicsGap);
-    dynamicsSeedLabel.setBounds (dynamicsCaptions);
 
-    auto dynamicsControls = proposal.removeFromTop (26);
-    dynamicsScopeCombo.setBounds (dynamicsControls.removeFromLeft (scopeWidth));
-    dynamicsControls.removeFromLeft (dynamicsGap);
-    dynamicsStrengthEditor.setBounds (dynamicsControls.removeFromLeft (strengthWidth));
-    dynamicsControls.removeFromLeft (dynamicsGap);
-    dynamicsSeedEditor.setBounds (dynamicsControls);
-    proposal.removeFromTop (4);
-    auto previewActions = proposal.removeFromTop (28);
-    const auto previewGap = 4;
-    const auto previewWidth = (previewActions.getWidth() - previewGap) / 2;
-    previewSelectedEditButton.setBounds (previewActions.removeFromLeft (previewWidth));
-    previewActions.removeFromLeft (previewGap);
-    previewDynamicsButton.setBounds (previewActions);
-    proposal.removeFromTop (5);
-    auto editActions = proposal.removeFromTop (28);
-    const auto actionGap = 4;
-    const auto actionWidth = (editActions.getWidth() - actionGap * 3) / 4;
-    auditionEditProjectButton.setBounds (editActions.removeFromLeft (actionWidth));
-    editActions.removeFromLeft (actionGap);
-    auditionEditCandidateButton.setBounds (editActions.removeFromLeft (actionWidth));
-    editActions.removeFromLeft (actionGap);
-    applyEditButton.setBounds (editActions.removeFromLeft (actionWidth));
-    editActions.removeFromLeft (actionGap);
-    rejectEditButton.setBounds (editActions);
+    auto actions = proposal.removeFromRight (juce::jlimit (420, 640, proposal.getWidth() / 2));
+    const auto actionGap = 5;
+    auto firstRow = actions.removeFromTop (30);
+    actions.removeFromTop (6);
+    auto secondRow = actions.removeFromTop (30);
+    const auto actionWidth = (firstRow.getWidth() - actionGap * 3) / 4;
+    for (auto* button : { &previewSelectedEditButton, &previewDynamicsButton,
+                          &loadCommandButton, &copyHashButton })
+    {
+        button->setBounds (firstRow.removeFromLeft (actionWidth));
+        firstRow.removeFromLeft (actionGap);
+    }
+    for (auto* button : { &auditionEditProjectButton, &auditionEditCandidateButton,
+                          &applyEditButton, &rejectEditButton })
+    {
+        button->setBounds (secondRow.removeFromLeft (actionWidth));
+        secondRow.removeFromLeft (actionGap);
+    }
+
+    if (advancedControlsVisible)
+    {
+        proposal.removeFromRight (14);
+        auto dynamics = proposal.removeFromRight (juce::jmin (270, proposal.getWidth() / 2));
+        auto dynamicsCaptions = dynamics.removeFromTop (14);
+        dynamics.removeFromTop (2);
+        auto dynamicsControls = dynamics.removeFromTop (28);
+        const auto dynamicsGap = 4;
+        const auto scopeWidth = 112;
+        const auto strengthWidth = 66;
+        dynamicsScopeLabel.setBounds (dynamicsCaptions.removeFromLeft (scopeWidth));
+        dynamicsCaptions.removeFromLeft (dynamicsGap);
+        dynamicsStrengthLabel.setBounds (dynamicsCaptions.removeFromLeft (strengthWidth));
+        dynamicsCaptions.removeFromLeft (dynamicsGap);
+        dynamicsSeedLabel.setBounds (dynamicsCaptions);
+        dynamicsScopeCombo.setBounds (dynamicsControls.removeFromLeft (scopeWidth));
+        dynamicsControls.removeFromLeft (dynamicsGap);
+        dynamicsStrengthEditor.setBounds (dynamicsControls.removeFromLeft (strengthWidth));
+        dynamicsControls.removeFromLeft (dynamicsGap);
+        dynamicsSeedEditor.setBounds (dynamicsControls);
+    }
+
+    proposal.removeFromRight (14);
+    editProposalSummaryLabel.setBounds (proposal.removeFromTop (28));
+    editProposalDiffLabel.setBounds (proposal);
 }
+
 } // namespace resonance

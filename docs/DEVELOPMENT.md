@@ -127,13 +127,13 @@ The order matters: later scripts consume binaries and inventory artifacts create
 
 The realtime script also runs the M5 command-core cases using the portable `tests/fixtures/edit-command-note-patch-v1.json` fixture. The test replaces its schema-valid placeholder content hash in memory with the exact active-project hash; do not hard-code a machine report or mutable local path into the fixture. The same native suite resolves the seeded whole-loop velocity transform twice from reordered target IDs and records canonical command and candidate SHA-256 evidence.
 
-M6 migration coverage uses `tests/fixtures/song-project-v1-migration.resonance.json`. Keep its non-default `track-migrated` and `clip-migrated` identities, exact four-byte state/hash pair, and version-1 shape intact: the test proves the source remains byte-identical, migration defaults are deterministic, commands use stored IDs, and a later explicit save writes schema version 2. `scripts/validate-artifacts.py` checks this fixture and the historical UI round-trip file against the archived version-1 schema while validating the current real-Surge project against version 2.
+Migration coverage uses one fixture per archived schema version: `song-project-v1-migration.resonance.json` (single track), `song-project-v2-migration.resonance.json` (non-default mixer and MIDI), `song-project-v3-migration.resonance.json` (two tracks), and `song-project-v4-migration.resonance.json` (four tracks), all under `tests/fixtures/`. Keep their non-default stable identities, exact four-byte state/hash pairs, and historical shapes intact: the tests prove every source remains byte-identical, version-1 defaults are deterministic, non-default mixer/MIDI values survive, commands use stored IDs, and a later explicit save writes schema version 5. `scripts/validate-artifacts.py` checks each fixture against its archived schema while validating the current real-Surge projects against version 5.
 
 M6 runtime coverage uses `artifacts/m4-accepted-candidate-b.resonance.json` as the exact user-accepted alternate state for slot two. Do not rewrite its schema-version-1 payload or stored `ccaf99d4...` state hash. The Release script enforces the exact fixture-file SHA-256, and the packaged gate rejects a fixture whose VST3 identity is not compatible with the accepted Surge record. Live Surge processing normalises it to the accepted `91ed214e...` equivalent; the runtime gate records both identities, allows settling through four silent blocks after each restore, and still requires exact round trips for both current live baseline states. The committed `artifacts/m6-runtime-test-report.json` stores filenames rather than absolute local paths.
 
 ## Non-interactive editor modes
 
-The packaged editor has six test modes used by the Release gates:
+The packaged editor has seven test modes used by the Release gates:
 
 | Argument | Behavior |
 | --- | --- |
@@ -143,6 +143,7 @@ The packaged editor has six test modes used by the Release gates:
 | `--m4-workflow-test` | opens an explicit accepted song, plays it, and exercises unchanged sound Capture/Reject/Close lifecycle; it can emit audio |
 | `--m5-workflow-test` | keeps transport stopped and exercises selected-note pitch, default eight-note dynamics, explicit target/strength/seed controls, invalid-input blocking, Save-A, A/B, Reject, Apply, Undo/Redo, deterministic repeat, stale invalidation, and cleanup |
 | `--m6-runtime-test` | opens the selected device format without attaching a callback, loads two distinct accepted Surge instances, renders and meters both in memory, tests independent state/missing-slot/shutdown behavior, writes the bounded report, and emits no audio |
+| `--m6-authoring-test` | starts the ordinary hidden editor with two preloaded Surge instances, exercises add/reorder/remove, independent notes/mixer/state, Undo and schema-v3 Save/Open, and emits no audio |
 
 These are automated gates, not normal authoring modes.
 
@@ -153,6 +154,7 @@ Versioned artifacts are limited to portable evidence:
 - UI PNGs;
 - the release binary hash manifest;
 - portable `.resonance.json` fixtures;
+- the generated portable schema-v5 two-track authoring project;
 - the bounded, path-sanitised M6 runtime report;
 - JSON schemas and documentation.
 

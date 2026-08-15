@@ -34,6 +34,15 @@ struct TrackMixerSettings
     bool solo = false;
 };
 
+// One occurrence of a clip in the song. A clip holds the notes once; a placement says
+// where that content plays. Ids are derived from the clip id, so a preview and its
+// later apply produce identical projects.
+struct ClipPlacement
+{
+    juce::String id;
+    double startBeat = 0.0;
+};
+
 struct TrackMidiRouting
 {
     int inputChannel = 0;
@@ -44,7 +53,20 @@ class SongProject final : private juce::ValueTree::Listener
 {
 public:
     static constexpr int legacySchemaVersion = 1;
-    static constexpr int currentSchemaVersion = 2;
+    static constexpr int previousSchemaVersion = 2;
+    // Versions 1 and 2 hold exactly one track; 3 was the first to persist more.
+    static constexpr int multiTrackSchemaVersion = 3;
+    static constexpr int priorSchemaVersion = 3;
+    // Version 4 is the newest archived input contract; version 5 widened the clip
+    // ceiling from 8 to 64 bars of 4/4.
+    // Version 5 is the newest archived input contract; version 6 made a clip reusable
+    // content with an explicit placement list instead of one clip stretched over the song.
+    static constexpr int lastArchivedSchemaVersion = 5;
+    // Version 6 was the first to persist placements; older inputs migrate to one
+    // placement at beat zero, which reproduces their previous behaviour exactly.
+    static constexpr int placementSchemaVersion = 6;
+    static constexpr int currentSchemaVersion = 6;
+    static constexpr int maxProjectTracks = 4;
 
     SongProject();
     ~SongProject() override;
@@ -64,15 +86,49 @@ public:
     void setSampleRate (int sampleRate);
 
     int getSchemaVersion() const;
+    int getTrackCount() const noexcept;
+    int getActiveTrackIndex() const noexcept;
+    bool setActiveTrackIndex (int trackIndex);
     juce::String getTrackId() const;
+    juce::String getTrackId (int trackIndex) const;
     juce::String getTrackName() const;
+    juce::String getTrackName (int trackIndex) const;
     juce::String getClipId() const;
+    juce::String getClipId (int trackIndex) const;
+    // A clip's own length, which is independent of the song length. Notes are stored
+    // clip-relative and are bounded by this rather than by the song.
+    double getClipLengthBeats() const;
+    double getClipLengthBeats (int trackIndex) const;
+    juce::Result setClipLengthBeats (int trackIndex, double beats);
+    std::vector<ClipPlacement> getPlacements() const;
+    std::vector<ClipPlacement> getPlacements (int trackIndex) const;
+    // Replaces the whole placement list. Start beats are sorted and must not overlap;
+    // ids are derived as <clipId>-placement-N so the result is deterministic.
+    juce::Result setPlacements (int trackIndex, const std::vector<double>& startBeats);
+    // Notes multiplied by placements. This is what reaches the audio thread, so it is
+    // what the maxSequenceNotes ceiling applies to.
+    int getExpandedNoteCount (int trackIndex) const;
     TrackMixerSettings getTrackMixerSettings() const;
+    TrackMixerSettings getTrackMixerSettings (int trackIndex) const;
     juce::Result setTrackMixerSettings (const TrackMixerSettings& settings);
+    juce::Result setTrackMixerSettingsForTrack (int trackIndex,
+                                                const TrackMixerSettings& settings);
     TrackMidiRouting getTrackMidiRouting() const;
+    TrackMidiRouting getTrackMidiRouting (int trackIndex) const;
     juce::Result setTrackMidiRouting (const TrackMidiRouting& routing);
+    juce::Result setTrackMidiRoutingForTrack (int trackIndex,
+                                              const TrackMidiRouting& routing);
+    juce::Result duplicateActiveTrack (juce::String* createdTrackId = nullptr);
+    // Duplicates the active track using caller-supplied identity. Clip and note ids are
+    // derived from trackId, so the result is fully deterministic: an edit-command
+    // preview and its later apply produce identical projects, and a command author
+    // knows the new track's id in advance and can target it in the same command.
+    juce::Result addTrackWithIdentity (const juce::String& trackId, const juce::String& name);
+    juce::Result removeTrack (const juce::String& trackId);
+    juce::Result moveTrack (const juce::String& trackId, int newIndex);
 
     std::vector<SongNote> getNotes() const;
+    std::vector<SongNote> getNotes (int trackIndex) const;
     std::optional<SongNote> findNote (const juce::String& id) const;
     juce::String addNote (double beat, double lengthBeats, int midiNote, int velocity);
     juce::Result insertNote (const SongNote& note);
@@ -85,17 +141,30 @@ public:
                             const juce::String& name,
                             const juce::String& vendor,
                             const juce::String& version);
+    void setPluginMetadataForTrack (int trackIndex,
+                                    const juce::String& identifier,
+                                    const juce::String& name,
+                                    const juce::String& vendor,
+                                    const juce::String& version);
     juce::String getPluginIdentifier() const;
+    juce::String getPluginIdentifier (int trackIndex) const;
     juce::String getPluginName() const;
+    juce::String getPluginName (int trackIndex) const;
     juce::String getPluginSoundName() const;
+    juce::String getPluginSoundName (int trackIndex) const;
     void setPluginState (const juce::MemoryBlock& state);
     juce::Result applyPluginSound (const juce::String& soundName,
                                    const juce::MemoryBlock& state);
     juce::Result getPluginState (juce::MemoryBlock& state) const;
+    juce::Result getPluginStateForTrack (int trackIndex, juce::MemoryBlock& state) const;
     juce::Result getPluginSoundSnapshot (PluginSoundSnapshot& snapshot) const;
+    juce::Result getPluginSoundSnapshotForTrack (int trackIndex,
+                                                 PluginSoundSnapshot& snapshot) const;
     juce::String getPluginStateSha256() const;
+    juce::String getPluginStateSha256 (int trackIndex) const;
 
     SequenceSnapshot createSequenceSnapshot() const;
+    SequenceSnapshot createSequenceSnapshotForTrack (int trackIndex) const;
 
     void beginUndoTransaction (const juce::String& name);
     bool undo();
@@ -115,15 +184,27 @@ public:
 private:
     static constexpr int projectPpq = 960;
 
+    juce::ValueTree getTrackTree (int trackIndex) const;
+    juce::ValueTree findTrackTree (const juce::String& trackId) const;
+    juce::ValueTree getActiveTrackTree() const;
     juce::ValueTree getNotesTree() const;
+    juce::ValueTree getNotesTree (int trackIndex) const;
+    juce::ValueTree getPlacementsTree (int trackIndex) const;
+    // Older trees carry neither a clip length nor a placement list. This gives them the
+    // one-placement-at-zero shape that reproduces their previous behaviour exactly.
+    static void ensureClipStructure (juce::ValueTree& track, double songLengthBeats);
     juce::ValueTree getInstrumentTree() const;
+    juce::ValueTree getInstrumentTree (int trackIndex) const;
     juce::ValueTree findNoteTree (const juce::String& id) const;
     juce::var toJsonValue() const;
     static juce::Result valueTreeFromJson (const juce::var& json, juce::ValueTree& destination);
     juce::Result writePluginSoundSnapshot (const juce::String& soundName,
                                            const juce::MemoryBlock& state,
                                            juce::UndoManager* undo);
-    void installRoot (juce::ValueTree newRoot, bool shouldBeDirty);
+    void installRoot (juce::ValueTree newRoot,
+                      bool shouldBeDirty,
+                      const juce::String& preferredActiveTrackId = {});
+    void ensureActiveTrack();
     void projectChanged();
 
     void valueTreePropertyChanged (juce::ValueTree&, const juce::Identifier&) override;
@@ -135,6 +216,7 @@ private:
     juce::ValueTree root;
     juce::UndoManager undoManager { 2000, 16 * 1024 * 1024 };
     std::function<void()> changeCallback;
+    juce::String activeTrackId;
     bool dirty = false;
     bool suppressChanges = false;
 

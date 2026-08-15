@@ -3,6 +3,7 @@
 #include "../src/edit_command.h"
 #include "../src/plugin_identity.h"
 #include "../src/song_project.h"
+#include "../src/sound_shelf.h"
 
 #include <algorithm>
 #include <array>
@@ -198,15 +199,15 @@ void testLegacyProjectMigration (TestContext& context,
                                == resonance::SongProject::currentSchemaVersion
                         && migratedTrack != nullptr && migratedMixer != nullptr
                         && migratedMidi != nullptr,
-                    "A migrated save must materialise the complete version-2 track contract");
+                    "A migrated save must materialise the complete current track contract");
     context.expect (migratedTrack->getProperty ("id").toString() == stableTrackId,
-                    "A version-2 save must retain the migrated track id");
+                    "A current-schema save must retain the migrated track id");
 
     resonance::SongProject reopened;
     context.expect (reopened.loadFromFile (migratedFile).wasOk()
                         && reopened.getTrackId() == stableTrackId
                         && reopened.getClipId() == stableClipId,
-                    "The migrated version-2 file must reopen with stable identities");
+                    "The migrated current-schema file must reopen with stable identities");
 
     migratedMixer->setProperty ("gainDb", -6.0);
     migratedMixer->setProperty ("pan", 0.25);
@@ -215,7 +216,7 @@ void testLegacyProjectMigration (TestContext& context,
     migratedMidi->setProperty ("inputChannel", 2);
     migratedMidi->setProperty ("outputChannel", 10);
     context.expect (migratedFile.replaceWithText (juce::JSON::toString (migratedJson, true)),
-                    "A valid non-default version-2 mixer fixture must be writable");
+                    "A valid non-default current-schema mixer fixture must be writable");
     resonance::SongProject nonDefault;
     context.expect (nonDefault.loadFromFile (migratedFile).wasOk(),
                     "Bounded non-default mixer and MIDI values must load");
@@ -225,7 +226,7 @@ void testLegacyProjectMigration (TestContext& context,
                         && nonDefaultMixer.muted && nonDefaultMixer.solo
                         && nonDefaultMidi.inputChannel == 2
                         && nonDefaultMidi.outputChannel == 10,
-                    "Version-2 mixer and MIDI values must round-trip exactly");
+                    "Current-schema mixer and MIDI values must round-trip exactly");
 
     const auto invalidFile = migratedFile.getSiblingFile (
         migratedFile.getFileNameWithoutExtension() + "-invalid.resonance.json");
@@ -239,26 +240,298 @@ void testLegacyProjectMigration (TestContext& context,
     };
 
     auto futureVersion = juce::JSON::parse (migratedJsonText);
-    futureVersion.getDynamicObject()->setProperty ("schemaVersion", 3);
+    futureVersion.getDynamicObject()->setProperty (
+        "schemaVersion", resonance::SongProject::currentSchemaVersion + 1);
     writeInvalidAndReject (futureVersion, "An unknown future project schema must be rejected");
 
     auto missingMixer = juce::JSON::parse (migratedJsonText);
     missingMixer.getDynamicObject()->getProperty ("tracks").getArray()->getReference (0)
         .getDynamicObject()->removeProperty ("mixer");
-    writeInvalidAndReject (missingMixer, "A version-2 track without mixer state must be rejected");
+    writeInvalidAndReject (missingMixer, "A current-schema track without mixer state must be rejected");
 
     auto invalidPan = juce::JSON::parse (migratedJsonText);
     invalidPan.getDynamicObject()->getProperty ("tracks").getArray()->getReference (0)
         .getDynamicObject()->getProperty ("mixer").getDynamicObject()->setProperty ("pan", 1.5);
-    writeInvalidAndReject (invalidPan, "An out-of-range version-2 pan value must be rejected");
+    writeInvalidAndReject (invalidPan, "An out-of-range current-schema pan value must be rejected");
 
     auto invalidMidi = juce::JSON::parse (migratedJsonText);
     invalidMidi.getDynamicObject()->getProperty ("tracks").getArray()->getReference (0)
         .getDynamicObject()->getProperty ("midi").getDynamicObject()->setProperty ("outputChannel", 0);
-    writeInvalidAndReject (invalidMidi, "An invalid version-2 MIDI output channel must be rejected");
+    writeInvalidAndReject (invalidMidi, "An invalid current-schema MIDI output channel must be rejected");
 
     context.expect (invalidFile.deleteFile(), "The invalid migration fixture must be removable");
-    context.expect (migratedFile.deleteFile(), "The migrated version-2 fixture must be removable");
+    context.expect (migratedFile.deleteFile(), "The migrated current-schema fixture must be removable");
+}
+
+void testPreviousProjectMigration (TestContext& context,
+                                   const juce::File& fixtureFile,
+                                   juce::String& sourceSha256)
+{
+    context.expect (fixtureFile.existsAsFile(), "The version-2 migration fixture must exist");
+
+    juce::MemoryBlock sourceBytes;
+    context.expect (fixtureFile.loadFileAsData (sourceBytes),
+                    "The version-2 fixture bytes must be readable");
+    sourceSha256 = juce::SHA256 (sourceBytes).toHexString();
+
+    resonance::SongProject migrated;
+    const auto loadResult = migrated.loadFromFile (fixtureFile);
+    context.expect (loadResult.wasOk(),
+                    "A valid version-2 project must migrate in memory: "
+                        + loadResult.getErrorMessage());
+    context.expect (migrated.getSchemaVersion() == resonance::SongProject::currentSchemaVersion
+                        && migrated.getTrackCount() == 1,
+                    "Version-2 input must become a one-track current-schema model");
+    context.expect (migrated.getTrackId() == "track-v2"
+                        && migrated.getTrackName() == "Version 2 Keys"
+                        && migrated.getClipId() == "clip-v2",
+                    "Version-2 migration must preserve stable identity and name");
+
+    const auto mixer = migrated.getTrackMixerSettings();
+    const auto midi = migrated.getTrackMidiRouting();
+    context.expect (mixer.gainDecibels == -4.5 && mixer.pan == 0.3
+                        && ! mixer.muted && mixer.solo
+                        && midi.inputChannel == 3 && midi.outputChannel == 7,
+                    "Version-2 migration must preserve non-default mixer and MIDI state");
+    context.expect (migrated.getTempoBpm() == 108.0
+                        && migrated.getLoopLengthBeats() == 4.0
+                        && migrated.findNote ("note-v2").has_value(),
+                    "Version-2 migration must preserve timing and notes");
+
+    juce::MemoryBlock state;
+    context.expect (migrated.getPluginState (state).wasOk() && state.getSize() == 4
+                        && migrated.getPluginStateSha256()
+                               == "054edec1d0211f624fed0cbca9d4f9400b0e491c43742af2c5b0abebf0c990d8",
+                    "Version-2 migration must preserve exact opaque state");
+
+    juce::MemoryBlock sourceBytesAfterLoad;
+    context.expect (fixtureFile.loadFileAsData (sourceBytesAfterLoad)
+                        && sourceBytesAfterLoad == sourceBytes,
+                    "Loading a version-2 project must not rewrite its source file");
+
+    const auto migratedFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getNonexistentChildFile ("resonance-v2-migrated",
+                                                            ".resonance.json",
+                                                            false);
+    context.expect (migrated.saveToFile (migratedFile).wasOk(),
+                    "A migrated version-2 project must save as the current schema");
+    const auto saved = juce::JSON::parse (migratedFile.loadFileAsString());
+    context.expect (saved.getDynamicObject() != nullptr
+                        && static_cast<int> (
+                               saved.getDynamicObject()->getProperty ("schemaVersion"))
+                               == resonance::SongProject::currentSchemaVersion,
+                    "An explicit save must materialise the current schema version");
+
+    resonance::SongProject reopened;
+    context.expect (reopened.loadFromFile (migratedFile).wasOk()
+                        && reopened.getTrackId() == "track-v2"
+                        && reopened.getTrackMixerSettings().gainDecibels == -4.5,
+                    "The migrated schema-v3 project must reopen without drift");
+    context.expect (migratedFile.deleteFile(),
+                    "The temporary version-2 migration output must be removable");
+}
+
+void testTwoTrackTopology (TestContext& context)
+{
+    resonance::SongProject project;
+    const std::array<unsigned char, 4> stateBytes { 4, 3, 2, 1 };
+    const juce::MemoryBlock state (stateBytes.data(), stateBytes.size());
+    project.setPluginMetadata ("VST3-Surge XT-test-190e4fbd",
+                               "Surge XT",
+                               "Surge Synth Team",
+                               "1.3.4");
+    project.setPluginState (state);
+
+    const auto firstTrackId = project.getTrackId();
+    const auto firstClipId = project.getClipId();
+    const auto firstNotes = project.getNotes();
+    juce::String secondTrackId;
+    context.expect (project.duplicateActiveTrack (&secondTrackId).wasOk(),
+                    "Duplicating the active instrument must add a second track");
+    context.expect (project.getTrackCount() == 2 && project.getActiveTrackIndex() == 1
+                        && secondTrackId.isNotEmpty() && secondTrackId != firstTrackId,
+                    "A duplicated track must receive a stable unique id and become active");
+    context.expect (project.getClipId (0) == firstClipId
+                        && project.getClipId (1) != firstClipId
+                        && project.getTrackMidiRouting (1).outputChannel == 2,
+                    "A duplicated track must receive a unique clip id and next MIDI channel");
+
+    const auto secondNotes = project.getNotes();
+    bool noteIdsAreUnique = secondNotes.size() == firstNotes.size();
+    for (const auto& second : secondNotes)
+        noteIdsAreUnique = noteIdsAreUnique
+                           && std::none_of (firstNotes.begin(),
+                                            firstNotes.end(),
+                                            [&second] (const resonance::SongNote& first)
+                                            {
+                                                return first.id == second.id;
+                                            });
+    context.expect (noteIdsAreUnique,
+                    "Duplicated musical content must receive project-unique note ids");
+
+    // The piano roll draws inactive-track notes as ghosts, so notes must be readable
+    // by index without disturbing the active-track selection.
+    const auto notesByIndexZero = project.getNotes (0);
+    const auto notesByIndexOne = project.getNotes (1);
+    context.expect (notesByIndexZero.size() == firstNotes.size()
+                        && notesByIndexOne.size() == secondNotes.size()
+                        && project.getActiveTrackIndex() == 1,
+                    "Indexed note access must read either track without changing selection");
+    bool indexedNotesMatchFirstTrack = notesByIndexZero.size() == firstNotes.size();
+    for (std::size_t index = 0; index < notesByIndexZero.size(); ++index)
+        indexedNotesMatchFirstTrack = indexedNotesMatchFirstTrack
+                                      && notesByIndexZero[index].id == firstNotes[index].id
+                                      && notesByIndexZero[index].midiNote == firstNotes[index].midiNote;
+    context.expect (indexedNotesMatchFirstTrack,
+                    "Indexed note access must return that track's exact notes");
+    context.expect (project.getNotes (-1).empty() && project.getNotes (2).empty(),
+                    "Indexed note access must return nothing for an out-of-range track");
+
+    juce::MemoryBlock firstState;
+    juce::MemoryBlock secondState;
+    context.expect (project.getPluginStateForTrack (0, firstState).wasOk()
+                        && project.getPluginStateForTrack (1, secondState).wasOk()
+                        && firstState == state && secondState == state,
+                    "Both tracks must own exact independent accepted state snapshots");
+
+    project.beginUndoTransaction ("Set independent track mixes");
+    context.expect (project.setTrackMixerSettingsForTrack (0, { -3.0, -0.5, false, false }).wasOk()
+                        && project.setTrackMixerSettingsForTrack (1, { -9.0, 0.5, true, false }).wasOk(),
+                    "Each track must accept bounded independent mixer state");
+    context.expect (project.getTrackMixerSettings (0).gainDecibels == -3.0
+                        && project.getTrackMixerSettings (1).gainDecibels == -9.0
+                        && project.getTrackMixerSettings (1).muted,
+                    "Track mixer edits must not alias across identities");
+    // A third track is allowed from schema version 4 onward; testFourTrackCeiling owns
+    // the capacity contract. Remove it again so the reorder cases below stay two-track.
+    juce::String thirdTrackId;
+    context.expect (project.duplicateActiveTrack (&thirdTrackId).wasOk()
+                        && project.getTrackCount() == 3
+                        && thirdTrackId != firstTrackId && thirdTrackId != secondTrackId,
+                    "A third project track must be accepted with unique identity");
+    context.expect (project.removeTrack (thirdTrackId).wasOk() && project.getTrackCount() == 2,
+                    "Removing the third track must restore the two-track topology");
+    context.expect (project.setActiveTrackIndex (1),
+                    "The second track must be selectable after the third is removed");
+
+    context.expect (project.moveTrack (secondTrackId, 0).wasOk()
+                        && project.getTrackId (0) == secondTrackId,
+                    "Track reorder must use stable identity rather than position");
+    context.expect (project.undo() && project.getTrackId (0) == firstTrackId,
+                    "One Undo must restore the prior track order");
+    context.expect (project.redo() && project.getTrackId (0) == secondTrackId,
+                    "One Redo must restore the reordered track");
+    context.expect (project.undo() && project.getTrackId (0) == firstTrackId,
+                    "The test must restore canonical order before persistence");
+
+    project.beginUndoTransaction ("Shorten both loops");
+    project.setLoopLengthBeats (4.0);
+    auto tracksFitSharedLoop = true;
+    for (int trackIndex = 0; trackIndex < project.getTrackCount(); ++trackIndex)
+    {
+        const auto snapshot = project.createSequenceSnapshotForTrack (trackIndex);
+        tracksFitSharedLoop = tracksFitSharedLoop && snapshot.loopBeats == 4.0;
+        for (std::size_t noteIndex = 0; noteIndex < snapshot.noteCount; ++noteIndex)
+            tracksFitSharedLoop = tracksFitSharedLoop
+                                  && snapshot.notes[noteIndex].beat
+                                         + snapshot.notes[noteIndex].lengthBeats <= 4.0 + 1.0e-9;
+    }
+    context.expect (tracksFitSharedLoop,
+                    "Changing the shared loop must clamp notes on every track");
+
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getNonexistentChildFile ("resonance-two-track",
+                                                    ".resonance.json",
+                                                    false);
+    context.expect (project.saveToFile (file).wasOk(),
+                    "A valid two-track project must save as the current schema version");
+    const auto savedText = file.loadFileAsString();
+    auto saved = juce::JSON::parse (savedText);
+    auto* savedRoot = saved.getDynamicObject();
+    auto* savedTracks = savedRoot != nullptr
+                            ? savedRoot->getProperty ("tracks").getArray()
+                            : nullptr;
+    context.expect (savedRoot != nullptr && savedTracks != nullptr && savedTracks->size() == 2
+                        && static_cast<int> (savedRoot->getProperty ("schemaVersion"))
+                               == resonance::SongProject::currentSchemaVersion,
+                    "The canonical writer must persist both tracks in the current schema version");
+
+    resonance::SongProject reopened;
+    context.expect (reopened.loadFromFile (file).wasOk() && reopened.getTrackCount() == 2
+                        && reopened.getTrackId (0) == firstTrackId
+                        && reopened.getTrackId (1) == secondTrackId,
+                    "Two-track Save/Open must preserve count, identity, and order");
+    context.expect (reopened.getTrackMixerSettings (0).gainDecibels == -3.0
+                        && reopened.getTrackMixerSettings (1).gainDecibels == -9.0
+                        && reopened.getTrackMixerSettings (1).muted,
+                    "Two-track Save/Open must preserve independent mixer state");
+
+    const auto invalidFile = file.getSiblingFile (
+        file.getFileNameWithoutExtension() + "-invalid.resonance.json");
+    auto writeInvalidAndReject = [&] (juce::var invalid, const juce::String& message)
+    {
+        context.expect (invalidFile.replaceWithText (juce::JSON::toString (invalid, true)),
+                        "An invalid two-track fixture must be writable");
+        resonance::SongProject rejected;
+        context.expect (rejected.loadFromFile (invalidFile).failed(), message);
+    };
+
+    auto duplicateTrackId = juce::JSON::parse (savedText);
+    auto* duplicateTrackArray = duplicateTrackId.getDynamicObject()->getProperty ("tracks").getArray();
+    duplicateTrackArray->getReference (1).getDynamicObject()->setProperty (
+        "id", duplicateTrackArray->getReference (0).getDynamicObject()->getProperty ("id"));
+    writeInvalidAndReject (duplicateTrackId, "Duplicate track ids must be rejected");
+
+    auto duplicateClipId = juce::JSON::parse (savedText);
+    auto* duplicateClipTracks = duplicateClipId.getDynamicObject()->getProperty ("tracks").getArray();
+    const auto firstSavedClipId = duplicateClipTracks->getReference (0).getDynamicObject()
+                                      ->getProperty ("clips").getArray()->getReference (0)
+                                      .getDynamicObject()->getProperty ("id");
+    duplicateClipTracks->getReference (1).getDynamicObject()->getProperty ("clips")
+        .getArray()->getReference (0).getDynamicObject()->setProperty ("id", firstSavedClipId);
+    writeInvalidAndReject (duplicateClipId, "Duplicate clip ids must be rejected");
+
+    auto duplicateNoteId = juce::JSON::parse (savedText);
+    auto* duplicateNoteTracks = duplicateNoteId.getDynamicObject()->getProperty ("tracks").getArray();
+    const auto firstSavedNoteId = duplicateNoteTracks->getReference (0).getDynamicObject()
+                                      ->getProperty ("clips").getArray()->getReference (0)
+                                      .getDynamicObject()->getProperty ("notes").getArray()
+                                      ->getReference (0).getDynamicObject()->getProperty ("id");
+    duplicateNoteTracks->getReference (1).getDynamicObject()->getProperty ("clips")
+        .getArray()->getReference (0).getDynamicObject()->getProperty ("notes")
+        .getArray()->getReference (0).getDynamicObject()->setProperty ("id", firstSavedNoteId);
+    writeInvalidAndReject (duplicateNoteId, "Duplicate cross-track note ids must be rejected");
+
+    auto mismatchedLoop = juce::JSON::parse (savedText);
+    auto* mismatchTracks = mismatchedLoop.getDynamicObject()->getProperty ("tracks").getArray();
+    mismatchTracks->getReference (1).getDynamicObject()->getProperty ("clips")
+        .getArray()->getReference (0).getDynamicObject()->setProperty ("lengthTicks", 7680);
+    writeInvalidAndReject (mismatchedLoop, "Different per-track loop lengths must be rejected");
+
+    auto thirdTrack = juce::JSON::parse (savedText);
+    auto* thirdTracks = thirdTrack.getDynamicObject()->getProperty ("tracks").getArray();
+    thirdTracks->add (thirdTracks->getReference (1));
+    writeInvalidAndReject (thirdTrack, "A third persisted track must be rejected");
+
+    context.expect (project.removeTrack (firstTrackId).wasOk() && project.getTrackCount() == 1
+                        && project.getTrackId() == secondTrackId,
+                    "Removing one track must preserve the other stable identity");
+    context.expect (project.undo() && project.getTrackCount() == 2,
+                    "One Undo must restore a removed track");
+    context.expect (project.redo() && project.getTrackCount() == 1,
+                    "One Redo must remove the same track again");
+    context.expect (project.removeTrack (secondTrackId).failed() && project.getTrackCount() == 1,
+                    "Removing the final project track must fail closed");
+
+    resonance::SongProject addUndo;
+    addUndo.setPluginState (state);
+    context.expect (addUndo.duplicateActiveTrack().wasOk() && addUndo.getTrackCount() == 2
+                        && addUndo.undo() && addUndo.getTrackCount() == 1
+                        && addUndo.redo() && addUndo.getTrackCount() == 2,
+                    "Track add must be one reversible Undo/Redo transaction");
+
+    context.expect (invalidFile.deleteFile(), "The invalid two-track fixture must be removable");
+    context.expect (file.deleteFile(), "The valid two-track fixture must be removable");
 }
 
 void testSequenceSnapshot (TestContext& context)
@@ -522,11 +795,49 @@ void testEditCommandFoundation (TestContext& context,
                                                          invalidPreview).failed(),
                     "A command that changes one note twice must be rejected");
 
-    resonance::EditCommand invalidVersion;
+    // Version 2 is now supported and accepts the same note-edit shape as version 1.
+    resonance::EditCommand versionTwo;
     context.expect (resonance::parseEditCommand (
                         commandJson.replace ("\"commandVersion\": 1", "\"commandVersion\": 2"),
+                        versionTwo).wasOk()
+                        && versionTwo.commandVersion == 2
+                        && versionTwo.hasNoteChanges(),
+                    "A version-2 command must parse with the version-1 note-edit shape");
+
+    resonance::EditCommand versionThree;
+    context.expect (resonance::parseEditCommand (
+                        commandJson.replace ("\"commandVersion\": 1", "\"commandVersion\": 3"),
+                        versionThree).wasOk()
+                        && versionThree.commandVersion == 3
+                        && versionThree.hasNoteChanges(),
+                    "A version-3 command must parse with the version-1 note-edit shape");
+
+    resonance::EditCommand invalidVersion;
+    context.expect (resonance::parseEditCommand (
+                        commandJson.replace ("\"commandVersion\": 1", "\"commandVersion\": 4"),
                         invalidVersion).failed(),
                     "An unsupported command version must be rejected during parsing");
+
+    // Clip operations are the version-3 addition and must not be smuggled into an
+    // older document, which would apply behaviour the declared version does not cover.
+    resonance::EditCommand versionTwoWithClipOperations;
+    context.expect (resonance::parseEditCommand (
+                        commandJson
+                            .replace ("\"commandVersion\": 1", "\"commandVersion\": 2")
+                            .replace ("\"summary\":",
+                                      "\"projectOperations\": [{\"type\":\"setPlacements\","
+                                      "\"trackId\":\"track-1\",\"startTicks\":[0]}], \"summary\":"),
+                        versionTwoWithClipOperations).failed(),
+                    "A clip operation inside a version-2 command must be rejected");
+
+    // Project operations are a version-2 feature and must not be smuggled into a
+    // version-1 document.
+    resonance::EditCommand legacyWithOperations;
+    context.expect (resonance::parseEditCommand (
+                        commandJson.replace ("\"summary\":",
+                                             "\"projectOperations\": [{\"type\":\"setTempo\",\"bpm\":120}], \"summary\":"),
+                        legacyWithOperations).failed(),
+                    "Project operations must be rejected in a version-1 command");
 }
 
 void testSeededVelocityVariation (TestContext& context,
@@ -648,6 +959,652 @@ void testSeededVelocityVariation (TestContext& context,
                     "One Undo must restore every velocity changed by the transform");
 }
 
+void testPriorProjectMigration (TestContext& context,
+                                const juce::File& fixtureFile,
+                                juce::String& sourceSha256)
+{
+    context.expect (fixtureFile.existsAsFile(), "The version-3 migration fixture must exist");
+
+    juce::MemoryBlock sourceBytes;
+    context.expect (fixtureFile.loadFileAsData (sourceBytes),
+                    "The version-3 fixture bytes must be readable");
+    sourceSha256 = juce::SHA256 (sourceBytes).toHexString();
+
+    resonance::SongProject migrated;
+    context.expect (migrated.loadFromFile (fixtureFile).wasOk(),
+                    "A version-3 two-track project must load");
+    context.expect (migrated.getSchemaVersion() == resonance::SongProject::currentSchemaVersion,
+                    "A loaded version-3 project must become the current schema version in memory");
+    context.expect (migrated.getTrackCount() == 2,
+                    "Version-3 migration must preserve both persisted tracks");
+    context.expect (migrated.getTrackId (0) == "track-v3-alpha"
+                        && migrated.getTrackId (1) == "track-v3-beta"
+                        && migrated.getClipId (0) == "clip-v3-alpha"
+                        && migrated.getClipId (1) == "clip-v3-beta",
+                    "Version-3 migration must preserve stable track and clip identity");
+
+    // Non-default mixer and MIDI data must survive rather than resetting to neutral.
+    const auto firstMixer = migrated.getTrackMixerSettings (0);
+    const auto secondMixer = migrated.getTrackMixerSettings (1);
+    context.expect (firstMixer.gainDecibels == -5.5 && firstMixer.pan == -0.4 && firstMixer.solo
+                        && secondMixer.gainDecibels == -11.25 && secondMixer.pan == 0.7
+                        && secondMixer.muted,
+                    "Version-3 migration must preserve non-default mixer state");
+    context.expect (migrated.getTrackMidiRouting (0).inputChannel == 3
+                        && migrated.getTrackMidiRouting (0).outputChannel == 5
+                        && migrated.getTrackMidiRouting (1).outputChannel == 9,
+                    "Version-3 migration must preserve non-default MIDI routing");
+
+    juce::MemoryBlock sourceAfterLoad;
+    context.expect (fixtureFile.loadFileAsData (sourceAfterLoad)
+                        && juce::SHA256 (sourceAfterLoad).toHexString() == sourceSha256,
+                    "Loading a version-3 project must leave its source file byte-identical");
+}
+
+void testLastArchivedProjectMigration (TestContext& context,
+                                       const juce::File& fixtureFile,
+                                       juce::String& sourceSha256)
+{
+    context.expect (fixtureFile.existsAsFile(), "The version-4 migration fixture must exist");
+
+    juce::MemoryBlock sourceBytes;
+    context.expect (fixtureFile.loadFileAsData (sourceBytes),
+                    "The version-4 fixture bytes must be readable");
+    sourceSha256 = juce::SHA256 (sourceBytes).toHexString();
+
+    resonance::SongProject migrated;
+    context.expect (migrated.loadFromFile (fixtureFile).wasOk(),
+                    "A version-4 four-track project must load");
+    context.expect (migrated.getSchemaVersion() == resonance::SongProject::currentSchemaVersion
+                        && migrated.getTrackCount() == 4,
+                    "Version-4 migration must yield four current-schema tracks");
+    context.expect (migrated.getTrackId (0) == "track-v4-1"
+                        && migrated.getTrackId (3) == "track-v4-4"
+                        && migrated.getClipId (3) == "clip-v4-4",
+                    "Version-4 migration must preserve stable identity across four tracks");
+    const auto firstMixer = migrated.getTrackMixerSettings (0);
+    context.expect (firstMixer.gainDecibels == -2.25 && firstMixer.pan == -0.8 && firstMixer.solo,
+                    "Version-4 migration must preserve non-default mixer state");
+    context.expect (migrated.getTrackMidiRouting (3).inputChannel == 7
+                        && migrated.getTrackMidiRouting (3).outputChannel == 11,
+                    "Version-4 migration must preserve non-default MIDI routing");
+
+    juce::MemoryBlock sourceAfterLoad;
+    context.expect (fixtureFile.loadFileAsData (sourceAfterLoad)
+                        && juce::SHA256 (sourceAfterLoad).toHexString() == sourceSha256,
+                    "Loading a version-4 project must leave its source file byte-identical");
+}
+
+void testArchivedV5ProjectMigration (TestContext& context,
+                                     const juce::File& fixtureFile,
+                                     juce::String& sourceSha256)
+{
+    context.expect (fixtureFile.existsAsFile(), "The version-5 migration fixture must exist");
+
+    juce::MemoryBlock sourceBytes;
+    context.expect (fixtureFile.loadFileAsData (sourceBytes),
+                    "The version-5 fixture bytes must be readable");
+    sourceSha256 = juce::SHA256 (sourceBytes).toHexString();
+
+    resonance::SongProject migrated;
+    context.expect (migrated.loadFromFile (fixtureFile).wasOk(),
+                    "A version-5 two-track project must load");
+    context.expect (migrated.getSchemaVersion() == resonance::SongProject::currentSchemaVersion
+                        && migrated.getTrackCount() == 2,
+                    "Version-5 migration must yield two current-schema tracks");
+    context.expect (migrated.getTrackId (0) == "track-v5-1"
+                        && migrated.getClipId (1) == "clip-v5-2",
+                    "Version-5 migration must preserve stable identity");
+    context.expect (migrated.getTrackMixerSettings (1).muted
+                        && migrated.getTrackMidiRouting (1).outputChannel == 9,
+                    "Version-5 migration must preserve mixer and routing state");
+
+    // The whole point of the migration: a clip that used to be stretched over the song
+    // and looped becomes one placement of a clip whose length is the song length. What
+    // plays must not change.
+    context.expect (migrated.getLoopLengthBeats() == 64.0,
+                    "Version-5 migration must keep the song length");
+    for (int trackIndex = 0; trackIndex < migrated.getTrackCount(); ++trackIndex)
+    {
+        context.expect (migrated.getClipLengthBeats (trackIndex) == 64.0,
+                        "A migrated clip must span the song it used to loop over");
+        const auto placements = migrated.getPlacements (trackIndex);
+        context.expect (placements.size() == 1 && placements.front().startBeat == 0.0,
+                        "A migrated clip must carry exactly one placement at beat zero");
+    }
+
+    const auto snapshot = migrated.createSequenceSnapshotForTrack (0);
+    context.expect (snapshot.noteCount == 2 && snapshot.loopBeats == 64.0,
+                    "A migrated track must publish its notes unchanged");
+    context.expect (std::abs (snapshot.notes[1].beat - 60.0) < 1.0e-9,
+                    "A migrated note deep in the clip must keep its beat");
+
+    juce::MemoryBlock sourceAfterLoad;
+    context.expect (fixtureFile.loadFileAsData (sourceAfterLoad)
+                        && juce::SHA256 (sourceAfterLoad).toHexString() == sourceSha256,
+                    "Loading a version-5 project must leave its source file byte-identical");
+}
+
+void testClipPlacements (TestContext& context, bool& placementsPassed)
+{
+    const auto before = context.assertions;
+    resonance::SongProject project;
+    juce::MemoryBlock state;
+    const juce::String payload ("clip-placement-state");
+    state.append (payload.toRawUTF8(), payload.getNumBytesAsUTF8());
+    project.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    project.setPluginState (state);
+
+    context.expect (resonance::maxClipPlacements == 64,
+                    "The shared bounds header must publish the placement ceiling");
+
+    // A fresh project behaves exactly as it did before placements existed.
+    context.expect (project.getClipLengthBeats (0) == project.getLoopLengthBeats(),
+                    "A new clip must span its song");
+    context.expect (project.getPlacements (0).size() == 1
+                        && project.getPlacements (0).front().startBeat == 0.0,
+                    "A new clip must carry one placement at beat zero");
+
+    project.setLoopLengthBeats (32.0);
+    context.expect (project.setClipLengthBeats (0, 8.0).wasOk()
+                        && project.getClipLengthBeats (0) == 8.0,
+                    "A clip must be shortenable within its song");
+    context.expect (project.setClipLengthBeats (0, 64.0).failed(),
+                    "A clip longer than its song must fail closed");
+    context.expect (project.setClipLengthBeats (0, 1.0).failed(),
+                    "A clip shorter than the published minimum must fail closed");
+
+    const auto baseline = project.createSequenceSnapshotForTrack (0);
+    context.expect (baseline.noteCount == 8,
+                    "One placement must publish the clip's notes once");
+
+    // Four placements of an eight-beat clip fill a 32-beat song.
+    context.expect (project.setPlacements (0, { 0.0, 8.0, 16.0, 24.0 }).wasOk(),
+                    "Non-overlapping placements inside the song must be accepted");
+    const auto placements = project.getPlacements (0);
+    context.expect (placements.size() == 4
+                        && placements[2].id == project.getClipId (0) + "-placement-3",
+                    "Placement ids must be derived from the clip id, in order");
+
+    const auto expanded = project.createSequenceSnapshotForTrack (0);
+    context.expect (expanded.noteCount == baseline.noteCount * 4,
+                    "Every placement must expand into the published sequence");
+    context.expect (project.getExpandedNoteCount (0) == static_cast<int> (expanded.noteCount),
+                    "The reported expanded count must match what is published");
+    auto foundThirdRepeat = false;
+    for (std::size_t index = 0; index < expanded.noteCount; ++index)
+        foundThirdRepeat = foundThirdRepeat
+                           || std::abs (expanded.notes[index].beat - 16.0) < 1.0e-9;
+    context.expect (foundThirdRepeat,
+                    "A placement must offset its clip's notes by its own start beat");
+
+    // Unsorted input is accepted and normalised; genuinely overlapping input is not.
+    context.expect (project.setPlacements (0, { 24.0, 0.0, 16.0, 8.0 }).wasOk()
+                        && project.getPlacements (0).front().startBeat == 0.0,
+                    "Placement starts must be sorted rather than rejected for order");
+    context.expect (project.setPlacements (0, { 0.0, 4.0 }).failed(),
+                    "Overlapping placements must fail closed");
+    context.expect (project.setPlacements (0, { 0.0, 28.0 }).failed(),
+                    "A placement running past the end of the song must fail closed");
+    context.expect (project.setPlacements (0, {}).failed(),
+                    "A clip with no placement must fail closed");
+    context.expect (project.getPlacements (0).size() == 4,
+                    "A refused placement list must leave the accepted one in place");
+
+    // Placements multiply notes, and the product is what reaches the audio thread.
+    std::vector<double> tooMany;
+    for (int index = 0; index < static_cast<int> (resonance::maxClipPlacements) + 1; ++index)
+        tooMany.push_back (static_cast<double> (index) * 8.0);
+    context.expect (project.setPlacements (0, tooMany).failed(),
+                    "More placements than the published ceiling must fail closed");
+
+    resonance::SongProject dense;
+    dense.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    dense.setPluginState (state);
+    dense.setLoopLengthBeats (256.0);
+    for (const auto& starter : dense.getNotes (0))
+        dense.removeNote (starter.id);
+    context.expect (dense.setClipLengthBeats (0, 4.0).wasOk(),
+                    "A dense fixture must accept a short clip once its clip is empty");
+    for (int index = 0; index < 120; ++index)
+        dense.addNote (static_cast<double> (index % 8) * 0.5, 0.25, 60 + (index % 12), 90);
+    const auto denseNotes = static_cast<std::size_t> (dense.getNotes (0).size());
+    context.expect (denseNotes > 64, "A dense fixture must hold enough notes to overflow");
+    std::vector<double> manyStarts;
+    for (int index = 0; index < 32; ++index)
+        manyStarts.push_back (static_cast<double> (index) * 4.0);
+    context.expect (denseNotes * manyStarts.size() > resonance::maxSequenceNotes,
+                    "The dense fixture must genuinely exceed the sequence ceiling");
+    context.expect (dense.setPlacements (0, manyStarts).failed(),
+                    "An expansion past the sequence ceiling must fail closed, not truncate");
+
+    // Round trip and undo.
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getNonexistentChildFile ("resonance-placements", ".resonance.json", false);
+    context.expect (project.saveToFile (file).wasOk(), "A placed project must save");
+    resonance::SongProject reopened;
+    context.expect (reopened.loadFromFile (file).wasOk()
+                        && reopened.getClipLengthBeats (0) == 8.0
+                        && reopened.getPlacements (0).size() == 4,
+                    "A placed project must reopen with its clip length and placements");
+    context.expect (reopened.createSequenceSnapshotForTrack (0).noteCount == expanded.noteCount,
+                    "A reopened project must publish the same expanded sequence");
+    context.expect (project.getContentSha256() == reopened.getContentSha256(),
+                    "Placements must be part of the hashed canonical material");
+    context.expect (file.deleteFile(), "The placement fixture must be removable");
+
+    project.beginUndoTransaction ("Change placements");
+    context.expect (project.setPlacements (0, { 0.0, 16.0 }).wasOk()
+                        && project.getPlacements (0).size() == 2,
+                    "A placement change must apply");
+    context.expect (project.undo() && project.getPlacements (0).size() == 4,
+                    "One undo must restore the previous placement list");
+
+    // Shrinking the song must not leave a placement addressing beats past its end.
+    project.setLoopLengthBeats (16.0);
+    const auto survivors = project.getPlacements (0);
+    context.expect (! survivors.empty() && survivors.front().startBeat == 0.0,
+                    "Shrinking a song must keep the first placement");
+    for (const auto& placement : survivors)
+        context.expect (placement.startBeat + project.getClipLengthBeats (0)
+                            <= project.getLoopLengthBeats() + 1.0e-9,
+                        "Every surviving placement must fit inside the shortened song");
+
+    placementsPassed = context.assertions > before;
+}
+
+void testLongSongCanvas (TestContext& context, bool& canvasPassed)
+{
+    const auto before = context.assertions;
+    resonance::SongProject project;
+    juce::MemoryBlock state;
+    const juce::String payload ("long-canvas-state");
+    state.append (payload.toRawUTF8(), payload.getNumBytesAsUTF8());
+    project.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    project.setPluginState (state);
+
+    context.expect (resonance::maximumLoopBeats == 256.0 && resonance::minimumLoopBeats == 4.0,
+                    "The shared clip-length bounds must publish the widened canvas");
+
+    project.setLoopLengthBeats (256.0);
+    context.expect (project.getLoopLengthBeats() == 256.0,
+                    "A project must accept the full 64-bar canvas");
+    project.setLoopLengthBeats (400.0);
+    context.expect (project.getLoopLengthBeats() == 256.0,
+                    "A clip longer than the ceiling must clamp rather than fail open");
+
+    project.setLoopLengthBeats (256.0);
+    // A note deep into the canvas is the case the engine used to discard when it
+    // clamped published loop lengths back to the old ceiling.
+    resonance::SongNote late { "note-late", 200.0, 1.0, 72, 100 };
+    context.expect (project.insertNote (late).wasOk(),
+                    "A note beyond the old 32-beat ceiling must be insertable");
+
+    const auto snapshot = project.createSequenceSnapshotForTrack (0);
+    context.expect (snapshot.loopBeats == 256.0,
+                    "The published sequence must carry the full canvas length");
+    auto foundLate = false;
+    for (std::size_t index = 0; index < snapshot.noteCount; ++index)
+        foundLate = foundLate || std::abs (snapshot.notes[index].beat - 200.0) < 1.0e-9;
+    context.expect (foundLate, "The published sequence must retain a note late in the canvas");
+
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getNonexistentChildFile ("resonance-long-canvas", ".resonance.json", false);
+    context.expect (project.saveToFile (file).wasOk(), "A 64-bar project must save");
+    resonance::SongProject reopened;
+    context.expect (reopened.loadFromFile (file).wasOk()
+                        && reopened.getLoopLengthBeats() == 256.0
+                        && reopened.findNote ("note-late").has_value(),
+                    "A 64-bar project must reopen with its late notes intact");
+    context.expect (file.deleteFile(), "The long-canvas fixture must be removable");
+
+    canvasPassed = context.assertions > before;
+}
+
+void testFourTrackCeiling (TestContext& context, bool& ceilingPassed)
+{
+    const auto before = context.assertions;
+    resonance::SongProject project;
+    juce::MemoryBlock state;
+    const juce::String payload ("four-track-ceiling-state");
+    state.append (payload.toRawUTF8(), payload.getNumBytesAsUTF8());
+    project.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    project.setPluginState (state);
+    context.expect (project.getPluginStateSha256().isNotEmpty(),
+                    "A ceiling fixture must accept accepted plug-in state");
+
+    context.expect (resonance::SongProject::maxProjectTracks == 4,
+                    "This editor version must publish a four-track ceiling");
+
+    auto grown = true;
+    for (int expected = 2; expected <= resonance::SongProject::maxProjectTracks; ++expected)
+        grown = grown && project.duplicateActiveTrack().wasOk()
+                && project.getTrackCount() == expected;
+    context.expect (grown, "Tracks must be addable up to the published ceiling");
+
+    context.expect (project.duplicateActiveTrack().failed()
+                        && project.getTrackCount() == resonance::SongProject::maxProjectTracks,
+                    "A track beyond the ceiling must fail closed");
+
+    // Every identity class must stay unique across all four tracks.
+    std::set<juce::String> trackIds;
+    std::set<juce::String> clipIds;
+    std::set<juce::String> noteIds;
+    auto identitiesUnique = true;
+    for (int index = 0; index < project.getTrackCount(); ++index)
+    {
+        identitiesUnique = identitiesUnique && trackIds.insert (project.getTrackId (index)).second
+                           && clipIds.insert (project.getClipId (index)).second;
+        for (const auto& note : project.getNotes (index))
+            identitiesUnique = identitiesUnique && noteIds.insert (note.id).second;
+    }
+    context.expect (identitiesUnique,
+                    "Four-track projects must keep track, clip, and note ids unique");
+
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getNonexistentChildFile ("resonance-four-track", ".resonance.json", false);
+    context.expect (project.saveToFile (file).wasOk(), "A four-track project must save");
+
+    resonance::SongProject reopened;
+    context.expect (reopened.loadFromFile (file).wasOk() && reopened.getTrackCount() == 4
+                        && reopened.getSchemaVersion()
+                               == resonance::SongProject::currentSchemaVersion,
+                    "A four-track project must reopen as four current-schema tracks");
+    context.expect (reopened.getContentSha256() == project.getContentSha256(),
+                    "A four-track round trip must preserve exact project content");
+
+    // A fifth persisted track must be refused at the loader, not only in the UI.
+    const auto overfullText = file.loadFileAsString()
+                                  .replace ("\"tracks\": [", "\"tracks\": [", false);
+    auto parsed = juce::JSON::parse (file.loadFileAsString());
+    auto* parsedRoot = parsed.getDynamicObject();
+    auto* parsedTracks = parsedRoot != nullptr ? parsedRoot->getProperty ("tracks").getArray()
+                                               : nullptr;
+    context.expect (parsedTracks != nullptr && parsedTracks->size() == 4,
+                    "The saved four-track document must contain four tracks");
+    if (parsedTracks != nullptr)
+    {
+        auto extra = parsedTracks->getReference (0).clone();
+        if (auto* extraObject = extra.getDynamicObject())
+        {
+            extraObject->setProperty ("id", "track-overflow");
+            if (auto* extraClips = extraObject->getProperty ("clips").getArray())
+                if (auto* extraClip = extraClips->getReference (0).getDynamicObject())
+                    extraClip->setProperty ("id", "clip-overflow");
+        }
+        parsedTracks->add (extra);
+    }
+    const auto overfull = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getNonexistentChildFile ("resonance-five-track", ".resonance.json", false);
+    context.expect (overfull.replaceWithText (juce::JSON::toString (parsed, false)),
+                    "An over-capacity fixture must be writable");
+    resonance::SongProject refused;
+    context.expect (refused.loadFromFile (overfull).failed(),
+                    "A five-track document must fail closed at the loader");
+
+    context.expect (file.deleteFile() && overfull.deleteFile(),
+                    "Four-track fixtures must be removable");
+    juce::ignoreUnused (overfullText);
+    ceilingPassed = context.assertions > before;
+}
+
+resonance::SoundShelfEntry makeShelfEntry (const juce::String& name, const juce::String& payload)
+{
+    resonance::SoundShelfEntry entry;
+    entry.name = name;
+    entry.pluginIdentifier = "VST3-Surge XT-b793f78b-190e4fbd";
+    entry.pluginName = "Surge XT";
+    entry.vendor = "Surge Synth Team";
+    entry.version = "1.3.4";
+    entry.state.append (payload.toRawUTF8(), payload.getNumBytesAsUTF8());
+    entry.stateSha256 = juce::SHA256 (entry.state).toHexString();
+    return entry;
+}
+
+void testProjectOperations (TestContext& context, bool& operationsPassed)
+{
+    const auto before = context.assertions;
+    resonance::SongProject project;
+    juce::MemoryBlock state;
+    const juce::String payload ("project-operation-state");
+    state.append (payload.toRawUTF8(), payload.getNumBytesAsUTF8());
+    project.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    project.setPluginState (state);
+
+    const auto originalTempo = project.getTempoBpm();
+    const auto originalTracks = project.getTrackCount();
+
+    resonance::EditCommand command;
+    command.commandVersion = 2;
+    command.projectContentSha256 = project.getContentSha256();
+    command.summary = "Project operations";
+    command.projectOperations = {
+        { resonance::ProjectOperationType::setTempo, {}, {}, 132.0, 0, {}, {}, {}, {} },
+        { resonance::ProjectOperationType::setTitle, {}, "Renamed", 0.0, 0, {}, {}, {}, {} },
+        { resonance::ProjectOperationType::addTrack, "track-added", "Added", 0.0, 0, {}, {}, {}, {} },
+    };
+
+    resonance::EditCommandPreview preview;
+    context.expect (resonance::createEditCommandPreview (command, project, preview).wasOk(),
+                    "A command carrying only project operations must preview");
+    context.expect (preview.createdTrackIds.size() == 1
+                        && preview.createdTrackIds.front() == "track-added",
+                    "The preview must report the track the command created");
+    context.expect (project.getTempoBpm() == originalTempo
+                        && project.getTrackCount() == originalTracks,
+                    "A pending preview must not mutate the active project");
+
+    // The apply path replays the same operations; a mismatch against the preview hash
+    // would roll the whole thing back.
+    context.expect (preview.applyTo (project).wasOk(),
+                    "Project operations must apply atomically");
+    context.expect (project.getTempoBpm() == 132.0
+                        && project.getTitle() == "Renamed"
+                        && project.getTrackCount() == originalTracks + 1,
+                    "Every project operation must land on the active project");
+    context.expect (project.getTrackId (originalTracks) == "track-added"
+                        && project.getClipId (originalTracks) == "track-added-clip",
+                    "A command-created track must use the caller-supplied deterministic identity");
+    context.expect (project.undo() && project.getTrackCount() == originalTracks
+                        && project.getTempoBpm() == originalTempo,
+                    "One Undo must restore everything the command changed");
+
+    // Determinism is what lets preview and apply agree: the same command against the
+    // same project must produce the same content hash every time.
+    resonance::SongProject first;
+    resonance::SongProject second;
+    first.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    second.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    first.setPluginState (state);
+    second.setPluginState (state);
+    resonance::EditCommand repeatable = command;
+    repeatable.projectContentSha256 = first.getContentSha256();
+    resonance::EditCommandPreview firstPreview;
+    resonance::EditCommandPreview secondPreview;
+    const auto firstOk = resonance::createEditCommandPreview (repeatable, first, firstPreview).wasOk();
+    const auto secondOk = resonance::createEditCommandPreview (repeatable, second, secondPreview).wasOk();
+    context.expect (firstOk && secondOk
+                        && firstPreview.afterContentSha256 == secondPreview.afterContentSha256,
+                    "Identical commands must produce identical results");
+
+    resonance::SongProject ceiling;
+    ceiling.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    ceiling.setPluginState (state);
+    while (ceiling.getTrackCount() < resonance::SongProject::maxProjectTracks)
+        ceiling.duplicateActiveTrack();
+    resonance::EditCommand overflow;
+    overflow.commandVersion = 2;
+    overflow.projectContentSha256 = ceiling.getContentSha256();
+    overflow.summary = "One track too many";
+    overflow.projectOperations = {
+        { resonance::ProjectOperationType::addTrack, "track-overflow", "Overflow", 0.0, 0, {}, {}, {}, {} },
+    };
+    resonance::EditCommandPreview refused;
+    context.expect (resonance::createEditCommandPreview (overflow, ceiling, refused).failed()
+                        && ceiling.getTrackCount() == resonance::SongProject::maxProjectTracks,
+                    "A command must not exceed the published track ceiling");
+
+    resonance::EditCommand unknownTrack;
+    unknownTrack.commandVersion = 2;
+    unknownTrack.projectContentSha256 = project.getContentSha256();
+    unknownTrack.summary = "Mixer on a missing track";
+    resonance::ProjectOperation mixer;
+    mixer.type = resonance::ProjectOperationType::setTrackMixer;
+    mixer.trackId = "track-does-not-exist";
+    mixer.gainDb = -6.0;
+    unknownTrack.projectOperations = { mixer };
+    resonance::EditCommandPreview missing;
+    context.expect (resonance::createEditCommandPreview (unknownTrack, project, missing).failed(),
+                    "A mixer operation on an unknown track must fail closed");
+
+    // Clip operations, the version-3 addition. One command lengthens the song, shortens
+    // the clip, and repeats it — which is the whole point of reusable clips.
+    resonance::SongProject placed;
+    placed.setPluginMetadata ("VST3-Surge XT-b793f78b-190e4fbd", "Surge XT", "Surge Synth Team", "1.3.4");
+    placed.setPluginState (state);
+    const auto placedTrackId = placed.getTrackId (0);
+
+    resonance::ProjectOperation songLength;
+    songLength.type = resonance::ProjectOperationType::setSongLength;
+    songLength.lengthTicks = 32 * 960;
+    resonance::ProjectOperation clipLength;
+    clipLength.type = resonance::ProjectOperationType::setClipLength;
+    clipLength.trackId = placedTrackId;
+    clipLength.lengthTicks = 8 * 960;
+    resonance::ProjectOperation placements;
+    placements.type = resonance::ProjectOperationType::setPlacements;
+    placements.trackId = placedTrackId;
+    placements.placementStartTicks = { 0, 8 * 960, 16 * 960, 24 * 960 };
+
+    resonance::EditCommand clipCommand;
+    clipCommand.commandVersion = 3;
+    clipCommand.projectContentSha256 = placed.getContentSha256();
+    clipCommand.summary = "Repeat the clip four times";
+    clipCommand.projectOperations = { songLength, clipLength, placements };
+
+    resonance::EditCommandPreview clipPreview;
+    context.expect (resonance::createEditCommandPreview (clipCommand, placed, clipPreview).wasOk(),
+                    "A clip-operation command must preview");
+    context.expect (placed.getPlacements (0).size() == 1,
+                    "A pending clip preview must not mutate the active project");
+    context.expect (clipPreview.applyTo (placed).wasOk(),
+                    "Clip operations must apply atomically");
+    context.expect (placed.getLoopLengthBeats() == 32.0
+                        && placed.getClipLengthBeats (0) == 8.0
+                        && placed.getPlacements (0).size() == 4,
+                    "Every clip operation must land on the active project");
+    context.expect (placed.createSequenceSnapshotForTrack (0).noteCount == 32,
+                    "The applied placements must expand into the published sequence");
+    context.expect (placed.undo() && placed.getPlacements (0).size() == 1
+                        && placed.getLoopLengthBeats() == 8.0,
+                    "One Undo must restore everything a clip command changed");
+
+    // Round-tripping the command through JSON must preserve the placement list.
+    resonance::EditCommand reparsed;
+    context.expect (resonance::parseEditCommand (resonance::serialiseEditCommand (clipCommand),
+                                                 reparsed).wasOk()
+                        && reparsed.projectOperations.size() == 3
+                        && reparsed.projectOperations[2].placementStartTicks.size() == 4
+                        && reparsed.projectOperations[2].placementStartTicks[3] == 24 * 960,
+                    "A serialised clip command must reparse with its placements intact");
+
+    resonance::EditCommand overlapping = clipCommand;
+    overlapping.projectContentSha256 = placed.getContentSha256();
+    overlapping.projectOperations[2].placementStartTicks = { 0, 4 * 960 };
+    resonance::EditCommandPreview overlapRefused;
+    context.expect (resonance::createEditCommandPreview (overlapping, placed, overlapRefused).failed(),
+                    "A command placing a clip over itself must fail closed");
+
+    operationsPassed = context.assertions > before;
+}
+
+void testSoundShelf (TestContext& context, bool& shelfPassed, int& shelfBytes)
+{
+    const auto before = context.assertions;
+    resonance::SoundShelf shelf;
+
+    const auto missing = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                             .getNonexistentChildFile ("resonance-shelf-absent", ".json", false);
+    context.expect (shelf.loadFrom (missing).wasOk() && shelf.getEntryCount() == 0,
+                    "A missing shelf file must load as an empty shelf rather than fail");
+
+    context.expect (shelf.add (makeShelfEntry ("Warm pluck", "state-one")).wasOk()
+                        && shelf.add (makeShelfEntry ("Deep kick", "state-two")).wasOk()
+                        && shelf.getEntryCount() == 2,
+                    "Distinct named sounds must be accepted");
+    context.expect (shelf.add (makeShelfEntry ("  warm PLUCK  ", "state-three")).failed()
+                        && shelf.getEntryCount() == 2,
+                    "Shelf names must be unique ignoring case and surrounding space");
+    context.expect (shelf.add (makeShelfEntry ("", "state-four")).failed(),
+                    "A shelf sound must be named");
+    context.expect (shelf.add (makeShelfEntry (juce::String::repeatedString ("x", 81),
+                                               "state-five"))
+                        .failed(),
+                    "A shelf name longer than 80 characters must be refused");
+
+    auto corrupt = makeShelfEntry ("Corrupt", "state-six");
+    corrupt.stateSha256 = juce::String::repeatedString ("0", 64);
+    context.expect (shelf.add (corrupt).failed() && shelf.getEntryCount() == 2,
+                    "A shelf sound whose hash does not match its state must be refused");
+
+    const auto* found = shelf.find ("deep KICK");
+    context.expect (found != nullptr && found->name == "Deep kick",
+                    "Shelf lookup must ignore case");
+
+    const auto shelfFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getNonexistentChildFile ("resonance-shelf", ".json", false);
+    context.expect (shelf.saveTo (shelfFile).wasOk() && shelfFile.existsAsFile(),
+                    "A shelf must be writable");
+    shelfBytes = static_cast<int> (shelfFile.getSize());
+
+    resonance::SoundShelf reloaded;
+    context.expect (reloaded.loadFrom (shelfFile).wasOk() && reloaded.getEntryCount() == 2,
+                    "A saved shelf must reload");
+    const auto* reloadedEntry = reloaded.find ("Warm pluck");
+    const auto* originalEntry = shelf.find ("Warm pluck");
+    context.expect (reloadedEntry != nullptr && originalEntry != nullptr
+                        && reloadedEntry->state == originalEntry->state
+                        && reloadedEntry->stateSha256.equalsIgnoreCase (originalEntry->stateSha256)
+                        && reloadedEntry->pluginIdentifier == originalEntry->pluginIdentifier,
+                    "Reloaded shelf sounds must carry exact state, hash, and identity");
+
+    // A shelf that fails validation must not replace entries already in memory.
+    const auto corruptFile = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getNonexistentChildFile ("resonance-shelf-bad", ".json", false);
+    context.expect (corruptFile.replaceWithText ("{ \"schemaVersion\": 99, \"sounds\": [] }"),
+                    "An unsupported shelf fixture must be writable");
+    context.expect (reloaded.loadFrom (corruptFile).failed() && reloaded.getEntryCount() == 2,
+                    "An unsupported shelf version must fail closed and preserve loaded sounds");
+    context.expect (corruptFile.replaceWithText ("{ \"schemaVersion\": 1 }"),
+                    "A shelf fixture without sounds must be writable");
+    context.expect (reloaded.loadFrom (corruptFile).failed() && reloaded.getEntryCount() == 2,
+                    "A shelf without a sounds array must fail closed");
+
+    context.expect (shelf.remove ("DEEP kick").wasOk() && shelf.getEntryCount() == 1
+                        && shelf.find ("Deep kick") == nullptr,
+                    "Removing a shelf sound must ignore case and drop exactly one entry");
+    context.expect (shelf.remove ("Deep kick").failed(),
+                    "Removing an absent shelf sound must fail");
+
+    resonance::SoundShelf full;
+    auto capacityHeld = true;
+    for (std::size_t index = 0; index < resonance::SoundShelf::maximumEntries; ++index)
+        capacityHeld = capacityHeld
+                       && full.add (makeShelfEntry ("Sound " + juce::String (static_cast<int> (index)),
+                                                    "payload " + juce::String (static_cast<int> (index))))
+                              .wasOk();
+    context.expect (capacityHeld
+                        && full.add (makeShelfEntry ("One too many", "overflow")).failed()
+                        && full.getEntryCount()
+                               == static_cast<int> (resonance::SoundShelf::maximumEntries),
+                    "The shelf must fail closed at its capacity");
+
+    context.expect (shelfFile.deleteFile() && corruptFile.deleteFile(),
+                    "Shelf fixtures must be removable");
+
+    shelfPassed = context.assertions > before;
+}
+
 void testRoundTrip (TestContext& context, int& savedBytes, juce::String& stateSha)
 {
     resonance::SongProject project;
@@ -732,6 +1689,10 @@ int main (int argc, char* argv[])
     const auto reportPath = argumentValue (args, "--report");
     const auto editCommandFixturePath = argumentValue (args, "--edit-command-fixture");
     const auto legacyProjectFixturePath = argumentValue (args, "--legacy-project-fixture");
+    const auto previousProjectFixturePath = argumentValue (args, "--previous-project-fixture");
+    const auto priorProjectFixturePath = argumentValue (args, "--prior-project-fixture");
+    const auto archivedProjectFixturePath = argumentValue (args, "--archived-project-fixture");
+    const auto archivedV5ProjectFixturePath = argumentValue (args, "--archived-v5-project-fixture");
     TestContext context;
     int savedBytes = 0;
     juce::String stateSha;
@@ -743,6 +1704,20 @@ int main (int argc, char* argv[])
     juce::String stableTrackId;
     juce::String stableClipId;
     bool legacyMigrationPassed = false;
+    juce::String previousSourceSha;
+    bool previousMigrationPassed = false;
+    bool twoTrackTopologyPassed = false;
+    bool soundShelfPassed = false;
+    juce::String priorSourceSha;
+    bool priorMigrationPassed = false;
+    bool fourTrackCeilingPassed = false;
+    juce::String archivedSourceSha;
+    bool archivedMigrationPassed = false;
+    bool archivedV5MigrationPassed = false;
+    bool clipPlacementsPassed = false;
+    bool longCanvasPassed = false;
+    bool projectOperationsPassed = false;
+    int soundShelfBytes = 0;
 
     auto* reportObject = new juce::DynamicObject();
     juce::var report (reportObject);
@@ -753,8 +1728,19 @@ int main (int argc, char* argv[])
     reportObject->setProperty ("editCommandFixture", juce::File (editCommandFixturePath).getFileName());
     reportObject->setProperty ("projectSchemaVersion", resonance::SongProject::currentSchemaVersion);
     reportObject->setProperty ("legacySchemaVersion", resonance::SongProject::legacySchemaVersion);
+    reportObject->setProperty ("previousSchemaVersion", resonance::SongProject::previousSchemaVersion);
+    reportObject->setProperty ("priorSchemaVersion", resonance::SongProject::priorSchemaVersion);
+    reportObject->setProperty ("lastArchivedSchemaVersion",
+                               resonance::SongProject::lastArchivedSchemaVersion);
+    reportObject->setProperty ("priorMigrationFixture",
+                               juce::File (priorProjectFixturePath).getFileName());
     reportObject->setProperty ("legacyMigrationFixture",
                                juce::File (legacyProjectFixturePath).getFileName());
+    reportObject->setProperty ("previousMigrationFixture",
+                               juce::File (previousProjectFixturePath).getFileName());
+    reportObject->setProperty ("maxProjectTracks", resonance::SongProject::maxProjectTracks);
+    reportObject->setProperty ("archivedV5MigrationFixture",
+                               juce::File (archivedV5ProjectFixturePath).getFileName());
 
     try
     {
@@ -762,6 +1748,8 @@ int main (int argc, char* argv[])
         testSequenceSnapshot (context);
         testRelocatedPluginIdentity (context);
         testSoundSnapshotAndUndo (context);
+        testProjectOperations (context, projectOperationsPassed);
+        testSoundShelf (context, soundShelfPassed, soundShelfBytes);
         testLegacyProjectMigration (context,
                                     juce::File (legacyProjectFixturePath),
                                     migratedBytes,
@@ -769,6 +1757,29 @@ int main (int argc, char* argv[])
                                     stableTrackId,
                                     stableClipId);
         legacyMigrationPassed = true;
+        testPreviousProjectMigration (context,
+                                      juce::File (previousProjectFixturePath),
+                                      previousSourceSha);
+        previousMigrationPassed = true;
+        testPriorProjectMigration (context,
+                                   juce::File (priorProjectFixturePath),
+                                   priorSourceSha);
+        priorMigrationPassed = true;
+        testTwoTrackTopology (context);
+        twoTrackTopologyPassed = true;
+        testLastArchivedProjectMigration (context,
+                                          juce::File (archivedProjectFixturePath),
+                                          archivedSourceSha);
+        archivedMigrationPassed = true;
+        juce::String archivedV5SourceSha;
+        testArchivedV5ProjectMigration (context,
+                                        juce::File (archivedV5ProjectFixturePath),
+                                        archivedV5SourceSha);
+        archivedV5MigrationPassed = true;
+        reportObject->setProperty ("archivedV5SourceSha256", archivedV5SourceSha);
+        testFourTrackCeiling (context, fourTrackCeilingPassed);
+        testClipPlacements (context, clipPlacementsPassed);
+        testLongSongCanvas (context, longCanvasPassed);
         testEditCommandFoundation (context,
                                    juce::File (editCommandFixturePath),
                                    editCommandCandidateSha);
@@ -786,6 +1797,24 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("seededVelocityCandidateSha256", seededVelocityCandidateSha);
         reportObject->setProperty ("legacyMigrationPassed", legacyMigrationPassed);
         reportObject->setProperty ("legacySourceSha256", legacySourceSha);
+        reportObject->setProperty ("previousMigrationPassed", previousMigrationPassed);
+        reportObject->setProperty ("previousSourceSha256", previousSourceSha);
+        reportObject->setProperty ("twoTrackTopologyPassed", twoTrackTopologyPassed);
+        reportObject->setProperty ("priorMigrationPassed", priorMigrationPassed);
+        reportObject->setProperty ("priorSourceSha256", priorSourceSha);
+        reportObject->setProperty ("fourTrackCeilingPassed", fourTrackCeilingPassed);
+        reportObject->setProperty ("archivedMigrationPassed", archivedMigrationPassed);
+        reportObject->setProperty ("archivedSourceSha256", archivedSourceSha);
+        reportObject->setProperty ("archivedV5MigrationPassed", archivedV5MigrationPassed);
+        reportObject->setProperty ("clipPlacementsPassed", clipPlacementsPassed);
+        reportObject->setProperty ("maxClipPlacements",
+                                   static_cast<int> (resonance::maxClipPlacements));
+        reportObject->setProperty ("longCanvasPassed", longCanvasPassed);
+        reportObject->setProperty ("projectOperationsPassed", projectOperationsPassed);
+        reportObject->setProperty ("commandVersion2", resonance::EditCommand::supportedVersion);
+        reportObject->setProperty ("maximumLoopBeats", static_cast<int> (resonance::maximumLoopBeats));
+        reportObject->setProperty ("soundShelfPassed", soundShelfPassed);
+        reportObject->setProperty ("soundShelfBytes", soundShelfBytes);
         reportObject->setProperty ("migratedRoundTripBytes", migratedBytes);
         reportObject->setProperty ("stableTrackId", stableTrackId);
         reportObject->setProperty ("stableClipId", stableClipId);
@@ -803,6 +1832,24 @@ int main (int argc, char* argv[])
         reportObject->setProperty ("seededVelocityCandidateSha256", seededVelocityCandidateSha);
         reportObject->setProperty ("legacyMigrationPassed", legacyMigrationPassed);
         reportObject->setProperty ("legacySourceSha256", legacySourceSha);
+        reportObject->setProperty ("previousMigrationPassed", previousMigrationPassed);
+        reportObject->setProperty ("previousSourceSha256", previousSourceSha);
+        reportObject->setProperty ("twoTrackTopologyPassed", twoTrackTopologyPassed);
+        reportObject->setProperty ("priorMigrationPassed", priorMigrationPassed);
+        reportObject->setProperty ("priorSourceSha256", priorSourceSha);
+        reportObject->setProperty ("fourTrackCeilingPassed", fourTrackCeilingPassed);
+        reportObject->setProperty ("archivedMigrationPassed", archivedMigrationPassed);
+        reportObject->setProperty ("archivedSourceSha256", archivedSourceSha);
+        reportObject->setProperty ("archivedV5MigrationPassed", archivedV5MigrationPassed);
+        reportObject->setProperty ("clipPlacementsPassed", clipPlacementsPassed);
+        reportObject->setProperty ("maxClipPlacements",
+                                   static_cast<int> (resonance::maxClipPlacements));
+        reportObject->setProperty ("longCanvasPassed", longCanvasPassed);
+        reportObject->setProperty ("projectOperationsPassed", projectOperationsPassed);
+        reportObject->setProperty ("commandVersion2", resonance::EditCommand::supportedVersion);
+        reportObject->setProperty ("maximumLoopBeats", static_cast<int> (resonance::maximumLoopBeats));
+        reportObject->setProperty ("soundShelfPassed", soundShelfPassed);
+        reportObject->setProperty ("soundShelfBytes", soundShelfBytes);
         reportObject->setProperty ("migratedRoundTripBytes", migratedBytes);
         reportObject->setProperty ("stableTrackId", stableTrackId);
         reportObject->setProperty ("stableClipId", stableClipId);

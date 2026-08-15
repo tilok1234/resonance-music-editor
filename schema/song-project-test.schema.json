@@ -12,9 +12,17 @@
     "editCommandFixture",
     "projectSchemaVersion",
     "legacySchemaVersion",
+    "previousSchemaVersion",
     "legacyMigrationFixture",
+    "previousMigrationFixture",
     "legacyMigrationPassed",
     "legacySourceSha256",
+    "previousMigrationPassed",
+    "previousSourceSha256",
+    "maxProjectTracks",
+    "twoTrackTopologyPassed",
+    "soundShelfPassed",
+    "soundShelfBytes",
     "migratedRoundTripBytes",
     "stableTrackId",
     "stableClipId",
@@ -26,30 +34,188 @@
     "assertions",
     "roundTripBytes",
     "stateSha256",
-    "passed"
+    "passed",
+    "priorSchemaVersion",
+    "priorMigrationFixture",
+    "priorMigrationPassed",
+    "priorSourceSha256",
+    "fourTrackCeilingPassed",
+    "lastArchivedSchemaVersion",
+    "archivedMigrationPassed",
+    "archivedSourceSha256",
+    "longCanvasPassed",
+    "maximumLoopBeats",
+    "projectOperationsPassed",
+    "commandVersion2",
+    "archivedV5MigrationFixture",
+    "archivedV5SourceSha256",
+    "archivedV5MigrationPassed",
+    "clipPlacementsPassed",
+    "maxClipPlacements"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "testVersion": { "type": "string", "minLength": 1 },
-    "juceVersion": { "type": "string", "minLength": 1 },
-    "editCommandVersion": { "const": 1 },
-    "editCommandFixture": { "const": "edit-command-note-patch-v1.json" },
-    "projectSchemaVersion": { "const": 2 },
-    "legacySchemaVersion": { "const": 1 },
-    "legacyMigrationFixture": { "const": "song-project-v1-migration.resonance.json" },
-    "legacyMigrationPassed": { "const": true },
-    "legacySourceSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "migratedRoundTripBytes": { "type": "integer", "minimum": 500 },
-    "stableTrackId": { "const": "track-migrated" },
-    "stableClipId": { "const": "clip-migrated" },
-    "editCommandCandidateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "seededVelocitySeed": { "const": 18421 },
-    "seededVelocityMaximumDelta": { "const": 8 },
-    "seededVelocityCommandSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "seededVelocityCandidateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "assertions": { "type": "integer", "minimum": 50 },
-    "roundTripBytes": { "type": "integer", "minimum": 500 },
-    "stateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "passed": { "const": true }
+    "schemaVersion": {
+      "const": 1
+    },
+    "testVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "juceVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "editCommandVersion": {
+      "type": "integer",
+      "enum": [
+        1,
+        2,
+        3
+      ]
+    },
+    "editCommandFixture": {
+      "const": "edit-command-note-patch-v1.json"
+    },
+    "projectSchemaVersion": {
+      "const": 6
+    },
+    "legacySchemaVersion": {
+      "const": 1
+    },
+    "previousSchemaVersion": {
+      "const": 2
+    },
+    "legacyMigrationFixture": {
+      "const": "song-project-v1-migration.resonance.json"
+    },
+    "previousMigrationFixture": {
+      "const": "song-project-v2-migration.resonance.json"
+    },
+    "legacyMigrationPassed": {
+      "const": true
+    },
+    "legacySourceSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "previousMigrationPassed": {
+      "const": true
+    },
+    "previousSourceSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "maxProjectTracks": {
+      "const": 4
+    },
+    "twoTrackTopologyPassed": {
+      "const": true
+    },
+    "soundShelfPassed": {
+      "const": true
+    },
+    "soundShelfBytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "migratedRoundTripBytes": {
+      "type": "integer",
+      "minimum": 500
+    },
+    "stableTrackId": {
+      "const": "track-migrated"
+    },
+    "stableClipId": {
+      "const": "clip-migrated"
+    },
+    "editCommandCandidateSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "seededVelocitySeed": {
+      "const": 18421
+    },
+    "seededVelocityMaximumDelta": {
+      "const": 8
+    },
+    "seededVelocityCommandSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "seededVelocityCandidateSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "assertions": {
+      "type": "integer",
+      "minimum": 280
+    },
+    "roundTripBytes": {
+      "type": "integer",
+      "minimum": 500
+    },
+    "stateSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "passed": {
+      "const": true
+    },
+    "priorSchemaVersion": {
+      "const": 3
+    },
+    "priorMigrationFixture": {
+      "type": "string",
+      "minLength": 1
+    },
+    "priorMigrationPassed": {
+      "const": true
+    },
+    "priorSourceSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "fourTrackCeilingPassed": {
+      "const": true
+    },
+    "lastArchivedSchemaVersion": {
+      "const": 5
+    },
+    "archivedMigrationPassed": {
+      "const": true
+    },
+    "archivedSourceSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "longCanvasPassed": {
+      "const": true
+    },
+    "maximumLoopBeats": {
+      "const": 256
+    },
+    "projectOperationsPassed": {
+      "const": true
+    },
+    "commandVersion2": {
+      "const": 3
+    },
+    "archivedV5MigrationFixture": {
+      "type": "string",
+      "minLength": 1
+    },
+    "archivedV5SourceSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "archivedV5MigrationPassed": {
+      "const": true
+    },
+    "clipPlacementsPassed": {
+      "const": true
+    },
+    "maxClipPlacements": {
+      "const": 64
+    }
   }
 }

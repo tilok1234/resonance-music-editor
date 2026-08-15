@@ -1,6 +1,6 @@
 # Architecture
 
-Status: current implementation reference for project version 0.4.0
+Status: current implementation reference for project version 0.5.0
 
 ## System at a glance
 
@@ -77,7 +77,7 @@ The current model contains:
 - one VST3 identity and opaque state blob;
 - one accepted sound name paired with that opaque state and SHA-256;
 - one loop clip with a stable ID;
-- up to 512 notes with stable IDs, tick timing, pitch, and velocity.
+- up to 1,024 notes with stable IDs, tick timing, pitch, and velocity.
 
 The plug-in instance belongs to the real-time engine. The native Surge window is a view over that same instance, not a second synth.
 
@@ -104,6 +104,12 @@ The device callback owns time-critical scheduling and processing. It:
 
 Each scan runs in its own process. The parent does not pipe arbitrary plug-in stdout or stderr. It waits for a bounded report, terminates a timeout, and records a bounded failure in quarantine.
 
+## Shared bounds
+
+Clip-length bounds live once in `src/loop_scheduler.h` as `minimumLoopBeats` and `maximumLoopBeats`, alongside `maxSequenceNotes`. The model, the realtime snapshot sanitiser, and the edit-command parser all include that header and derive their limits from it. They previously hard-coded the same literal independently, which let the engine silently clamp a long song back to an older ceiling and discard every note beyond it.
+
+`MixerSnapshot` embeds a fixed-capacity sequence per lane and is therefore hundreds of kilobytes. It must live on the heap or inside a heap-allocated owner; constructing one as a stack local overflows a default 1 MB thread stack.
+
 ## Real-time invariants
 
 Changes to `RealtimeEngine`, `LoopScheduler`, or the model-to-engine boundary must preserve these rules:
@@ -128,6 +134,8 @@ The message thread converts project notes into a `SequenceSnapshot` with a fixed
 
 The production `RealtimeEngine` owns a fixed array of eight stable `RuntimeSlot` objects. Each slot owns one optional plug-in instance plus preallocated stereo audio and MIDI scratch, prepared state, bounded meters, and a processed-block counter. Mutable topology and plug-in lifetime stay on the message thread; topology changes fail closed after preparation. The callback takes only a non-blocking plug-in-access claim, renders already-prepared enabled slots, applies resolved stereo gains, accumulates into a preallocated master buffer, and publishes bounded meters and safety counters. It never creates, destroys, resizes, performs file I/O, or waits for state access. The visible version-2 project currently publishes its sole track to slot zero; the hidden M6 gate proves slots zero and one with two real Surge instances. [ADR-0005](ADR-0005-multitrack-project-and-mixer-ownership.md) owns the full decision.
 
+The final sentence of the preceding paragraph describes the earlier runtime-only checkpoint. In the current editor, normal startup preloads four accepted Surge instances before callback preparation, and schema-version-5 project order maps one through four persisted tracks to slots zero through three. Unused prepared slots remain disabled by the snapshot. Preloading is deliberately eager: prepared plug-in topology never changes at runtime, so the published track ceiling is also the number of instances created at startup.
+
 ### Plug-in state operations
 
 State capture and restore use a separate plug-in-access critical section. The audio callback attempts that lock rather than waiting for it. A concurrent save or restore may therefore produce a silent callback block, but it cannot block the real-time thread indefinitely.
@@ -140,9 +148,9 @@ Opaque state bytes are not assumed to be a semantic sound fingerprint. `Realtime
 
 ### Save
 
-1. Require a valid accepted sound snapshot already owned by the project.
-2. Update current identity metadata and the supported live sample rate.
-3. Serialize the complete schema version 2 document in memory.
+1. Require a valid accepted sound snapshot for every project track.
+2. Update every track's current identity metadata and the supported live sample rate.
+3. Serialize the complete schema version 5 document in memory.
 4. Write it through JUCE's `replaceWithText` operation.
 5. Mark the project clean after a successful save.
 
@@ -151,12 +159,13 @@ An unapplied B or arbitrary native Surge edit is preview state. Save never repla
 ### Open
 
 1. Parse into a separate candidate `SongProject`.
-2. Validate schema, ranges, stable identities, note IDs, mixer/MIDI state, state encoding, and state hash.
-3. Materialise a valid version-1 candidate with version-2 in-memory defaults without rewriting its source file.
-4. Check that the saved VST3 identifier is compatible with the currently accepted instrument.
-5. Restore the candidate plug-in state into the live instance.
-6. Replace the active project only after every preceding step succeeds.
-7. Publish the new sequence and mark it clean.
+2. Validate schema, ranges, project-wide stable identities, shared loop length, mixer/MIDI state, and every state block/hash.
+3. Materialise valid version-1 or version-2 input as a schema-version-3 candidate without rewriting its source file.
+4. Check every saved VST3 identifier against the accepted instrument.
+5. Capture the current states of both preloaded runtime slots.
+6. Restore candidate states by persisted track order, rolling back earlier slots if a later restore fails.
+7. Replace the active project only after every preceding step succeeds.
+8. Publish the new mixer snapshot and mark it clean.
 
 This order prevents a malformed file or failed state restore from partially replacing the active song.
 
@@ -168,18 +177,18 @@ See [VST3 hosting](VST3_HOSTING.md) and [ADR-0002](ADR-0002-crash-isolated-plugi
 
 ## Extension seams
 
-The current single-track authoring shape is deliberate, but several seams are intended for growth:
+The current four-track, 64-bar authoring ceiling is deliberate, but several seams are intended for growth:
 
-- schema version 2 gives track and clip identity plus per-track settings a durable model home, while intentionally retaining one production track until the runtime is widened safely;
+- schema version 5 gives one through four ordered tracks, a canvas of one through 64 bars, project-wide identity, and exact per-track state a durable model home while intentionally remaining below the eight-lane runtime capacity;
 - structured edit commands and the proposal card sit above the same note operations, Undo manager, and immutable sequence publisher used by the piano roll;
 - `MixerSnapshot` composes fixed-capacity per-track sequences and render values without exposing the mutable ValueTree to audio code;
-- the engine's stable prepared slots can accept future persisted tracks behind the eight-lane mixer boundary without changing callback ownership;
+- the engine's stable prepared slots can accept a separately versioned future widening without changing callback ownership;
 - automation can publish fixed-capacity curves or block-local parameter events;
 - offline rendering can reuse the validated song and plug-in state while remaining separate from the device callback;
 - game-transition metadata can reference arrangement sections after ordinary arrangement editing exists.
 
-These are extension points, not permission to weaken current invariants. Persisted/visible multi-track authoring, automation, additional transform families, AI translation/service integration, effects, and game-state playback are not implemented yet.
+These are extension points, not permission to weaken current invariants. More than four persisted tracks, more than one clip per track, named sections, reusable clip instances, tempo and meter changes, different plug-in products, user-facing missing-plug-in recovery, automation, offline render, additional transform families, AI translation/service integration, effects, and game-state playback are not implemented yet.
 
 ## Architectural evidence
 
-The durable decisions are recorded in the five ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the accepted M5 command/proposal slices, the first M6 schema/identity/mixer-ownership foundation, and the M6 two-track runtime. See the [documentation index](README.md) for the full list.
+The durable decisions are recorded in the five ADRs. Dated checkpoints under `docs/` provide reproduction commands and measurements for scanning, real-time playback, the startup-freeze fix, native Surge audition, editable projects, the accepted M4 sound workflow, the accepted M5 command/proposal slices, the first M6 schema/identity/mixer-ownership foundation, the M6 two-track runtime, bounded M6 two-track authoring, the 2026-08-12 authoring-throughput slices, the per-track audio probe, and the M7.1 song-length canvas. See the [documentation index](README.md) for the full list.

@@ -8,7 +8,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
-Add-Type -ReferencedAssemblies ([System.Drawing.Bitmap].Assembly.Location) -TypeDefinition @'
+# .NET 10 moved the GDI+ image interfaces into their own assembly, so referencing
+# System.Drawing alone no longer compiles this helper.
+$drawingAssemblies = @([System.Drawing.Bitmap].Assembly.Location)
+$drawingAssemblies += [System.AppDomain]::CurrentDomain.GetAssemblies() |
+    Where-Object { $_.GetName().Name -like 'System.Private.Windows*' -and $_.Location } |
+    ForEach-Object { $_.Location }
+$drawingAssemblies = $drawingAssemblies | Select-Object -Unique
+Add-Type -ReferencedAssemblies $drawingAssemblies -TypeDefinition @'
 using System;
 using System.Drawing;
 using System.Drawing.Imaging;

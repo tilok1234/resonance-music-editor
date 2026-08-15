@@ -1,6 +1,7 @@
 #pragma once
 
 #include "song_project.h"
+#include "sound_shelf.h"
 
 #include <cstdint>
 #include <memory>
@@ -23,9 +24,50 @@ struct NoteEditChange
     std::optional<SongNote> note;
 };
 
+// Project-level operations, added in command version 2. They are applied before any
+// note changes in the same command, so a command can lengthen the song and then write
+// notes into the space it just created.
+enum class ProjectOperationType
+{
+    setTempo,
+    setSongLength,
+    setSnap,
+    setTitle,
+    setTrackMixer,
+    setSound,
+    addTrack,
+    removeTrack,
+    // Added in command version 3, alongside song-project schema 6.
+    setClipLength,
+    setPlacements
+};
+
+struct ProjectOperation
+{
+    ProjectOperationType type = ProjectOperationType::setTempo;
+    juce::String trackId;
+    juce::String text;
+    double numeric = 0.0;
+    int lengthTicks = 0;
+    // setTrackMixer changes only the fields the command actually supplied.
+    std::optional<double> gainDb;
+    std::optional<double> pan;
+    std::optional<bool> mute;
+    std::optional<bool> solo;
+    // setPlacements replaces the whole list, which keeps it deterministic: the same
+    // command always produces the same placements rather than appending to whatever
+    // happened to be there.
+    std::vector<int> placementStartTicks;
+};
+
 struct EditCommand
 {
-    static constexpr int supportedVersion = 1;
+    static constexpr int legacyVersion = 1;
+    static constexpr int previousVersion = 2;
+    static constexpr int supportedVersion = 3;
+    static constexpr std::size_t maximumPlacements = maxClipPlacements;
+    static constexpr std::size_t maximumNoteChanges = 1024;
+    static constexpr std::size_t maximumProjectOperations = 32;
 
     int commandVersion = supportedVersion;
     juce::String projectContentSha256;
@@ -35,6 +77,9 @@ struct EditCommand
     juce::String summary;
     std::optional<std::int64_t> seed;
     std::vector<NoteEditChange> changes;
+    std::vector<ProjectOperation> projectOperations;
+
+    bool hasNoteChanges() const noexcept { return ! changes.empty(); }
 };
 
 struct SeededVelocityVariation
@@ -63,18 +108,24 @@ public:
 
     bool isPending() const noexcept { return ! consumed && candidate != nullptr; }
     const SongProject* getCandidateProject() const noexcept { return candidate.get(); }
-    juce::Result applyTo (SongProject& activeProject);
+    // The shelf is required only when the command contains a setSound operation.
+    juce::Result applyTo (SongProject& activeProject, const SoundShelf* shelf = nullptr);
     juce::Result reject();
 
     EditCommand command;
     juce::String beforeContentSha256;
     juce::String afterContentSha256;
     std::vector<NoteEditDiff> noteDiffs;
+    // Human-readable record of each applied project operation, and any track the
+    // command created, whose id the author could not have known in advance.
+    std::vector<juce::String> projectOperationSummaries;
+    std::vector<juce::String> createdTrackIds;
 
 private:
     friend juce::Result createEditCommandPreview (const EditCommand&,
                                                    const SongProject&,
-                                                   EditCommandPreview&);
+                                                   EditCommandPreview&,
+                                                   const SoundShelf*);
 
     std::unique_ptr<SongProject> candidate;
     bool consumed = false;
@@ -87,5 +138,6 @@ juce::Result resolveSeededVelocityVariation (const SongProject& activeProject,
                                              EditCommand& destination);
 juce::Result createEditCommandPreview (const EditCommand& command,
                                        const SongProject& activeProject,
-                                       EditCommandPreview& destination);
+                                       EditCommandPreview& destination,
+                                       const SoundShelf* shelf = nullptr);
 } // namespace resonance

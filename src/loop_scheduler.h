@@ -18,7 +18,16 @@ struct LoopNote
 };
 
 inline constexpr double loopLengthBeats = 8.0;
-inline constexpr std::size_t maxSequenceNotes = 512;
+// Shared clip-length bounds. These were previously duplicated as literals in the
+// model, the realtime snapshot sanitiser, and the command parser, which let the
+// engine silently clamp a long song back to the old ceiling.
+inline constexpr double minimumLoopBeats = 4.0;
+inline constexpr double maximumLoopBeats = 256.0;
+inline constexpr std::size_t maxSequenceNotes = 1024;
+// A clip is content; a placement is one occurrence of it in the song. The published
+// sequence is the expansion of every placement, so placements multiply note count and
+// the expansion is bounded by maxSequenceNotes rather than this figure alone.
+inline constexpr std::size_t maxClipPlacements = 64;
 
 inline constexpr std::array<LoopNote, 8> starterLoopNotes {{
     { 0.0, 0.82, 48, 0.52f },

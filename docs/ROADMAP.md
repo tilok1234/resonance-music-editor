@@ -18,8 +18,8 @@ The focus is game music. General sound-effect creation is not part of this roadm
 | F3 Editable single-track song | Complete | piano roll, Undo/Redo, exact state, and `.resonance.json` save/open |
 | M4 Sound and preset workflow | Complete | Accepted as version 0.3.0 after A/B, persistence, lifecycle, and listening gates passed |
 | M5 Unified edit-command layer | Complete | explicitly accepted after packaged command, A/B, deterministic controls, listening, Apply/Undo, and cleanup gates |
-| M6 Multi-track and mixer | In progress | schema-v2 migration and the fixed eight-slot/two-real-instance runtime are proven; visible persisted multi-track authoring remains |
-| M7 Arrangement, automation, and effects | Planned | full sections, curves, buses, and dependable song structure |
+| M6 Multi-track and mixer | In progress | schema-v4 four-track authoring, the sound shelf, and the eight-slot runtime are proven; the listening pass and missing-plug-in recovery remain |
+| M7 Arrangement, automation, and effects | In progress | M7.1 canvas and M7.5 render delivered; sections, reusable clips, and tempo/meter remain |
 | M8 AI music assistant | Planned | natural-language requests resolve to bounded command proposals |
 | M9 Game-music authoring and export | Planned | variants, transitions, loops, stems, renders, and engine-facing metadata |
 | M10 Release hardening | Planned | performance, recovery, packaging, licensing, compatibility, and support policy |
@@ -110,7 +110,7 @@ Manual UI actions do not all need to serialize as external JSON immediately, but
 
 ## M6: Multi-track and mixer
 
-Status: in progress. The schema/identity foundation and the first two-instance runtime slice were implemented and technically verified on 2026-08-09 as editor 0.4.0.
+Status: in progress. Schema/identity, multi-instance runtime, four-track authoring, and the 2026-08-12 authoring-throughput slices are technically verified; editor 0.5.0 still needs listening approval and missing-plug-in recovery.
 
 ### Goal
 
@@ -149,17 +149,54 @@ See [ADR-0005](ADR-0005-multitrack-project-and-mixer-ownership.md) and the [M6 f
 - the packaged hidden gate loads two distinct accepted Surge XT instances, renders 100 in-memory blocks plus eight state-settle blocks, applies the accepted M4 B only to slot two, restores both current baseline states, and emits no device audio;
 - Release verification passes 124 engine/runtime assertions, 162 project/migration/command assertions, the full packaged M4/M5 regressions, and 16 schema validations.
 
-The production schema and UI remain exactly one track, and the silent runtime gate is not a listening approval. See the [M6 two-track runtime checkpoint](M6_TWO_TRACK_RUNTIME_CHECKPOINT_2026-08-09.md).
+At that checkpoint the production schema and UI still contained exactly one track, and the silent runtime gate was not a listening approval. See the [M6 two-track runtime checkpoint](M6_TWO_TRACK_RUNTIME_CHECKPOINT_2026-08-09.md).
 
-### Next slice
+### Slice 3 delivered
 
-Define the next bounded song-schema revision and migrate version 2 without source rewrite, then expose a minimal second instrument track using the proven slots. Add track selection, gain/pan/mute/solo, meters, add/remove/reorder Undo, and user-facing missing-plug-in recovery. Prove Save/Open and identity/state preservation, then run an explicit two-track listening pass before calling M6 complete.
+- editor 0.5.0 and schema version 3 persist one or two ordered instrument tracks and migrate both prior schemas without rewriting their sources;
+- project-wide track, clip, and note identity plus one shared loop length are validated, and a third track fails closed;
+- normal startup preloads two distinct accepted Surge instances and maps persisted order to stable slots zero and one;
+- the editor exposes selection, duplicate, remove, reorder, gain, pan, mute, solo, active-track meters, selected-track piano-roll editing, and selected-track sound/note A/B;
+- topology edits and their Undo/Redo remap exact accepted state without changing prepared plug-in topology;
+- the packaged no-audio authoring test proves independent state, notes, mixer values, reorder, remove, Undo, schema-v3 Save/Open, and zero runtime faults;
+- Release verification passes 124 engine/runtime assertions, 209 project/migration/command assertions, the full packaged M4/M5 regressions, and 19 schema validations.
+
+See the [M6 bounded two-track authoring checkpoint](M6_TWO_TRACK_AUTHORING_CHECKPOINT_2026-08-09.md).
+
+### Slice 4 delivered: authoring throughput and a wider ceiling
+
+A 2026-08-12 assessment found that the binding constraint on making songs was note-entry throughput and sound variety rather than arrangement or AI translation. Six stacked slices addressed it, none of which changed the accepted M4 sound or M5 command contracts:
+
+1. external version-1 edit-command files load into the accepted preview path, with **Copy hash** publishing the values needed to author one;
+2. the piano roll gained vertical zoom, dim ghost notes for inactive tracks, and pitch-range fitting on Open and New;
+3. a real multiple-selection model with selection-wide delete, move, velocity, and transpose;
+4. a note clipboard with copy, paste at a drawn insert marker, duplicate, nudge, and transpose;
+5. a named sound shelf outside the song project, so sound work survives New, Open, and restart;
+6. schema version 4 raising the persisted track ceiling from two to four, with version-3 migration.
+
+See the six dated 2026-08-12 checkpoints.
+
+### Remaining M6 gate
+
+Run an explicit packaged listening and interaction pass, then add user-facing missing-plug-in preservation/recovery before calling M6 complete. That listening gate is now worth running: the sound shelf and the four-track ceiling together make a genuinely multi-timbral mix possible, so a listening judgment can be about the mix rather than about the ceiling. Different plug-in products per track, and more than four persisted tracks, remain outside this bounded milestone even though the runtime owns eight lanes.
 
 ## M7: Arrangement, automation, and effects
+
+Status: in progress. M7.1 delivered the song-length canvas on 2026-08-13.
 
 ### Goal
 
 Turn loop sketches into complete musical forms.
+
+### Slicing
+
+1. **M7.1 song-length canvas — delivered.** Clip ceiling 8 to 64 bars, notes per clip 512 to 1,024, schema version 5 with version 4 archived, and a horizontally scrollable and zoomable piano roll with zoom-adaptive grid density. See the [M7.1 checkpoint](M7_SONG_LENGTH_CANVAS_CHECKPOINT_2026-08-13.md).
+2. **M7.2 sections and markers.** Named spans so structure is navigable rather than merely present.
+3. **M7.3 reusable clip instances.** Multiple placed instances per track referencing shared content, with split, move, and trim. This is where arrangement actually lands, and it is what stops a long song's note list growing linearly with its length.
+4. **M7.4 tempo and meter changes** with tested scheduling.
+5. **M7.5 offline full-song render — delivered 2026-08-13.** `--render` writes a 24-bit WAV through the production callback. See the [M7.5 checkpoint](M7_OFFLINE_RENDER_CHECKPOINT_2026-08-13.md).
+
+Automation, effect slots, and buses are in this milestone's deliverables but are orthogonal to song structure; they should follow the five slices above rather than expand them.
 
 ### Deliverables
 
